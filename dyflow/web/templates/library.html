@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}dyflow — {{ t('library_title') }}{% endblock %}
+{% block container_class %}container-wide{% endblock %}
+
+{% block content %}
+<section class="library">
+  <div class="library-head">
+    <div>
+      <h1>{{ t('library_title') }}</h1>
+      <p class="sub">{{ t('library_sub') }}</p>
+    </div>
+    <a class="btn primary library-new" href="/">{{ t('new_video') }}</a>
+  </div>
+
+  {% if videos %}
+  <div class="video-grid">
+    {% for v in videos %}
+    <a class="video-card" href="/jobs/{{ v.id }}">
+      <div class="thumb-wrap">
+        {% if v.has_file %}
+        <img class="thumb" src="/api/jobs/{{ v.id }}/thumb" alt="" loading="lazy" />
+        {% else %}
+        <div class="thumb missing">{{ t('library_expired') if v.expired else t('library_missing') }}</div>
+        {% endif %}
+        {% if v.duration_label and v.duration_label != '0:00' %}
+        <span class="thumb-dur">{{ v.duration_label }}</span>
+        {% endif %}
+      </div>
+      <div class="video-meta">
+        <div class="video-avatar">{{ (v.target_lang or 'vi')[:2]|upper }}</div>
+        <div class="video-text">
+          <h3 class="video-title">{{ v.title }}</h3>
+          <p class="video-sub">
+            {{ (v.target_lang or 'vi')|upper }} · {{ v.voice }}
+            {% if v.rel_label %} · {{ v.rel_label }}{% endif %}
+          </p>
+        </div>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+
+  {% if total_pages > 1 %}
+  <nav class="pager" aria-label="pagination">
+    {% if page > 1 %}
+    <a class="pager-nav" href="/library?page={{ page - 1 }}" aria-label="{{ t('pager_prev') }}">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    {% else %}
+    <span class="pager-nav disabled" aria-disabled="true">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </span>
+    {% endif %}
+
+    {% for item in page_items|default([]) %}
+      {% if item is none %}
+      <span class="pager-ellipsis" aria-hidden="true">…</span>
+      {% elif item == page %}
+      <span class="pager-num active" aria-current="page">{{ item }}</span>
+      {% else %}
+      <a class="pager-num" href="/library?page={{ item }}">{{ item }}</a>
+      {% endif %}
+    {% endfor %}
+
+    {% if page < total_pages %}
+    <a class="pager-nav next" href="/library?page={{ page + 1 }}" aria-label="{{ t('pager_next') }}">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    {% else %}
+    <span class="pager-nav next disabled" aria-disabled="true">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </span>
+    {% endif %}
+  </nav>
+  {% endif %}
+
+  {% else %}
+  <div class="library-empty">
+    <p>{{ t('library_empty') }}</p>
+    <a class="btn primary" href="/">{{ t('new_video') }}</a>
+  </div>
+  {% endif %}
+
+  <p class="hint library-storage">{{ t('library_storage_note', n=retention_days) }}</p>
+</section>
+{% endblock %}

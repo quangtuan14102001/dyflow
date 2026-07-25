@@ -1,0 +1,13 @@
+cookies_douyin.txt
+*.cookies.txt
+.env
+__pycache__/
+.venv/
+work/
+output/
+*.mp4
+*.ass
+.DS_Store
+jobs.json
+*.db
+*.db-journal

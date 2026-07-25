@@ -1,0 +1,144 @@
+# ============================================================
+# dyflow - cau hinh pipeline
+# Tat ca tham so o day. Tung job co the override trong jobs.json
+# ============================================================
+
+paths:
+  work_dir: "./work" # noi chua file trung gian
+  output_dir: "./output" # video thanh pham
+  music_dir: "./assets/music" # nhac nen
+  font_path: "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"
+
+download:
+  backend: "chrome"           # chrome = khong doc Keychain Chrome (khong pop password)
+  # "yt-dlp" se dung cookies_from_browser -> macOS hoi mat khau "Chrome Safe Storage"
+  fetch_subs: false           # chrome fallback khong tai sub; Whisper se xu ly
+  cookies_file: "./cookies_douyin.txt"
+  # TAT cookies-from-browser de khong pop Keychain moi lan chay
+  cookies_from_browser: ""
+  auto_refresh_cookies: true  # refresh cookie file khi yt-dlp bao stale
+  ytdlp_first: true           # thu yt-dlp nhanh truoc, fail thi Chrome sniff
+  cookie_refresh_method: "auto"
+  cookie_max_age_hours: 12
+  chrome_fallback: true
+  chrome_headless: false           # false = mo Chrome that (vuot captcha)
+  chrome_profile_dir: "./work/_chrome_dy_profile"
+  playwright_headless: true
+  remove_watermark: true
+  retries: 3
+  rate_limit: ""
+  impersonate: ""
+
+# ---- Buoc "lam moi" video de KHONG phai copy 1:1 (chong reused content) ----
+transform:
+  enabled: true
+  fit: source # source=giu ty le goc | contain=viền đen | cover=cat ep 9:16
+  target_width: 1080
+  target_height: 1920 # chi dung khi fit=contain hoac cover
+  segments: 1 # 1 = khong cat doan (tranh zoom/pan lam lech khung)
+  speed_factor: 1.0 # 1.0 = giu toc do goc
+  zoom: 1.0 # 1.0 = khong zoom cat them (chi co tac dung khi fit=cover)
+  zoom_step: 0.0
+  mirror: false # lat ngang (can than voi chu trong khung hinh)
+  trim_intro_sec: 0 # cat dau (giay)
+  trim_outro_sec: 0 # cat cuoi (giay)
+  denoise_audio: false        # false = giu tieng goc ro hon cho phu de sync
+  # dich mau nhe (lam khac mau goc)
+  contrast: 1.0
+  saturation: 1.0
+  gamma: 1.0
+  # Lam mo chu/sub goc burned-in
+  # mode: ocr = RapidOCR detect + blur dung vi tri | fixed = dai co dinh | both = ca hai
+  blur_burned_subs:
+    enabled: true
+    mode: ocr
+    bottom_pct: 0.14   # dung khi mode=fixed|both
+    top_pct: 0.0
+    strength: 18
+    # RapidOCR (mien phi, local ONNX)
+    ocr_every_n: 5     # OCR moi N frame (frame xen ke dung lai bbox)
+    ocr_scale: 0.55    # thu nho de OCR nhanh
+    ocr_pad: 16        # loang them quanh chu
+    ocr_blur: 41       # GaussianBlur kernel (so le)
+    ocr_min_score: 0.35
+  # Vien tren/duoi de doi perceptual hash + lanh khung (anti reup TikTok)
+  frame_border:
+    enabled: true
+    top_pct: 0.045
+    bottom_pct: 0.045
+    style: blur        # blur = nen mo keo dai | solid = thanh mau
+    color: black       # chi dung khi style=solid
+    blur: 22
+  # b-roll: chen clip rieng cua ban vao dau/cuoi (bien doi NOI DUNG - manh nhat)
+  broll:
+    enabled: false # bat khi co footage rieng; doc README
+    intro: "" # vd ./assets/broll/intro.mp4
+    outro: ""
+
+voiceover:
+  enabled: true
+  audio_mode: dub
+  # edge-tts chi co 2 giong VN. Review san pham: NamMinh + nhanh = hook tot nhat
+  voice: "vi-VN-NamMinhNeural"   # nam, am ap, chuyen nghiep (review/tech)
+  # voice: "vi-VN-HoaiMyNeural"  # nu, mem mai (lifestyle/beauty)
+  rate: "+10%"                    # nhanh hon = nang luong, giu chan nguoi xem
+  pitch: "+2Hz"                   # cao nhe = tre trung, thu hut hon
+  volume: "+5%"
+  mute_original: false
+  mute_original_speech: true
+  strip_original_vocals: true   # Demucs tach giong Trung, giu nhac/FX
+  demucs_model: htdemucs
+  ambient_volume: 0.95
+  speech_gate_volume: 0.0
+  speech_gate_pad_before: 0.40
+  speech_gate_pad_after: 0.18
+  dub_volume: 3.2
+  preserve_fx: true
+  original_volume: 0.95
+  auto:
+    prefer_platform_subs: true
+    min_sub_coverage: 0.35   # phu de Douyin < 35% video -> dung Whisper
+    whisper_model: medium
+    vad: false                # QUAN TRONG: true se bo sot gan het thoai
+    merge_gap_sec: 0.5
+    merge_max_dur: 8.0
+    merge_max_chars: 180
+    translate_from: zh-CN
+    source_lang: zh
+  refresh_tts: true           # tao lai TTS moi lan chay
+
+caption:
+  enabled: true
+  max_lines: 2 # toi da 2 dong tren man hinh moi cue
+  chars_per_line: 24 # so ky tu moi dong (tieng Viet)
+  font_size: 56
+  primary_color: "&H00FFFFFF" # trang (ASS format: &HAABBGGRR)
+  outline_color: "&H00000000" # vien den
+  outline: 3
+  margin_v: 220 # khoang cach tu day len (tranh che mat)
+
+music:
+  enabled: false              # tat nhac nen de nghe ro loi goc
+
+# Neu video dai hon max_duration_sec:
+#   auto_trim: true  -> cat phan dau (khuyen nghi)
+#   auto_trim: false -> bao loi
+max_duration_sec: 0
+auto_trim: true
+
+export:
+  fit: source # source=giu ty le clip goc | contain=viền đen | cover=cat day khung
+  formats: ["source"] # source = xuat dung kich thuoc goc; hoac ["9:16","1:1"]
+  crf: 20 # chat luong (thap = net hon, file to hon)
+  preset: "medium"
+
+upload:
+  enabled: false # DOC README truoc khi bat
+  platform: "tiktok"
+
+# ---- Web app (FastAPI + credit + nap crypto) ----
+web:
+  workers: 2   # so job chay song song. May manh / GPU co the tang 3-4.
+  # Luu file local mien phi. Tu xoa MP4 sau N ngay (metadata van con trong lich su).
+  # 0 = khong bao gio xoa. Khi lon hon: chuyen Cloudflare R2 (10GB free).
+  retention_days: 7

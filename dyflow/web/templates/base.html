@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="{{ ui_lang|default('vi') }}">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}dyflow{% endblock %}</title>
+  <link rel="icon" href="/static/favicon.ico?v=1" sizes="any" />
+  <link rel="icon" type="image/png" href="/static/favicon-32.png?v=1" sizes="32x32" />
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png?v=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/app.css?v=dt1" />
+</head>
+<body class="{% block body_class %}{% endblock %}">
+  {% block topbar %}
+  <header class="topbar">
+    <div class="topbar-brand">
+      <a class="brand" href="/">
+        <span class="logo">dy</span>flow
+      </a>
+      <span class="tagline">{{ t('tagline') }}</span>
+    </div>
+    <div class="topbar-end">
+      {% if user %}
+      <a class="credits-pill credits-pill--bar" href="/billing" title="{{ t('credits_title') }}">
+        <strong>{{ user.credits }}</strong> {{ t('credits') }}
+      </a>
+      {% endif %}
+      <button
+        type="button"
+        class="nav-toggle"
+        id="nav-toggle"
+        aria-expanded="false"
+        aria-controls="site-nav"
+        aria-label="{{ t('nav_menu') }}"
+      >
+        <span class="nav-toggle-bars" aria-hidden="true"></span>
+      </button>
+      <nav class="nav" id="site-nav">
+        {% if user %}
+        <a class="nav-link-a" href="/library">{{ t('library_nav') }}</a>
+        <a class="credits-pill credits-pill--menu" href="/billing" title="{{ t('credits_title') }}">
+          <strong>{{ user.credits }}</strong> {{ t('credits') }}
+        </a>
+        {% endif %}
+        <label class="ui-lang" title="{{ t('ui_lang') }}">
+          <span class="sr-only">{{ t('ui_lang') }}</span>
+          <select id="ui-lang" aria-label="{{ t('ui_lang') }}">
+            {% for lang in ui_languages %}
+            <option value="{{ lang.id }}" {% if lang.id == ui_lang %}selected{% endif %}>{{ lang.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        {% if user %}
+        <span class="nav-email">{{ user.email }}</span>
+        <button type="button" class="nav-link" id="logout-btn">{{ t('logout') }}</button>
+        {% endif %}
+      </nav>
+    </div>
+  </header>
+  {% endblock %}
+  <main class="container {% block container_class %}{% endblock %}">
+    {% block content %}{% endblock %}
+  </main>
+  <script>
+    window.DYFLOW_I18N = {{ i18n_js | default({}) | tojson }};
+    window.DYFLOW_UI_LANG = {{ ui_lang | default('vi') | tojson }};
+  </script>
+  <script src="/static/app.js?v=dt2"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}dyflow — {{ t('login_title') if mode != 'register' else t('register_title') }}{% endblock %}
+{% block body_class %}auth-page{% endblock %}
+{% block container_class %}container-auth{% endblock %}
+
+{% block content %}
+<div class="auth-shell">
+  <div class="auth-hero">
+    <a class="brand auth-brand" href="/"><span class="logo">dy</span>flow</a>
+    <h2 class="auth-tag">{{ t('auth_tag') }}</h2>
+    <p class="auth-lead">{{ t('auth_lead') }}</p>
+  </div>
+
+  <section class="auth-panel">
+    <h1>{{ t('create_account') if mode == 'register' else t('welcome_back') }}</h1>
+    {% if mode == 'register' and bonus %}
+    <p class="sub">{{ t('register_sub', n=bonus) | safe }}</p>
+    {% else %}
+    <p class="sub">{{ t('login_sub') }}</p>
+    {% endif %}
+
+    <form id="auth-form" data-mode="{{ mode }}" class="auth-form">
+      <label class="field">
+        <span>Email</span>
+        <input class="input" type="email" name="email" id="email" required autocomplete="email" placeholder="ban@email.com" />
+      </label>
+      <label class="field">
+        <span>{{ t('password') }}</span>
+        <div class="input-wrap">
+          <input class="input" type="password" name="password" id="password" required minlength="6" autocomplete="{{ 'new-password' if mode == 'register' else 'current-password' }}" placeholder="{{ t('password_ph') }}" />
+          <button type="button" class="toggle-pass" data-target="password" aria-label="{{ t('show') }}">{{ t('show') }}</button>
+        </div>
+      </label>
+      {% if mode != 'register' %}
+      <div class="auth-row">
+        <a class="link-muted" href="/forgot-password">{{ t('forgot_link') }}</a>
+      </div>
+      {% endif %}
+      <button type="submit" class="btn primary auth-submit" id="auth-btn">
+        {{ t('create_account') if mode == 'register' else t('login_title') }}
+      </button>
+      <p class="error" id="auth-error"></p>
+    </form>
+
+    <p class="switch-auth">
+      {% if mode == 'register' %}
+      {{ t('have_account') }} <a href="/login">{{ t('login_title') }}</a>
+      {% else %}
+      {{ t('no_account') }} <a href="/register">{{ t('register_free') }}</a>
+      {% endif %}
+    </p>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>DyflowAuth.init();</script>
+{% endblock %}
