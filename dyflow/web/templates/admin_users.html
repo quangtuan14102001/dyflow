@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}{{ brand }} — {{ t('admin_nav_users') }}{% endblock %}
+{% block robots %}noindex, nofollow{% endblock %}
+
+{% block content %}
+<section class="card">
+  <h1>{{ t('admin_nav_users') }}</h1>
+  <p class="sub">{{ t('admin_users_sub') }}</p>
+  {% include "_admin_nav.html" %}
+
+  <form class="admin-search" method="get" action="/admin/users">
+    <input type="search" name="q" value="{{ q }}" placeholder="email..." />
+    <button type="submit" class="btn ghost btn-sm">{{ t('admin_search') }}</button>
+  </form>
+
+  <div class="admin-table-wrap">
+    <table class="admin-table">
+      <thead>
+        <tr>
+          <th>Email</th>
+          <th>{{ t('credits') }}</th>
+          <th>Role</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+        <tr data-id="{{ u.id }}">
+          <td>
+            <strong>{{ u.email }}</strong>
+            {% if u.blocked %}<span class="badge failed">blocked</span>{% endif %}
+            <div class="muted">{{ u.id }}</div>
+          </td>
+          <td><strong class="u-credits">{{ u.credits }}</strong></td>
+          <td>
+            {% if u.is_super_admin %}super{% elif u.is_admin %}admin{% else %}user{% endif %}
+          </td>
+          <td class="admin-row-actions">
+            <button type="button" class="btn ghost btn-sm admin-credit-btn" data-id="{{ u.id }}" data-delta="10">+10</button>
+            <button type="button" class="btn ghost btn-sm admin-credit-btn" data-id="{{ u.id }}" data-delta="50">+50</button>
+            <button type="button" class="btn ghost btn-sm admin-credit-btn" data-id="{{ u.id }}" data-delta="-10">−10</button>
+            {% if is_super and not u.is_super_admin %}
+              {% if u.is_admin %}
+              <button type="button" class="btn ghost btn-sm admin-role-btn" data-id="{{ u.id }}" data-admin="0">{{ t('admin_demote') }}</button>
+              {% else %}
+              <button type="button" class="btn ghost btn-sm admin-role-btn" data-id="{{ u.id }}" data-admin="1">{{ t('admin_promote') }}</button>
+              {% endif %}
+            {% endif %}
+            {% if not u.is_super_admin and u.id != user.id %}
+              {% if u.blocked %}
+              <button type="button" class="btn ghost btn-sm admin-block-btn" data-id="{{ u.id }}" data-blocked="0">{{ t('admin_unblock') }}</button>
+              {% else %}
+              <button type="button" class="btn ghost btn-sm admin-block-btn" data-id="{{ u.id }}" data-blocked="1">{{ t('admin_block') }}</button>
+              {% endif %}
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="empty">—</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="error" id="admin-error"></p>
+  {% with
+    page=page,
+    total_pages=total_pages,
+    page_items=page_items,
+    base_path='/admin/users',
+    page_param='page',
+    extra_query=(('q=' ~ q) if q else '')
+  %}
+    {% include "_pager.html" %}
+  {% endwith %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>DyflowAdminUsers.init();</script>
+{% endblock %}

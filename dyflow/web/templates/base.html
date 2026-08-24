@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="{{ ui_lang|default('en') }}">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}{{ brand|default('VideosCreator') }}{% endblock %}</title>
+  <meta name="description" content="{% block meta_description %}{{ t('seo_home_desc') }}{% endblock %}" />
+  <meta name="robots" content="{% block robots %}index, follow, max-image-preview:large, max-snippet:-1{% endblock %}" />
+  <meta name="googlebot" content="{% block googlebot %}index, follow{% endblock %}" />
+  <link rel="canonical" href="https://{{ brand_domain|default('videoscreator.net') }}{% block canonical_path %}/{% endblock %}" />
+  <meta name="theme-color" content="#0c0c0f" />
+  <meta name="application-name" content="{{ brand|default('VideosCreator') }}" />
+  <meta name="author" content="{{ brand|default('VideosCreator') }}" />
+  <meta property="og:site_name" content="{{ brand|default('VideosCreator') }}" />
+  <meta property="og:locale" content="{% block og_locale %}en_US{% endblock %}" />
+  <meta property="og:title" content="{% block og_title %}{{ brand|default('VideosCreator') }}{% endblock %}" />
+  <meta property="og:description" content="{% block og_description %}{{ t('seo_home_desc') }}{% endblock %}" />
+  <meta property="og:url" content="https://{{ brand_domain|default('videoscreator.net') }}{% block og_path %}/{% endblock %}" />
+  <meta property="og:image" content="https://{{ brand_domain|default('videoscreator.net') }}/static/logo-512.png?v=vc5" />
+  <meta property="og:image:alt" content="{{ brand|default('VideosCreator') }} — Douyin multilingual dubbing" />
+  <meta property="og:image:width" content="512" />
+  <meta property="og:image:height" content="512" />
+  <meta property="og:type" content="website" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="{% block twitter_title %}{{ brand|default('VideosCreator') }}{% endblock %}" />
+  <meta name="twitter:description" content="{% block twitter_description %}{{ t('seo_home_desc') }}{% endblock %}" />
+  <meta name="twitter:image" content="https://{{ brand_domain|default('videoscreator.net') }}/static/logo-512.png?v=vc5" />
+  <meta name="twitter:image:alt" content="{{ brand|default('VideosCreator') }}" />
+  <link rel="icon" href="/static/favicon.ico?v=vc5" sizes="any" />
+  <link rel="icon" type="image/png" href="/static/favicon-32.png?v=vc5" sizes="32x32" />
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png?v=vc5" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/app.css?v=vc20" />
+  {% block head_extra %}{% endblock %}
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "{{ brand|default('VideosCreator') }}",
+    "alternateName": ["Videos Creator", "videoscreator.net"],
+    "url": "https://{{ brand_domain|default('videoscreator.net') }}/",
+    "description": {{ t('seo_home_desc')|tojson }},
+    "inLanguage": ["en", "vi", "ja", "pt", "hi", "de", "id", "tl"],
+    "potentialAction": {
+      "@type": "RegisterAction",
+      "target": "https://{{ brand_domain|default('videoscreator.net') }}/register"
+    }
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "name": "{{ brand|default('VideosCreator') }}",
+    "url": "https://{{ brand_domain|default('videoscreator.net') }}/",
+    "logo": "https://{{ brand_domain|default('videoscreator.net') }}/static/logo-512.png"
+  }
+  </script>
+  {% block jsonld %}{% endblock %}
+</head>
+<body class="{% block body_class %}{% endblock %}">
+  {% block topbar %}
+  <header class="topbar">
+    <div class="topbar-brand">
+      <a class="brand" href="/">
+        <span class="logo">Videos</span>Creator
+      </a>
+      <span class="tagline">{{ t('tagline') }}</span>
+    </div>
+    <div class="topbar-end">
+      {% if user %}
+      <a class="credits-pill credits-pill--bar" href="/billing" title="{{ t('credits_title') }}">
+        <strong>{{ user.credits }}</strong> {{ t('credits') }}
+      </a>
+      {% endif %}
+      <button
+        type="button"
+        class="nav-toggle"
+        id="nav-toggle"
+        aria-expanded="false"
+        aria-controls="site-nav"
+        aria-label="{{ t('nav_menu') }}"
+      >
+        <span class="nav-toggle-bars" aria-hidden="true"></span>
+      </button>
+      <nav class="nav" id="site-nav">
+        {% if user %}
+        <a class="nav-link-a" href="/library">{{ t('library_nav') }}</a>
+        {% if user.is_admin or user.is_super_admin %}
+        <a class="nav-link-a" href="/admin">{{ t('admin_link') }}</a>
+        {% endif %}
+        <a class="credits-pill credits-pill--menu" href="/billing" title="{{ t('credits_title') }}">
+          <strong>{{ user.credits }}</strong> {{ t('credits') }}
+        </a>
+        {% else %}
+        <a class="nav-link-a" href="/login">{{ t('login_title') }}</a>
+        <a class="nav-link-a" href="/register">{{ t('register_free') }}</a>
+        {% endif %}
+        <label class="ui-lang" title="{{ t('ui_lang') }}">
+          <span class="sr-only">{{ t('ui_lang') }}</span>
+          <select id="ui-lang" aria-label="{{ t('ui_lang') }}">
+            {% for lang in ui_languages %}
+            <option value="{{ lang.id }}" {% if lang.id == ui_lang %}selected{% endif %}>{{ lang.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        {% if user %}
+        <span class="nav-email">{{ user.email }}</span>
+        <button type="button" class="nav-link" id="logout-btn">{{ t('logout') }}</button>
+        {% endif %}
+      </nav>
+    </div>
+  </header>
+  {% endblock %}
+  <main class="container {% block container_class %}{% endblock %}">
+    {% block content %}{% endblock %}
+  </main>
+  <script>
+    window.DYFLOW_I18N = {{ i18n_js | default({}) | tojson }};
+    window.DYFLOW_UI_LANG = {{ ui_lang | default('en') | tojson }};
+  </script>
+  <script src="/static/app.js?v=vc20"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

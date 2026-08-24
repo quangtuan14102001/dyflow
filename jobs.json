@@ -1,0 +1,35 @@
+[
+  {
+    "id": "review_phim_001",
+    "source": "https://www.douyin.com/video/7485328399439760679",
+    "script": "AUTO",
+    "export": {
+      "fit": "source",
+      "formats": ["source"]
+    }
+  },
+  {
+    "id": "review_film_china_002",
+    "source": "https://www.douyin.com/video/6979550664972193032",
+    "script": "AUTO",
+    "voiceover": {
+      "audio_mode": "dub"
+    },
+    "export": {
+      "fit": "source",
+      "formats": ["source"]
+    }
+  },
+  {
+    "id": "review_tshirt_004",
+    "source": "https://www.douyin.com/video/7644123303313250427",
+    "script": "AUTO",
+    "voiceover": {
+      "audio_mode": "dub"
+    },
+    "export": {
+      "fit": "source",
+      "formats": ["source"]
+    }
+  }
+]

@@ -1,0 +1,45 @@
+# Profile: chuyen ke / drama ngan / vlog doi thuong (vd. clip Douyin AI ke chuyen)
+# Nhip noi tu nhien, nhieu cam than, it thuat ngu chuyen nganh.
+
+name: casual_story
+label: "Casual story / drama"
+description: "Ke chuyen, doi thoai, cam xuc, nhip tu nhien"
+
+voiceover:
+  ambient_volume: 0.38
+  dub_volume: 5.0
+  auto:
+    target_chars_per_sec: 13.5   # hoi cham hon review de giu ngu khi
+    merge_gap_sec: 0.40
+    merge_max_dur: 3.5
+    merge_max_chars: 56
+    translate_llm: budgeted
+    content_domain: story
+  dub_auto_shorten: true
+
+caption:
+  chars_per_line: 32
+  max_lines: 3
+
+detect_keywords:
+  zh:
+    - 小时候
+    - 故事
+    - 阿姨
+    - 叔叔
+    - 吃饭
+    - 包子
+    - 电影
+    - 眼泪
+  vi:
+    - ngày xưa
+    - dì
+    - chú
+    - bánh bao
+    - khóc
+
+glossary:
+  zh_to_note: |
+    Keep emotional tone: warmth, humor, sadness, urgency.
+    Prefer spoken cadence over literary phrasing.
+    Names/places: keep natural, do not invent medical terms.

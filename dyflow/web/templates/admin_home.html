@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}{{ brand }} — {{ t('admin_home_title') }}{% endblock %}
+{% block robots %}noindex, nofollow{% endblock %}
+
+{% block content %}
+<section class="card">
+  <h1>{{ t('admin_home_title') }}</h1>
+  <p class="sub">{{ t('admin_home_sub') }}</p>
+  {% include "_admin_nav.html" %}
+
+  <div class="admin-cards">
+    <a class="admin-card" href="/admin/payments">
+      <strong>{{ t('admin_nav_payments') }}</strong>
+      <span>{{ stats.payments_pending }} {{ t('admin_pending') }}</span>
+    </a>
+    <a class="admin-card" href="/admin/users">
+      <strong>{{ t('admin_nav_users') }}</strong>
+      <span>{{ stats.users }} {{ t('admin_accounts') }}</span>
+    </a>
+    <a class="admin-card" href="/admin/jobs">
+      <strong>{{ t('admin_nav_jobs') }}</strong>
+      <span>{{ stats.jobs_failed }} {{ t('admin_failed') }}</span>
+    </a>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,47 @@
+# Profile: review / quang cao san pham suc khoe (vd. gel tri)
+# Dung cho clip nhip nhanh, thuat ngu y te, CTA san pham.
+
+name: health_product_review
+label: "Health / product review"
+description: "Clip review san pham suc khoe, testimonial, CTA mua hang"
+
+voiceover:
+  ambient_volume: 0.38
+  dub_volume: 5.0
+  auto:
+    target_chars_per_sec: 14.5
+    merge_gap_sec: 0.35
+    merge_max_dur: 3.2
+    merge_max_chars: 52
+    translate_llm: budgeted
+    content_domain: health
+  dub_auto_shorten: true
+
+caption:
+  chars_per_line: 32
+  max_lines: 3
+
+# Tu khoa goi y tu dong chon profile (zh + vi)
+detect_keywords:
+  zh:
+    - 痔疮
+    - 肉球
+    - 凝胶
+    - 护理
+    - 肛周
+    - 便秘
+    - 护肤
+    - 功效
+  vi:
+    - trĩ
+    - gel
+    - hậu môn
+    - dưỡng
+    - sản phẩm
+
+glossary:
+  zh_to_note: |
+    痔疮/肉球/瘡 = hemorrhoid tissue (NOT spicy food / acne).
+    葵花凝胶 = sunflower care gel.
+    肛周/刚周 = perianal area (NOT pregnancy).
+    清潔/厕所 = after toilet (NOT face wash).

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}{{ brand }} — {{ t('reset_title') }}{% endblock %}
+{% block robots %}noindex, nofollow{% endblock %}
+{% block body_class %}auth-page{% endblock %}
+{% block container_class %}container-auth{% endblock %}
+
+{% block content %}
+<div class="auth-shell">
+  <div class="auth-hero">
+    <a class="brand auth-brand" href="/"><span class="logo">Videos</span>Creator</a>
+    <h2 class="auth-tag">{{ t('reset_tag') }}</h2>
+    <p class="auth-lead">{{ t('reset_lead') }}</p>
+  </div>
+
+  <section class="auth-panel">
+    <h1>{{ t('reset_title') }}</h1>
+    {% if not token_ok %}
+    <p class="error">{{ t('reset_invalid') | safe }}</p>
+    {% else %}
+    <p class="sub">{{ t('reset_sub') }}</p>
+    <form id="reset-form" class="auth-form">
+      <input type="hidden" name="token" value="{{ token }}" />
+      <label class="field">
+        <span>{{ t('new_password') }}</span>
+        <div class="input-wrap">
+          <input class="input" type="password" name="password" id="password" required minlength="6" autocomplete="new-password" placeholder="{{ t('new_password') }}" />
+          <button type="button" class="toggle-pass" data-target="password">{{ t('show') }}</button>
+        </div>
+      </label>
+      <label class="field">
+        <span>{{ t('confirm_password') }}</span>
+        <div class="input-wrap">
+          <input class="input" type="password" name="password2" id="password2" required minlength="6" autocomplete="new-password" placeholder="{{ t('reenter_ph') }}" />
+          <button type="button" class="toggle-pass" data-target="password2">{{ t('show') }}</button>
+        </div>
+      </label>
+      <button type="submit" class="btn primary auth-submit" id="reset-btn">{{ t('save_password') }}</button>
+      <p class="error" id="reset-error"></p>
+      <p class="ok" id="reset-ok" hidden>{{ t('reset_ok') }}</p>
+    </form>
+    {% endif %}
+    <p class="switch-auth"><a href="/login">{{ t('back_login') }}</a></p>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>DyflowReset.init();</script>
+{% endblock %}

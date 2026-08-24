@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}{{ brand }} — {{ t('admin_title') }}{% endblock %}
+{% block robots %}noindex, nofollow{% endblock %}
+
+{% block content %}
+<section class="card">
+  <h1>{{ t('admin_title') }}</h1>
+  <p class="sub">{{ t('admin_sub') }}</p>
+  {% include "_admin_nav.html" %}
+
+  <ul class="admin-pay-list" id="admin-list">
+    {% for p in pending %}
+    <li data-id="{{ p.id }}">
+      <div>
+        <strong>{{ p.user_email or p.user_id }}</strong>
+        · +{{ p.credits }} {{ t('credits') }} · ${{ '%.2f'|format(p.amount_usd) }}
+        · <span class="badge {{ p.status }}">{{ p.status }}</span>
+      </div>
+      <div class="muted">{{ p.id }}</div>
+      {% if p.tx_hash %}
+      <div class="tx-hash">TX: <code>{{ p.tx_hash }}</code></div>
+      {% else %}
+      <div class="muted">—</div>
+      {% endif %}
+      {% if p.note %}<div class="muted">Note: {{ p.note }}</div>{% endif %}
+      <div class="admin-actions">
+        <button class="btn primary btn-sm approve-btn" data-id="{{ p.id }}" {% if not p.tx_hash %}disabled{% endif %}>OK</button>
+        <button class="btn ghost btn-sm reject-btn" data-id="{{ p.id }}">×</button>
+      </div>
+    </li>
+    {% else %}
+    <li class="empty">—</li>
+    {% endfor %}
+  </ul>
+  <p class="error" id="admin-error"></p>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>DyflowAdminPayments.init();</script>
+{% endblock %}

@@ -1,0 +1,15 @@
+{# Admin sub-nav — include trong cac trang /admin/* #}
+<nav class="admin-nav">
+  <a href="/admin" class="{% if admin_tab == 'home' %}active{% endif %}">{{ t('admin_nav_home') }}</a>
+  <a href="/admin/payments" class="{% if admin_tab == 'payments' %}active{% endif %}">{{ t('admin_nav_payments') }}{% if stats and stats.payments_pending %} <span class="admin-pill">{{ stats.payments_pending }}</span>{% endif %}</a>
+  <a href="/admin/users" class="{% if admin_tab == 'users' %}active{% endif %}">{{ t('admin_nav_users') }}</a>
+  <a href="/admin/jobs" class="{% if admin_tab == 'jobs' %}active{% endif %}">{{ t('admin_nav_jobs') }}{% if stats and stats.jobs_failed %} <span class="admin-pill fail">{{ stats.jobs_failed }}</span>{% endif %}</a>
+</nav>
+{% if stats %}
+<div class="admin-stats">
+  <span>{{ t('admin_stat_users') }}: <strong>{{ stats.users }}</strong></span>
+  <span>{{ t('admin_stat_queue') }}: <strong>{{ stats.jobs_queued }}</strong></span>
+  <span>{{ t('admin_stat_running') }}: <strong>{{ stats.jobs_running }}</strong></span>
+  <span>{{ t('admin_stat_failed') }}: <strong>{{ stats.jobs_failed }}</strong></span>
+</div>
+{% endif %}

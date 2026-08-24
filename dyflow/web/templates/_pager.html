@@ -1,0 +1,48 @@
+{# Reusable pager. Can thieu: page, total_pages, page_items, base_path, page_param #}
+{% if total_pages > 1 %}
+<nav class="pager" aria-label="pagination">
+  {% set prev_q = page_param ~ '=' ~ (page - 1) %}
+  {% set next_q = page_param ~ '=' ~ (page + 1) %}
+  {% if extra_query %}
+    {% set prev_href = base_path ~ '?' ~ extra_query ~ '&' ~ prev_q %}
+    {% set next_href = base_path ~ '?' ~ extra_query ~ '&' ~ next_q %}
+  {% else %}
+    {% set prev_href = base_path ~ '?' ~ prev_q %}
+    {% set next_href = base_path ~ '?' ~ next_q %}
+  {% endif %}
+
+  {% if page > 1 %}
+  <a class="pager-nav" href="{{ prev_href }}" aria-label="{{ t('pager_prev') }}">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </a>
+  {% else %}
+  <span class="pager-nav disabled" aria-disabled="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </span>
+  {% endif %}
+
+  {% for item in page_items|default([]) %}
+    {% if item is none %}
+    <span class="pager-ellipsis" aria-hidden="true">…</span>
+    {% elif item == page %}
+    <span class="pager-num active" aria-current="page">{{ item }}</span>
+    {% else %}
+      {% if extra_query %}
+      <a class="pager-num" href="{{ base_path }}?{{ extra_query }}&{{ page_param }}={{ item }}">{{ item }}</a>
+      {% else %}
+      <a class="pager-num" href="{{ base_path }}?{{ page_param }}={{ item }}">{{ item }}</a>
+      {% endif %}
+    {% endif %}
+  {% endfor %}
+
+  {% if page < total_pages %}
+  <a class="pager-nav next" href="{{ next_href }}" aria-label="{{ t('pager_next') }}">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </a>
+  {% else %}
+  <span class="pager-nav next disabled" aria-disabled="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </span>
+  {% endif %}
+</nav>
+{% endif %}

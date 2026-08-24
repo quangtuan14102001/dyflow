@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}{{ brand }} — {{ t('home_title') }}{% endblock %}
+{% block robots %}noindex, nofollow{% endblock %}
+{% block canonical_path %}/{% endblock %}
+
+{% block content %}
+<div class="grid">
+  <section class="card create">
+    <h1>{{ t('home_title') }}</h1>
+    <p class="sub">{{ t('home_sub', n=credits_per_video) }}</p>
+
+    {% if trial and trial.active %}
+    <p class="trial-banner ok-banner">{{ t('trial_banner_active', left=trial.remaining_today, n=trial.videos_per_day, ends=trial.ends_label) | safe }}</p>
+    {% else %}
+    <div class="trial-banner">
+      <p>{{ t('trial_banner_join', url=channel_link, channel=channel_name, days=trial.days if trial else 15, n=trial.videos_per_day if trial else 5) | safe }}</p>
+      <button type="button" class="btn ghost btn-sm" id="trial-verify-btn">{{ t('trial_verify_btn') }}</button>
+    </div>
+    {% endif %}
+
+    <form id="job-form">
+      <label class="field">
+        <span>{{ t('url_label') }}</span>
+        <textarea name="url" id="url" rows="5" placeholder="{{ t('url_ph') }}" required autocomplete="off"></textarea>
+      </label>
+
+      <div class="quote-box" id="quote-box" hidden>
+        <div class="quote-head">
+          <span id="quote-status">{{ t('quote_title') }}</span>
+          <strong id="quote-total"></strong>
+        </div>
+        <ul class="quote-list" id="quote-list"></ul>
+        <p class="quote-note" id="quote-note">{{ t('quote_rule') }}</p>
+      </div>
+
+      <label class="field">
+        <span>{{ t('dub_lang') }}</span>
+        <select name="lang" id="lang" class="select">
+          {% for lang in languages %}
+          <option value="{{ lang.id }}" {% if lang.id == default_dub_lang %}selected{% endif %}>{{ lang.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <div class="field">
+        <span>{{ t('voice_label') }}</span>
+        <p class="hint left voice-hint" id="voice-hint"></p>
+        <div class="voices" id="voice-options"></div>
+        <div class="voices voices-tts" id="tts-options"></div>
+      </div>
+
+      <button type="submit" class="btn primary" id="submit-btn">{{ t('start') }}</button>
+      <p class="hint">{{ t('home_hint') }}</p>
+      <p class="error" id="form-error"></p>
+    </form>
+  </section>
+
+  <section class="card history">
+    <div class="history-head">
+      <h2><a href="/library" style="color:inherit;text-decoration:none">{{ t('your_videos') }}</a></h2>
+      {% if total_jobs %}
+      <span class="history-count">{{ total_jobs }}</span>
+      {% endif %}
+    </div>
+    <ul class="job-list" id="job-list">
+      {% for j in jobs %}
+      <li>
+        <a href="/jobs/{{ j.id }}">
+          <span class="badge {{ j.status }}">{{ t('status_' + j.status) }}{% if j.status == 'running' and j.progress %} · {{ j.progress }}%{% endif %}</span>
+          <span class="job-meta">{{ j.target_lang or 'vi' }} · {{ j.voice }}</span>
+          <span class="job-time" data-ts="{{ j.created_at }}"></span>
+          <span class="job-url">{{ j.source_url }}</span>
+          {% if j.status == 'queued' and j.queue_pos %}
+          <span class="job-msg">{{ t('queue_pos', pos=j.queue_pos, total=j.queue_total) }}</span>
+          {% elif j.message %}
+          <span class="job-msg">{{ j.message }}</span>
+          {% endif %}
+        </a>
+      </li>
+      {% else %}
+      <li class="empty">{{ t('empty_jobs') }}</li>
+      {% endfor %}
+    </ul>
+    {% if total_pages > 1 %}
+    <nav class="pager" aria-label="pagination">
+      {% if page > 1 %}
+      <a class="pager-nav" href="/?page={{ page - 1 }}" aria-label="{{ t('pager_prev') }}">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+      {% else %}
+      <span class="pager-nav disabled" aria-disabled="true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>
+      {% endif %}
+
+      {% for item in page_items|default([]) %}
+        {% if item is none %}
+        <span class="pager-ellipsis" aria-hidden="true">…</span>
+        {% elif item == page %}
+        <span class="pager-num active" aria-current="page">{{ item }}</span>
+        {% else %}
+        <a class="pager-num" href="/?page={{ item }}">{{ item }}</a>
+        {% endif %}
+      {% endfor %}
+
+      {% if page < total_pages %}
+      <a class="pager-nav next" href="/?page={{ page + 1 }}" aria-label="{{ t('pager_next') }}">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+      {% else %}
+      <span class="pager-nav next disabled" aria-disabled="true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>
+      {% endif %}
+    </nav>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window.DYFLOW_LANGUAGES = {{ languages | tojson }};
+  window.DYFLOW_TTS = {{ tts_choices | tojson }};
+  DyflowHome.init();
+  DyflowTrial.init();
+</script>
+{% endblock %}

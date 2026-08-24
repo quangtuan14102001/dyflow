@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}{{ brand }} — {{ t('forgot_title') }}{% endblock %}
+{% block robots %}noindex, nofollow{% endblock %}
+{% block body_class %}auth-page{% endblock %}
+{% block container_class %}container-auth{% endblock %}
+
+{% block content %}
+<div class="auth-shell">
+  <div class="auth-hero">
+    <a class="brand auth-brand" href="/"><span class="logo">Videos</span>Creator</a>
+    <h2 class="auth-tag">{{ t('forgot_tag') }}</h2>
+    <p class="auth-lead">{{ t('forgot_lead') }}</p>
+  </div>
+
+  <section class="auth-panel">
+    <h1>{{ t('forgot_title') }}</h1>
+    <p class="sub">{{ t('forgot_sub') }}</p>
+
+    <form id="forgot-form" class="auth-form">
+      <label class="field">
+        <span>Email</span>
+        <input class="input" type="email" name="email" id="email" required autocomplete="email" placeholder="ban@email.com" />
+      </label>
+      <button type="submit" class="btn primary auth-submit" id="forgot-btn">{{ t('send_reset') }}</button>
+      <p class="error" id="forgot-error"></p>
+      <p class="ok" id="forgot-ok" hidden></p>
+    </form>
+
+    <p class="switch-auth"><a href="/login">{{ t('back_login') }}</a></p>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>DyflowForgot.init();</script>
+{% endblock %}

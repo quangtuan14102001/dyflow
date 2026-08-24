@@ -1,0 +1,52 @@
+"""Nguong dub — chinh o day, khong hardcode rai rac."""
+
+# --- Bước 1: Transcribe ---
+WHISPER_WORD_TIMESTAMPS = True
+WHISPER_VAD_DEFAULT = False
+WHISPER_VAD_MIN_SILENCE_MS = 500
+WHISPER_VAD_SPEECH_PAD_MS = 200
+WHISPER_DURATION_WARN_RATIO = 0.05
+
+# --- Bước 2: Dịch / rút gọn ---
+TRANSLATE_MAX_RETRIES = 2
+TRANSLATE_MIN_CHAR_RATIO = {
+    "vi": 0.30,
+    "en": 0.35,
+    "ja": 0.25,
+    "pt": 0.35,
+    "hi": 0.30,
+    "de": 0.35,
+    "id": 0.35,
+    "tl": 0.35,
+    "default": 0.30,
+}
+TRANSLATE_RETRY_SLEEP_SEC = 0.6
+DUB_CHARS_PER_SEC = 12.0
+# Ngân sách ký tự khi dịch/rút gọn chủ động (Edge TTS rate mặc định, tiếng Việt nói tự nhiên)
+TARGET_CHARS_PER_SEC = 14.5
+DUB_SHORTEN_MAX_RETRIES = 2
+DUB_SHORTEN_CHAR_MARGIN = 0.90
+
+# --- Bước 3: TTS rate-matching ---
+TTS_RATE_MATCH_TOLERANCE = 0.08
+TTS_RATE_MATCH_FAIL_RATIO = 0.15
+TTS_RATE_MAX_ITERS = 3
+TTS_EDGE_RATE_MIN_PCT = -15
+TTS_EDGE_RATE_MAX_PCT = 22
+TTS_ATEMPO_MIN = 0.92
+TTS_ATEMPO_MAX = 1.08
+TTS_ATEMPO_ONLY_IF_DRIFT_RATIO = 0.08
+
+# --- Bước 4: Loudnorm ---
+LOUDNORM_TARGET_I = -16.0
+LOUDNORM_TRUE_PEAK = -1.5
+LOUDNORM_LRA = 8.0
+LOUDNORM_SAMPLE_RATE = 24000
+
+# --- Bước 5: Ghép + QA report ---
+TIMING_WARN_MS = 100
+VOLUME_WARN_DB = 2.0
+CUMULATIVE_WARN_MS = 500
+QA_MIN_SEGMENT_COVERAGE = 0.55
+QA_MIN_TOTAL_COVERAGE = 0.75
+SEGMENT_CROSSFADE_MS = 15

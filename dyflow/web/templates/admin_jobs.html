@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}{{ brand }} — {{ t('admin_nav_jobs') }}{% endblock %}
+{% block robots %}noindex, nofollow{% endblock %}
+
+{% block content %}
+<section class="card">
+  <h1>{{ t('admin_nav_jobs') }}</h1>
+  <p class="sub">{{ t('admin_jobs_sub') }}</p>
+  {% include "_admin_nav.html" %}
+
+  <div class="admin-filters">
+    <a class="btn ghost btn-sm{% if not status_filter %} active{% endif %}" href="/admin/jobs">All</a>
+    <a class="btn ghost btn-sm{% if status_filter == 'failed' %} active{% endif %}" href="/admin/jobs?status=failed">failed</a>
+    <a class="btn ghost btn-sm{% if status_filter == 'running' %} active{% endif %}" href="/admin/jobs?status=running">running</a>
+    <a class="btn ghost btn-sm{% if status_filter == 'queued' %} active{% endif %}" href="/admin/jobs?status=queued">queued</a>
+    <a class="btn ghost btn-sm{% if status_filter == 'completed' %} active{% endif %}" href="/admin/jobs?status=completed">completed</a>
+  </div>
+
+  <ul class="admin-job-list" id="admin-job-list">
+    {% for j in jobs %}
+    <li data-id="{{ j.id }}">
+      <div class="admin-job-top">
+        <span class="badge {{ j.status }}">{{ j.status }}</span>
+        <span class="muted">{{ j.user_email or j.user_id or '—' }}</span>
+        <span class="muted">{{ j.target_lang or 'vi' }} · {{ j.voice }} · {{ j.credits_cost }} cr</span>
+      </div>
+      <div class="job-url">{{ j.source_url }}</div>
+      {% if j.error %}<div class="error-line">{{ j.error }}</div>{% endif %}
+      <div class="admin-actions">
+        {% if j.status == 'failed' %}
+        <button type="button" class="btn primary btn-sm admin-retry-btn" data-id="{{ j.id }}">{{ t('admin_retry') }}</button>
+        {% endif %}
+        {% if j.credits_cost and not j.refunded %}
+        <button type="button" class="btn ghost btn-sm admin-refund-btn" data-id="{{ j.id }}">{{ t('admin_refund') }}</button>
+        {% elif j.refunded %}
+        <span class="muted">refunded</span>
+        {% endif %}
+      </div>
+    </li>
+    {% else %}
+    <li class="empty">—</li>
+    {% endfor %}
+  </ul>
+  <p class="error" id="admin-error"></p>
+  {% with
+    page=page,
+    total_pages=total_pages,
+    page_items=page_items,
+    base_path='/admin/jobs',
+    page_param='page',
+    extra_query=(('status=' ~ status_filter) if status_filter else '')
+  %}
+    {% include "_pager.html" %}
+  {% endwith %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>DyflowAdminJobs.init();</script>
+{% endblock %}

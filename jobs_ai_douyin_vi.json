@@ -1,0 +1,14 @@
+[
+  {
+    "id": "douyin_ai_vi_20260820",
+    "source": "https://www.douyin.com/video/7668684275889360178",
+    "script": "AUTO",
+    "voiceover": {
+      "audio_mode": "dub"
+    },
+    "export": {
+      "fit": "source",
+      "formats": ["source"]
+    }
+  }
+]

@@ -1,0 +1,357 @@
+{% extends "base.html" %}
+{% block title %}{{ t('seo_home_title') }}{% endblock %}
+{% block og_title %}{{ t('seo_home_title') }}{% endblock %}
+{% block twitter_title %}{{ t('seo_home_title') }}{% endblock %}
+{% block meta_description %}{{ t('seo_home_desc') }}{% endblock %}
+{% block og_description %}{{ t('seo_home_desc') }}{% endblock %}
+{% block twitter_description %}{{ t('seo_home_desc') }}{% endblock %}
+{% block canonical_path %}/{% endblock %}
+{% block robots %}index, follow, max-image-preview:large, max-snippet:-1{% endblock %}
+{% block og_locale %}{% if ui_lang == 'vi' %}vi_VN{% elif ui_lang == 'ja' %}ja_JP{% else %}en_US{% endif %}{% endblock %}
+{% block body_class %}landing-page{% endblock %}
+{% block container_class %}container-landing{% endblock %}
+
+{% block head_extra %}
+<link rel="preload" as="image" href="/static/landing/demo-before.jpg?v=3" />
+<meta name="keywords" content="Douyin translator, Douyin dubbing, Douyin to English, multilingual video, AI voiceover, auto captions, VideosCreator" />
+{% endblock %}
+
+{% block jsonld %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "{{ brand|default('VideosCreator') }}",
+  "applicationCategory": "MultimediaApplication",
+  "operatingSystem": "Web",
+  "url": "https://{{ brand_domain|default('videoscreator.net') }}/",
+  "description": {{ t('seo_home_desc')|tojson }},
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD",
+    "description": "Free trial credits on signup"
+  },
+  "featureList": [
+    "Douyin link download",
+    "Speech transcription",
+    "Multilingual translation",
+    "TTS voiceover",
+    "Burned-in captions",
+    "MP4 export"
+  ]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": {{ t('landing_how_title')|tojson }},
+  "description": {{ t('landing_how_sub')|tojson }},
+  "step": [
+    {
+      "@type": "HowToStep",
+      "position": 1,
+      "name": {{ t('landing_step1_t')|tojson }},
+      "text": {{ t('landing_step1_d')|tojson }}
+    },
+    {
+      "@type": "HowToStep",
+      "position": 2,
+      "name": {{ t('landing_step2_t')|tojson }},
+      "text": {{ t('landing_step2_d')|tojson }}
+    },
+    {
+      "@type": "HowToStep",
+      "position": 3,
+      "name": {{ t('landing_step3_t')|tojson }},
+      "text": {{ t('landing_step3_d')|tojson }}
+    }
+  ]
+}
+</script>
+{% endblock %}
+
+{% block topbar %}
+<header class="lp-nav">
+  <a class="lp-nav-brand" href="/"><span class="logo">Videos</span>Creator</a>
+  <div class="lp-nav-actions">
+    <label class="ui-lang lp-nav-lang" title="{{ t('ui_lang') }}">
+      <span class="sr-only">{{ t('ui_lang') }}</span>
+      <select id="ui-lang" aria-label="{{ t('ui_lang') }}">
+        {% for lang in ui_languages %}
+        <option value="{{ lang.id }}" {% if lang.id == ui_lang %}selected{% endif %}>{{ lang.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <a class="lp-nav-link" href="/login">{{ t('login_title') }}</a>
+    <a class="btn primary lp-nav-cta" href="/register">{{ t('register_free') }}</a>
+  </div>
+</header>
+{% endblock %}
+
+{% block content %}
+<section class="lp-hero" aria-label="{{ brand }}">
+  <div class="lp-hero-bg" aria-hidden="true"></div>
+  <div class="lp-hero-grid">
+    <div class="lp-hero-copy">
+      <p class="lp-brand reveal"><span class="logo">Videos</span>Creator</p>
+      <h1 class="lp-h1 reveal reveal-delay-1">{{ t('landing_h1') }}</h1>
+      <p class="lp-sub reveal reveal-delay-2">{{ t('landing_sub') }}</p>
+      <div class="lp-cta reveal reveal-delay-3">
+        <a class="btn primary lp-btn-main" href="/register">{{ t('register_free') }}</a>
+        <a class="btn ghost lp-btn-sec" href="/login">{{ t('login_title') }}</a>
+      </div>
+    </div>
+
+    <div class="lp-stage reveal reveal-delay-2">
+      <div class="lp-phone">
+        <div class="lp-phone-screen lp-phone-screen--media">
+          <video
+            class="lp-phone-video"
+            autoplay
+            muted
+            loop
+            playsinline
+            poster="/static/landing/demo-before.jpg?v=3"
+            title="{{ t('landing_demo_title') }}"
+          >
+            <source src="/static/landing/demo-before-loop.mp4?v=3" type="video/mp4" />
+          </video>
+          <div class="lp-phone-overlay" aria-hidden="true">
+            <span class="lp-phone-badge">中 → EN</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="lp-demo" aria-labelledby="demo-title">
+  <div class="lp-section-inner">
+    <h2 id="demo-title">{{ t('landing_demo_title') }}</h2>
+    <p class="lp-section-lead">{{ t('landing_demo_sub') }}</p>
+    <div class="lp-compare">
+      <figure class="lp-frame lp-frame-before">
+        <div class="lp-frame-media">
+          <video
+            class="lp-demo-video"
+            autoplay
+            muted
+            loop
+            playsinline
+            poster="/static/landing/demo-before.jpg?v=3"
+          >
+            <source src="/static/landing/demo-before-loop.mp4?v=3" type="video/mp4" />
+          </video>
+        </div>
+        <figcaption>{{ t('landing_demo_before') }}</figcaption>
+      </figure>
+      <div class="lp-compare-arrow" aria-hidden="true">
+        <span></span>
+      </div>
+      <figure class="lp-frame lp-frame-after">
+        <div class="lp-frame-media">
+          <video
+            class="lp-demo-video"
+            autoplay
+            muted
+            loop
+            playsinline
+            poster="/static/landing/demo-after.jpg?v=3"
+          >
+            <source src="/static/landing/demo-after-loop.mp4?v=3" type="video/mp4" />
+          </video>
+          <div class="lp-voice-pill">
+            <span class="lp-voice-dot"></span>
+            EN · TTS
+          </div>
+        </div>
+        <figcaption>{{ t('landing_demo_after') }}</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section class="lp-pipe" aria-labelledby="pipe-title">
+  <div class="lp-section-inner">
+    <h2 id="pipe-title">{{ t('landing_pipe_title') }}</h2>
+    <p class="lp-section-lead">{{ t('landing_pipe_sub') }}</p>
+    <ol class="lp-pipeline" aria-hidden="true">
+      <li style="--i:0"><span class="lp-pipe-ico" data-ico="dl"></span><strong>{{ t('landing_pipe1') }}</strong></li>
+      <li style="--i:1"><span class="lp-pipe-ico" data-ico="mic"></span><strong>{{ t('landing_pipe2') }}</strong></li>
+      <li style="--i:2"><span class="lp-pipe-ico" data-ico="swap"></span><strong>{{ t('landing_pipe3') }}</strong></li>
+      <li style="--i:3"><span class="lp-pipe-ico" data-ico="cap"></span><strong>{{ t('landing_pipe4') }}</strong></li>
+      <li style="--i:4"><span class="lp-pipe-ico" data-ico="play"></span><strong>{{ t('landing_pipe5') }}</strong></li>
+    </ol>
+  </div>
+</section>
+
+<section class="lp-how" aria-labelledby="how-title">
+  <div class="lp-section-inner">
+    <h2 id="how-title">{{ t('landing_how_title') }}</h2>
+    <p class="lp-section-lead">{{ t('landing_how_sub') }}</p>
+    <ol class="lp-flow">
+      <li class="lp-flow-item">
+        <div class="lp-flow-stage" aria-hidden="true">
+          <div class="lp-ui lp-ui-paste">
+            <div class="lp-ui-bar"><span></span><span></span><span></span></div>
+            <div class="lp-ui-label">douyin.com/video/…</div>
+            <div class="lp-ui-field">
+              <span class="lp-typewriter">https://v.douyin.com/iP8xK2…</span>
+              <i class="lp-caret"></i>
+            </div>
+            <div class="lp-ui-chips">
+              <span class="is-on">+ paste</span>
+              <span>×3 links</span>
+            </div>
+          </div>
+        </div>
+        <div class="lp-flow-copy">
+          <span class="lp-step-n">01</span>
+          <strong>{{ t('landing_step1_t') }}</strong>
+          <span>{{ t('landing_step1_d') }}</span>
+        </div>
+      </li>
+      <li class="lp-flow-item">
+        <div class="lp-flow-stage" aria-hidden="true">
+          <div class="lp-ui lp-ui-voice">
+            <div class="lp-ui-bar"><span></span><span></span><span></span></div>
+            <div class="lp-lang-cycle">
+              <span>中</span>
+              <em>→</em>
+              <span class="lp-lang-active">EN</span>
+            </div>
+            <div class="lp-voice-row">
+              <span class="lp-voice-opt is-on">Male</span>
+              <span class="lp-voice-opt">Female</span>
+            </div>
+            <div class="lp-eq">
+              <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+            </div>
+          </div>
+        </div>
+        <div class="lp-flow-copy">
+          <span class="lp-step-n">02</span>
+          <strong>{{ t('landing_step2_t') }}</strong>
+          <span>{{ t('landing_step2_d') }}</span>
+        </div>
+      </li>
+      <li class="lp-flow-item">
+        <div class="lp-flow-stage" aria-hidden="true">
+          <div class="lp-ui lp-ui-dl">
+            <div class="lp-ui-bar"><span></span><span></span><span></span></div>
+            <div class="lp-dl-thumb">
+          <img src="/static/landing/demo-after.jpg?v=3" alt="{{ t('landing_demo_after') }}" />
+              <div class="lp-dl-ring"></div>
+              <div class="lp-dl-check"></div>
+            </div>
+            <div class="lp-dl-meta">
+              <strong>ready.mp4</strong>
+              <span class="lp-dl-bar"><i></i></span>
+            </div>
+          </div>
+        </div>
+        <div class="lp-flow-copy">
+          <span class="lp-step-n">03</span>
+          <strong>{{ t('landing_step3_t') }}</strong>
+          <span>{{ t('landing_step3_d') }}</span>
+        </div>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<section class="lp-langs" aria-labelledby="langs-title">
+  <div class="lp-section-inner">
+    <h2 id="langs-title">{{ t('landing_langs_title') }}</h2>
+    <p class="lp-section-lead">{{ t('landing_langs_sub') }}</p>
+    <div class="lp-lang-orbit" aria-hidden="true">
+      <div class="lp-lang-core">
+        <span class="lp-lang-core-zh">中</span>
+        <span class="lp-lang-core-arrow">→</span>
+        <span class="lp-lang-core-out" id="lp-lang-rot">EN</span>
+      </div>
+    </div>
+    <div class="lp-lang-track">
+      <div class="lp-lang-row">
+        <span>中文</span><span>English</span><span>Tiếng Việt</span><span>日本語</span>
+        <span>한국어</span><span>Bahasa</span><span>Português</span><span>Deutsch</span>
+        <span>हिन्दी</span><span>ไทย</span><span>Español</span><span>Français</span>
+        <span>中文</span><span>English</span><span>Tiếng Việt</span><span>日本語</span>
+        <span>한국어</span><span>Bahasa</span><span>Português</span><span>Deutsch</span>
+        <span>हिन्दी</span><span>ไทย</span><span>Español</span><span>Français</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="lp-out" aria-labelledby="out-title">
+  <div class="lp-section-inner">
+    <h2 id="out-title">{{ t('landing_out_title') }}</h2>
+    <p class="lp-section-lead">{{ t('landing_out_sub') }}</p>
+    <ul class="lp-out-list">
+      <li>
+        <div class="lp-out-visual lp-out-v1" aria-hidden="true">
+          <span class="lp-wave-bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+        </div>
+        <strong>{{ t('landing_out1_t') }}</strong>
+        <span>{{ t('landing_out1_d') }}</span>
+      </li>
+      <li>
+        <div class="lp-out-visual lp-out-v2" aria-hidden="true">
+          <img class="lp-out-thumb" src="/static/landing/demo-after.jpg?v=3" alt="{{ t('landing_out2_t') }}" />
+        </div>
+        <strong>{{ t('landing_out2_t') }}</strong>
+        <span>{{ t('landing_out2_d') }}</span>
+      </li>
+      <li>
+        <div class="lp-out-visual lp-out-v3" aria-hidden="true">
+          <img class="lp-out-thumb" src="/static/landing/demo-before.jpg?v=3" alt="{{ t('landing_out3_t') }}" />
+          <span class="lp-mp4 lp-mp4-over">.mp4</span>
+        </div>
+        <strong>{{ t('landing_out3_t') }}</strong>
+        <span>{{ t('landing_out3_d') }}</span>
+      </li>
+    </ul>
+  </div>
+</section>
+
+<section class="lp-cta-band" aria-labelledby="cta-title">
+  <div class="lp-section-inner lp-cta-inner">
+    <h2 id="cta-title">{{ t('landing_cta_title') }}</h2>
+    <p class="lp-section-lead">{{ t('landing_cta_sub') }}</p>
+    <div class="lp-cta">
+      <a class="btn primary lp-btn-main" href="/register">{{ t('register_free') }}</a>
+      <a class="btn ghost lp-btn-sec" href="/login">{{ t('login_title') }}</a>
+    </div>
+  </div>
+</section>
+
+<footer class="lp-foot">
+  <span class="lp-foot-brand"><span class="logo">Videos</span>Creator</span>
+  <nav class="lp-foot-nav">
+    <a href="/login">{{ t('login_title') }}</a>
+    <a href="/register">{{ t('register_free') }}</a>
+  </nav>
+  <span class="lp-foot-domain">{{ brand_domain }}</span>
+</footer>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const el = document.getElementById("lp-lang-rot");
+  if (!el) return;
+  const langs = ["EN", "VI", "JA", "KO", "PT", "DE", "HI", "ID"];
+  let i = 0;
+  setInterval(function () {
+    i = (i + 1) % langs.length;
+    el.classList.remove("is-flip");
+    void el.offsetWidth;
+    el.textContent = langs[i];
+    el.classList.add("is-flip");
+  }, 1400);
+})();
+</script>
+{% endblock %}

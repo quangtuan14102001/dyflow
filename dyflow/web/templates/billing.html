@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}{{ brand }} — {{ t('billing_title') }}{% endblock %}
+{% block robots %}noindex, nofollow{% endblock %}
+
+{% block content %}
+<div class="grid">
+  <section class="card">
+    <h1>{{ t('billing_title') }}</h1>
+    <p class="sub">{{ t('billing_sub', n=user.credits) | safe }}</p>
+
+    {% if trial and trial.active %}
+    <p class="trial-banner ok-banner">{{ t('trial_banner_active', left=trial.remaining_today, n=trial.videos_per_day, ends=trial.ends_label) | safe }}</p>
+    {% else %}
+    <div class="trial-banner">
+      <p>{{ t('trial_banner_join', url=channel_link, channel=channel_name, days=trial.days if trial else 15, n=trial.videos_per_day if trial else 5) | safe }}</p>
+      <button type="button" class="btn ghost btn-sm" id="trial-verify-btn">{{ t('trial_verify_btn') }}</button>
+    </div>
+    {% endif %}
+
+    {% if not gateway_ready %}
+    <p class="error">{{ t('wallet_missing') }}</p>
+    {% else %}
+    <div class="wallet-box">
+      <div class="wallet-row"><span>Asset</span><strong>{{ wallet.asset }}</strong></div>
+      <div class="wallet-row"><span>{{ t('network') }}</span><strong>{{ wallet.network }}</strong></div>
+      <div class="wallet-row">
+        <span>{{ t('recv_addr') }}</span>
+        <code id="wallet-address">{{ wallet.address }}</code>
+        <button type="button" class="btn ghost btn-sm" id="copy-wallet">{{ t('copy') }}</button>
+      </div>
+      <p class="hint left">{{ t('wallet_hint', asset=wallet.asset, network=wallet.network) }}</p>
+    </div>
+    {% endif %}
+
+    <div class="packages">
+      {% for p in packages %}
+      <div class="pkg{% if p.highlight %} pkg-hot{% else %} pkg-dim{% endif %}">
+        <div class="pkg-name">{{ p.label }}{% if p.highlight %} <span class="pkg-badge">HOT</span>{% endif %}</div>
+        <div class="pkg-credits">{{ p.credits }} <span>{{ t('credits') }}</span></div>
+        {% if p.id == 'trial' %}<div class="pkg-blurb">{{ t('pkg_blurb_trial') }}</div>{% elif p.blurb %}<div class="pkg-blurb">{{ p.blurb }}</div>{% elif not p.highlight %}<div class="pkg-blurb">{{ t('pkg_locked') }}</div>{% endif %}
+        <div class="pkg-price">${{ '%.0f'|format(p.price_usd) }} {{ wallet.asset if wallet else 'USDT' }}</div>
+        <button class="btn primary topup-btn" data-package="{{ p.id }}" data-amount="{{ p.price_usd }}" data-credits="{{ p.credits }}" {% if not gateway_ready or not p.highlight %}disabled{% endif %}>
+          {{ t('choose_pkg') }}
+        </button>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="card nested" id="topup-panel" hidden>
+      <h2>{{ t('topup_step2') }}</h2>
+      <p class="sub" id="topup-summary"></p>
+      <ol class="steps-manual">
+        <li>{{ t('step_transfer', network=(wallet.network if wallet else 'TRC20')) | safe }}</li>
+        <li>{{ t('step_copy_tx') | safe }}</li>
+        <li>{{ t('step_paste') }}</li>
+      </ol>
+      <form id="submit-tx-form">
+        <input type="hidden" name="payment_id" id="payment_id" />
+        <label class="field">
+          <span>{{ t('tx_label') }}</span>
+          <input type="text" name="tx_hash" id="tx_hash" required placeholder="{{ t('tx_ph') }}" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>{{ t('note_label') }}</span>
+          <input type="text" name="note" id="note" placeholder="{{ t('note_ph') }}" autocomplete="off" />
+        </label>
+        <button type="submit" class="btn primary" id="submit-tx-btn">{{ t('submit_tx') }}</button>
+      </form>
+      <p class="error" id="topup-error"></p>
+      <p class="ok" id="topup-ok" hidden>{{ t('topup_pending_ok') }}</p>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>{{ t('recent_payments') }}</h2>
+    <ul class="tx-list">
+      {% for p in payments %}
+      <li>
+        <span class="tx-type {{ p.status }}">{{ p.status }}</span>
+        <span class="tx-amount plus">+{{ p.credits }}</span>
+        <span class="tx-bal">${{ '%.0f'|format(p.amount_usd) }} · {{ p.id[:12] }}…</span>
+        <span class="tx-time" data-ts="{{ p.created_at }}"></span>
+      </li>
+      {% else %}
+      <li class="empty">{{ t('empty_payments') }}</li>
+      {% endfor %}
+    </ul>
+    {% with
+      page=pay_page,
+      total_pages=pay_total_pages,
+      page_items=pay_page_items,
+      base_path='/billing',
+      page_param='pay_page',
+      extra_query=('tx_page=' ~ tx_page)
+    %}
+      {% include "_pager.html" %}
+    {% endwith %}
+
+    <h2 style="margin-top:28px">{{ t('credit_history') }}</h2>
+    <ul class="tx-list">
+      {% for tx in transactions %}
+      <li>
+        <span class="tx-type {{ tx.type }}">{{ tx.type }}</span>
+        <span class="tx-amount {{ 'plus' if tx.amount > 0 else 'minus' }}">
+          {{ '+' if tx.amount > 0 else '' }}{{ tx.amount }}
+        </span>
+        <span class="tx-bal">{{ t('balance_left', n=tx.balance_after) }}</span>
+        <span class="tx-time" data-ts="{{ tx.created_at }}"></span>
+      </li>
+      {% else %}
+      <li class="empty">{{ t('empty_tx') }}</li>
+      {% endfor %}
+    </ul>
+    {% with
+      page=tx_page,
+      total_pages=tx_total_pages,
+      page_items=tx_page_items,
+      base_path='/billing',
+      page_param='tx_page',
+      extra_query=('pay_page=' ~ pay_page)
+    %}
+      {% include "_pager.html" %}
+    {% endwith %}
+
+    {% if user.is_admin or user.is_super_admin %}
+    <p style="margin-top:20px"><a class="btn ghost" href="/admin">{{ t('admin_link') }}</a></p>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>DyflowBilling.init(); DyflowTrial.init();</script>
+{% endblock %}
