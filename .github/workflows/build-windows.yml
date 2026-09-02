@@ -1,0 +1,55 @@
+# Dong goi .exe tren Windows. Mac khong xuat duoc VideosCreator.exe.
+# Chay: GitHub -> Actions -> build-windows -> Run workflow
+# Khach tai artifact VideosCreator-windows (zip ca folder, double-click .exe).
+name: build-windows
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "exe-*"
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ffmpeg
+        run: choco install ffmpeg -y --no-progress
+
+      - name: Install Python deps (CPU torch)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements.txt -r requirements-desktop.txt
+
+      - name: PyInstaller
+        run: python -m PyInstaller --noconfirm --clean VideosCreator.spec
+
+      - name: Copy ffmpeg + readme next to exe
+        shell: pwsh
+        run: |
+          $ff = (Get-Command ffmpeg).Source
+          Copy-Item $ff dist\VideosCreator\ffmpeg.exe -Force
+          $fp = (Get-Command ffprobe -ErrorAction SilentlyContinue)
+          if ($fp) { Copy-Item $fp.Source dist\VideosCreator\ffprobe.exe -Force }
+          Copy-Item scripts\WINDOWS_README.txt dist\VideosCreator\README.txt -Force
+          Get-Item dist\VideosCreator\VideosCreator.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VideosCreator-windows
+          path: dist/VideosCreator
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6

@@ -574,6 +574,22 @@ const DyflowHome = {
     return (this._languages || []).find((l) => l.id === langId) || null;
   },
 
+  _voiceCard(v, checked) {
+    const label = v.label_key ? _(v.label_key, v.label) : (v.label || v.id);
+    const el = document.createElement("label");
+    el.className = "voice-opt";
+    el.innerHTML = `
+      <input type="radio" name="voice" value="${v.id}" ${checked ? "checked" : ""} />
+      <span class="voice-card">
+        <span class="voice-copy">
+          <strong>${label}</strong>
+        </span>
+        <span class="voice-gender">${v.gender === "female" ? "♀" : "♂"}</span>
+        <button type="button" class="voice-play" data-voice="${v.id}" title="${_("preview")}" aria-label="${_("preview")}">▶</button>
+      </span>`;
+    return el;
+  },
+
   _renderVoices() {
     const wrap = document.getElementById("voice-options");
     const hint = document.getElementById("voice-hint");
@@ -581,29 +597,35 @@ const DyflowHome = {
     const meta = this._currentLangMeta();
     const voices = (meta && meta.voices) || [];
     if (hint) {
-      hint.textContent = voices.length
-        ? _("voice_count", "").replace("{n}", String(voices.length)) ||
-          `${voices.length} voices`
-        : "";
-      // prefer i18n if key exists without broken replace
       const tpl = (window.DYFLOW_I18N || {}).voice_count;
-      if (tpl) hint.textContent = tpl.replace("{n}", String(voices.length + (this._ttsChoices || []).length));
+      hint.textContent = tpl || _("voice_count", `${voices.length} voices`);
     }
     const prev = (wrap.querySelector('input[name="voice"]:checked') || {}).value;
     wrap.innerHTML = "";
-    voices.forEach((v, i) => {
-      const checked = prev ? prev === v.id : i === 0;
-      const label = v.gender === "female" ? _("voice_female") : _("voice_male");
-      const el = document.createElement("label");
-      el.className = "voice-opt";
-      el.innerHTML = `
-        <input type="radio" name="voice" value="${v.id}" ${checked ? "checked" : ""} />
-        <span class="voice-card">
-          <strong>${label}</strong>
-          <span class="voice-gender">${v.gender === "female" ? "♀" : "♂"}</span>
-          <button type="button" class="voice-play" data-voice="${v.id}" title="${_("preview")}" aria-label="${_("preview")}">▶</button>
-        </span>`;
-      wrap.appendChild(el);
+    const groups = [
+      { gender: "male", title: _("voice_male") },
+      { gender: "female", title: _("voice_female") },
+    ];
+    const defaultId = voices.some((v) => v.id === "male_adult")
+      ? "male_adult"
+      : ((voices[0] || {}).id || "male");
+    groups.forEach((g) => {
+      const items = voices.filter((v) => v.gender === g.gender);
+      if (!items.length) return;
+      const block = document.createElement("div");
+      block.className = "voice-group";
+      const title = document.createElement("p");
+      title.className = "voice-group-label";
+      title.textContent = g.title;
+      block.appendChild(title);
+      const row = document.createElement("div");
+      row.className = "voices-row";
+      items.forEach((v) => {
+        const checked = prev ? prev === v.id : v.id === defaultId;
+        row.appendChild(this._voiceCard(v, checked));
+      });
+      block.appendChild(row);
+      wrap.appendChild(block);
     });
     wrap.querySelectorAll(".voice-play").forEach((b) => {
       b.addEventListener("click", (ev) => {
@@ -641,7 +663,7 @@ const DyflowHome = {
         ev.preventDefault();
         ev.stopPropagation();
         const voiceEl = document.querySelector('input[name="voice"]:checked');
-        const voiceId = (voiceEl && voiceEl.value) || "male";
+        const voiceId = (voiceEl && voiceEl.value) || "male_adult";
         this._preview(voiceId, b, b.dataset.tts);
       });
     });

@@ -17,7 +17,7 @@ from pathlib import Path
 
 from . import cookies as cookie_util
 from . import dl_cache
-from .utils import log, run, check_tool, probe_has_audio, probe_duration
+from .utils import log, run, check_tool, probe_has_audio, probe_duration, ytdlp_argv
 
 # Cache do dai remote (tranh probe lai khi user goi quote nhieu lan)
 _DURATION_CACHE: dict[str, tuple[float, float]] = {}  # key -> (expires, seconds)
@@ -83,7 +83,7 @@ def probe_remote_duration(url: str, cfg: dict | None = None) -> float | None:
         cookies_path = (cfg.get("cookies_file") or "").strip() or None
 
     cmd = [
-        "yt-dlp",
+        *ytdlp_argv(),
         "--skip-download",
         "--no-playlist",
         "--no-warnings",
@@ -136,7 +136,7 @@ def _build_ytdlp_cmd(
     cookies_from_browser: str | None = None,
 ) -> list[str]:
     cmd = [
-        "yt-dlp",
+        *ytdlp_argv(),
         "--no-playlist",
         "--retries", str(cfg.get("retries", 3)),
         "--no-warnings",

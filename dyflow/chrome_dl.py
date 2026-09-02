@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from urllib.parse import unquote
 
-from .utils import log, run
+from .utils import log, run, ytdlp_argv
 
 _DEFAULT_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -201,7 +201,7 @@ def _ytdlp_audio_only(page_url: str, cookies_file: Path, dest: Path) -> bool:
         return False
     try:
         run([
-            "yt-dlp",
+            *ytdlp_argv(),
             "--no-playlist",
             "--no-warnings",
             "-f", "ba/b",
@@ -237,7 +237,7 @@ def _ytdlp_full(
         return False
     out_tmpl = str(out_path.with_suffix("")) + ".%(ext)s"
     cmd = [
-        "yt-dlp", "--no-playlist", "--no-warnings",
+        *ytdlp_argv(), "--no-playlist", "--no-warnings",
         "-f", "bv*+ba/b", "--merge-output-format", "mp4",
         "--cookies", str(cookies_file),
         "-o", out_tmpl,

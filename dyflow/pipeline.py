@@ -74,11 +74,13 @@ def build_job(
         "voiceover": {
             "audio_mode": "dub",
             "voice": preset["voice"],
+            "voice_id": preset["id"],
             "rate": preset["rate"],
             "pitch": preset["pitch"],
             "volume": preset["volume"],
             "tts_engine": "edge",
             "openai_model": "tts-1",
+            "openai_voice": preset.get("openai_voice") or "",
             "openai_voice_male": "onyx",
             "openai_voice_female": "nova",
             "refresh_tts": True,

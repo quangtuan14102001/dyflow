@@ -97,6 +97,10 @@ def _startup() -> None:
     models.init_db()
     models.ensure_admin_email(os.getenv("ADMIN_EMAIL", ""))
     models.sync_super_admin_telegram(os.getenv("TELEGRAM_SUPER_ADMIN_ID", ""))
+    from ..desktop_mode import enabled as _desktop_on
+    if _desktop_on():
+        models.ensure_desktop_owner()
+        log.info("Desktop mode: user local, khong tru credit")
     if os.getenv("DYFLOW_WEB_NO_WORKER") != "1":
         worker.start_background()
     log.info("dyflow web san sang tai http://localhost:8080")

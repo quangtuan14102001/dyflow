@@ -10,7 +10,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from .utils import log, check_tool
+from .utils import log, check_tool, ytdlp_argv
 
 # Cookie thuong con song 1-7 ngay; refresh som de tranh fail giua job
 _COOKIE_MAX_AGE_SEC = 12 * 3600  # 12 gio
@@ -76,7 +76,7 @@ def refresh_from_browser(browser: str, out_path: str | Path) -> Path:
 
     # yt-dlp se dump cookie khi co --cookies + --cookies-from-browser
     cmd = [
-        "yt-dlp",
+        *ytdlp_argv(),
         "--cookies-from-browser", browser,
         "--cookies", str(out_path),
         "--skip-download",

@@ -31,6 +31,12 @@ def _worker_count(cfg: dict) -> int:
     return max(1, int(cfg.get("web", {}).get("workers", 1)))
 
 
+def _max_concurrent_per_user(cfg: dict) -> int:
+    return models.max_concurrent_per_user(
+        int(cfg.get("web", {}).get("max_concurrent_per_user", 2))
+    )
+
+
 def _run_one(job_row: dict, cfg: dict) -> None:
     job_id = job_row["id"]
 
@@ -70,15 +76,22 @@ def _run_one(job_row: dict, cfg: dict) -> None:
         if qa_path.exists():
             qa_raw = qa_path.read_text(encoding="utf-8")
         models.mark_completed(job_id, str(out), qa_json=qa_raw)
+        storage.discard_job_work(job_id)
         log.info("WEB JOB %s hoan tat -> %s", job_id, out.name)
     except Exception as e:  # noqa: BLE001
         log.error("WEB JOB %s LOI: %s", job_id, e)
         log.debug("%s", traceback.format_exc())
         models.mark_failed(job_id, str(e))
         models.refund_job(job_id)  # hoan credit khi that bai
+        storage.discard_job_work(job_id)
 
 
-def _worker_loop(worker_no: int, cfg: dict, stop_event: threading.Event) -> None:
+def _worker_loop(
+    worker_no: int,
+    cfg: dict,
+    stop_event: threading.Event,
+    max_per_user: int,
+) -> None:
     while not stop_event.is_set():
         # Worker 1 thinh thoang don file cu (mien phi, khong can cloud)
         if worker_no == 1:
@@ -86,13 +99,17 @@ def _worker_loop(worker_no: int, cfg: dict, stop_event: threading.Event) -> None
                 storage.maybe_cleanup(cfg)
             except Exception as e:  # noqa: BLE001
                 log.warning("Retention cleanup loi: %s", e)
-        job = models.claim_next_job()
+        job = models.claim_next_job(max_concurrent_per_user=max_per_user)
         if job is None:
             time.sleep(_POLL_SEC)
             continue
         log.info(
-            "[W%d] Nhan job %s (lang=%s giong=%s)",
-            worker_no, job["id"], job.get("target_lang") or "vi", job["voice"],
+            "[W%d] Nhan job %s (lang=%s giong=%s user=%s)",
+            worker_no,
+            job["id"],
+            job.get("target_lang") or "vi",
+            job["voice"],
+            job.get("user_id") or "-",
         )
         _run_one(job, cfg)
 
@@ -110,14 +127,20 @@ def run_forever(config_path: str = "config.yaml", stop_event: threading.Event | 
         log.warning("Retention cleanup (startup) loi: %s", e)
 
     n = _worker_count(cfg)
+    max_per_user = _max_concurrent_per_user(cfg)
+    # Dong bo env de create_job / queue_position dung cung lim
+    os.environ["DYFLOW_MAX_CONCURRENT_PER_USER"] = str(max_per_user)
     stop_event = stop_event or threading.Event()
-    log.info("Worker pool dyflow: %d luong (poll %.1fs)", n, _POLL_SEC)
+    log.info(
+        "Worker pool dyflow: %d luong, max %d job/user (poll %.1fs)",
+        n, max_per_user, _POLL_SEC,
+    )
 
     threads = []
     for i in range(n):
         t = threading.Thread(
             target=_worker_loop,
-            args=(i + 1, cfg, stop_event),
+            args=(i + 1, cfg, stop_event, max_per_user),
             name=f"dyflow-worker-{i+1}",
             daemon=True,
         )

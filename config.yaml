@@ -115,6 +115,7 @@ voiceover:
     merge_max_chars: 52
     translate_from: zh-CN
     source_lang: zh
+    cast_speakers: true       # 1 video: moi nhan vat 1 giong (gioi tinh + tuoi)
     translate_llm: polish     # polish = chi sua doan loi/Han; off = chi Google; openai = viet lai het
     dub_chars_per_sec: 18     # goi y do dai (legacy)
     target_chars_per_sec: 14.5  # ngan sach dich/rut gon theo slot (Edge TTS)
@@ -153,7 +154,19 @@ upload:
 
 # ---- Web app (FastAPI + credit + nap crypto) ----
 web:
-  workers: 2   # so job chay song song. May manh / GPU co the tang 3-4.
+  # So job machine NAY chay dong thoi. 100 user song song = can tong workers
+  # tren tat ca may >= so user dang chay (moi user toi da max_concurrent_per_user).
+  # 1 VPS yeu: 4-8. Scale ngang: chay them `python -m dyflow.web.worker` tren may khac (cung DB).
+  workers: 64
+  # Gioi han duy nhat theo user: moi tai khoan toi da N job running cung luc.
+  # Job thu 3+ van vao hang cho, chi start khi user con slot.
+  max_concurrent_per_user: 2
   # Luu file local mien phi. Tu xoa MP4 sau N ngay (metadata van con trong lich su).
   # 0 = khong bao gio xoa. Khi lon hon: chuyen Cloudflare R2 (10GB free).
   retention_days: 7
+  # work/<job> (raw/Demucs/TTS, 3-7GB) xoa ngay khi job xong. Cache tai Douyin:
+  dl_cache_days: 2
+  dl_cache_max_gb: 8
+  # Disk >= high → xoa MP4 cu nhat cho den target (tranh 500 sqlite disk I/O).
+  disk_high_pct: 80
+  disk_target_pct: 70

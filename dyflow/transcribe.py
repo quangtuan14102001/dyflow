@@ -649,10 +649,35 @@ def auto_script(video, work_dir, cfg_auto) -> tuple[str, list[dict]]:
     vi_segments = dedupe_segments(fixed) if fixed else vi_segments
     leftover_n = sum(1 for s in vi_segments if _has_cjk(s.get("text") or ""))
     if leftover_n:
-        raise RuntimeError(
-            f"Con {leftover_n} doan sot chu Trung/Han sau khi dich. "
-            "Khong xuat clip loi — thu lai job."
-        )
+        log.warning("Con %d doan sot Han — dich lai Google, bo neu van loi", leftover_n)
+        try:
+            from deep_translator import GoogleTranslator
+
+            tr = GoogleTranslator(
+                source=str(cfg_auto.get("translate_from") or "zh-CN"),
+                target=str(cfg_auto.get("translate_to") or "vi"),
+            )
+            for s in vi_segments:
+                if not _has_cjk(s.get("text") or ""):
+                    continue
+                src = (s.get("source_text") or s.get("text") or "").strip()
+                if not src:
+                    continue
+                try:
+                    s["text"] = tr.translate(src)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("Google leftover fail: %s", e)
+        except Exception as e:  # noqa: BLE001
+            log.warning("Khong Google duoc leftover: %s", e)
+        dropped = sum(1 for s in vi_segments if _has_cjk(s.get("text") or ""))
+        if dropped:
+            log.warning("Bo %d doan van sot Han (khong TTS chu Trung)", dropped)
+        vi_segments = [
+            s for s in vi_segments
+            if (s.get("text") or "").strip() and not _has_cjk(s.get("text") or "")
+        ]
+        if not vi_segments:
+            raise RuntimeError("Dich xong nhung khong con doan Viet hop le.")
     if segments_look_loopy(vi_segments, ratio=0.5):
         log.warning("Van con dau hieu lap sau xu ly — da collapse toi da truoc khi TTS")
 

@@ -32,7 +32,7 @@
         <div class="video-text">
           <h3 class="video-title">{{ v.title }}</h3>
           <p class="video-sub">
-            {{ (v.target_lang or 'vi')|upper }} · {{ v.voice }}
+            {{ (v.target_lang or 'vi')|upper }} · {{ voice_label(v.voice) }}
             {% if v.rel_label %} · {{ v.rel_label }}{% endif %}
           </p>
         </div>

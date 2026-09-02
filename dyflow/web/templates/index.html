@@ -67,7 +67,7 @@
       <li>
         <a href="/jobs/{{ j.id }}">
           <span class="badge {{ j.status }}">{{ t('status_' + j.status) }}{% if j.status == 'running' and j.progress %} · {{ j.progress }}%{% endif %}</span>
-          <span class="job-meta">{{ j.target_lang or 'vi' }} · {{ j.voice }}</span>
+          <span class="job-meta">{{ j.target_lang or 'vi' }} · {{ voice_label(j.voice) }}</span>
           <span class="job-time" data-ts="{{ j.created_at }}"></span>
           <span class="job-url">{{ j.source_url }}</span>
           {% if j.status == 'queued' and j.queue_pos %}

@@ -267,6 +267,7 @@ def synthesize_preview(
         "volume": preset.get("volume", "+0%"),
         "tts_engine": tts_engine or "openai",
         "openai_model": openai_model or "tts-1",
+        "openai_voice": preset.get("openai_voice") or "",
     }
     text = preview_sentence(lang)
     synthesize(text, out_path, cfg)
@@ -530,6 +531,7 @@ def synthesize_segments(
     shorten_flags: list[dict] = []
     cjk_re = re.compile(r"[\u4e00-\u9fff]")
 
+    prev_sid = None
     for i, seg in enumerate(segs):
         text = _sanitize_tts_text(seg.get("text", ""))
         if not text:
@@ -546,8 +548,14 @@ def synthesize_segments(
         max_avail = max(0.15, next_start - start - 0.04)
 
         clip = work_dir / f"seg_{i:04d}.mp3"
+        sid = seg.get("speaker_id") or seg.get("voice_id") or ""
+        if sid and sid != prev_sid:
+            log.info("Giong %s (%s) tu doan %d", sid, seg.get("tts_voice") or cfg.get("voice"), i)
+            prev_sid = sid
         seg_cfg = prosody.sanitize_edge_cfg({
             **cfg,
+            "voice": seg.get("tts_voice") or cfg.get("voice"),
+            "openai_voice": seg.get("openai_voice") or cfg.get("openai_voice"),
             "rate": seg.get("tts_rate") or cfg.get("rate", "+0%"),
             "pitch": seg.get("tts_pitch") or cfg.get("pitch", "+0Hz"),
             "volume": seg.get("tts_volume") or cfg.get("volume", "+0%"),
@@ -567,7 +575,10 @@ def synthesize_segments(
             ok = _tts_once(seg_cfg)
             if not ok:
                 plain = prosody.sanitize_edge_cfg({
-                    **cfg, "rate": "+0%", "pitch": "+0Hz", "volume": "+0%",
+                    **cfg,
+                    "voice": seg.get("tts_voice") or cfg.get("voice"),
+                    "openai_voice": seg.get("openai_voice") or cfg.get("openai_voice"),
+                    "rate": "+0%", "pitch": "+0Hz", "volume": "+0%",
                 })
                 ok = _tts_once(plain)
                 if not ok:

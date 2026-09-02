@@ -19,7 +19,7 @@ from .utils import log, run
 
 # Gioi han Edge TTS — rate thap de tranh doc qua nhanh (truoc +40% bi chipmunk)
 _RATE_MIN, _RATE_MAX = -15, 12
-_PITCH_MIN, _PITCH_MAX = -12, 12
+_PITCH_MIN, _PITCH_MAX = -12, 14
 _VOL_MIN, _VOL_MAX = -12, 20
 # Rate chi dung de fit slot (uu tien keo soft_slot, khong ep toc)
 _RATE_FIT_MAX = 8
@@ -264,10 +264,6 @@ def analyze_segments(
     if not segs:
         return []
 
-    br = _parse_signed(base_rate)
-    bp = _parse_signed(base_pitch)
-    bv = _parse_signed(base_volume)
-
     wav: Path | None = None
     if source_video:
         try:
@@ -298,10 +294,14 @@ def analyze_segments(
 
     out: list[dict] = []
     labels: list[str] = []
-    # Base rate UI (+10% VN) de dang lam doc nhanh — chi lay phan nhe
-    comfort_base = _clamp(br, -5, 5)
 
     for i, (seg, f) in enumerate(zip(segs, feats)):
+        # Giong nhan vat (cast) ghi de base toan clip
+        seg_br = _parse_signed(seg.get("speaker_rate") or base_rate)
+        seg_bp = _parse_signed(seg.get("speaker_pitch") or base_pitch)
+        seg_bv = _parse_signed(seg.get("speaker_volume") or base_volume)
+        # Base rate UI de dang lam doc nhanh — child duoc phep +8
+        comfort_base = _clamp(seg_br, -5, 8)
         slot = f["dur"]
         start = float(seg["start"])
         next_start = float(segs[i + 1]["start"]) if i + 1 < len(segs) else (video_dur or (float(seg["end"]) + 1.2))
@@ -345,8 +345,8 @@ def analyze_segments(
             natural = _est_tts_seconds(f["dst"], rate_pct=rate_final)
             soft_slot = min(max(slot, natural * 1.02), max_avail)
 
-        pitch_final = bp + pitch_emo
-        vol_final = bv + vol_emo
+        pitch_final = seg_bp + pitch_emo
+        vol_final = seg_bv + vol_emo
         est = natural
 
         emo = _emotion_label(pace, energy)
@@ -384,9 +384,7 @@ def analyze_segments(
         "Prosody check 1 luot: %d doan | %s | base=%s/%s/%s",
         len(out),
         ", ".join(f"{k}={v}" for k, v in sorted(cnt.items())),
-        safe_edge_rate(br),
-        safe_edge_pitch(bp),
-        safe_edge_volume(bv),
+        base_rate, base_pitch, base_volume,
     )
     for i, line in enumerate(labels[:8]):
         log.info("  seg[%d] %s", i, line)

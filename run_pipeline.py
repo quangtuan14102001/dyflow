@@ -54,7 +54,11 @@ def main() -> int:
     p.add_argument("--auto-profile", action="store_true", help="Tu doan profile sau Whisper")
     p.add_argument("--lang", default=DEFAULT_LANG, help="Ngon ngu dich (vi, en, ja, ...)")
     p.add_argument("--translate-to", default="", help="Override translate_to")
-    p.add_argument("--voice", default="male", choices=["male", "female"])
+    p.add_argument(
+        "--voice",
+        default="male",
+        help="male/female (adult) hoac male_child, male_young, male_adult, male_mature, female_*",
+    )
     p.add_argument("--tts-voice", default="", help="Override Edge voice id")
     p.add_argument("--job-id", default="")
     p.add_argument("--config", default=str(ROOT / "config.yaml"))
@@ -122,6 +126,8 @@ def main() -> int:
         "voiceover": {
             "audio_mode": "dub",
             "voice": args.tts_voice or preset["voice"],
+            "voice_id": preset["id"],
+            "openai_voice": preset.get("openai_voice") or "",
             "rate": preset["rate"],
             "pitch": preset["pitch"],
             "volume": preset["volume"],

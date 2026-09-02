@@ -22,7 +22,7 @@
       <div class="admin-job-top">
         <span class="badge {{ j.status }}">{{ j.status }}</span>
         <span class="muted">{{ j.user_email or j.user_id or '—' }}</span>
-        <span class="muted">{{ j.target_lang or 'vi' }} · {{ j.voice }} · {{ j.credits_cost }} cr</span>
+        <span class="muted">{{ j.target_lang or 'vi' }} · {{ voice_label(j.voice) }} · {{ j.credits_cost }} cr</span>
       </div>
       <div class="job-url">{{ j.source_url }}</div>
       {% if j.error %}<div class="error-line">{{ j.error }}</div>{% endif %}

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +10,17 @@ import yaml
 
 from .utils import log
 
-_ROOT = Path(__file__).resolve().parents[1]
+
+def _bundle_root() -> Path:
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            return Path(meipass)
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[1]
+
+
+_ROOT = _bundle_root()
 _PROFILES_DIR = _ROOT / "profiles"
 
 

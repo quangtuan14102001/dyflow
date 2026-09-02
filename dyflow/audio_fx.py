@@ -40,16 +40,35 @@ def strip_vocals_demucs(
     except Exception:  # noqa: BLE001
         DEMUCS_LOCK = None
 
+    # Dam bao stdlib thread.py sach truoc khi spawn demucs (Homebrew tung bi hong).
+    try:
+        from .stdlib_fix import ensure_thread_stdlib
+        ensure_thread_stdlib()
+    except Exception:  # noqa: BLE001
+        pass
+
     if DEMUCS_LOCK is not None:
         DEMUCS_LOCK.acquire()
     try:
-        run([
-            sys.executable, "-m", "demucs",
-            "-n", model,
-            "--two-stems", "vocals",
-            "-o", str(out_dir),
-            str(audio_wav),
-        ])
+        # Chay qua wrapper de patch stdlib truoc khi import torch/demucs.
+        wrapper = Path(__file__).resolve().parents[1] / "scripts" / "run_demucs.py"
+        if wrapper.exists():
+            cmd = [
+                sys.executable, str(wrapper),
+                "-n", model,
+                "--two-stems", "vocals",
+                "-o", str(out_dir),
+                str(audio_wav),
+            ]
+        else:
+            cmd = [
+                sys.executable, "-m", "demucs",
+                "-n", model,
+                "--two-stems", "vocals",
+                "-o", str(out_dir),
+                str(audio_wav),
+            ]
+        run(cmd)
     finally:
         if DEMUCS_LOCK is not None:
             DEMUCS_LOCK.release()

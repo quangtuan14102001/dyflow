@@ -32,8 +32,16 @@ def verify_password(password: str, stored: str) -> bool:
 
 
 def current_user(request: Request) -> Optional[dict]:
-    """Lay user tu session cookie, None neu chua dang nhap."""
+    """Lay user tu session cookie, None neu chua dang nhap.
+
+    Desktop: luon co user local (khong bat login / credit).
+    """
     token = request.cookies.get(COOKIE_NAME)
-    if not token:
-        return None
-    return models.get_session_user(token)
+    if token:
+        user = models.get_session_user(token)
+        if user:
+            return user
+    from ..desktop_mode import enabled
+    if enabled():
+        return models.ensure_desktop_owner()
+    return None

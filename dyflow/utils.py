@@ -123,5 +123,16 @@ def probe_video_size(path: str | Path) -> tuple[int, int]:
         return 1080, 1920
 
 
+def ytdlp_argv() -> list[str]:
+    """Goi yt-dlp qua wrapper (patch stdlib + dung python venv hien tai)."""
+    import sys
+
+    wrapper = Path(__file__).resolve().parents[1] / "scripts" / "run_ytdlp.py"
+    return [sys.executable, str(wrapper)]
+
+
 def check_tool(name: str) -> bool:
+    if name == "yt-dlp":
+        wrapper = Path(__file__).resolve().parents[1] / "scripts" / "run_ytdlp.py"
+        return wrapper.is_file() or shutil.which("yt-dlp") is not None
     return shutil.which(name) is not None

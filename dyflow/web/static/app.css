@@ -664,12 +664,27 @@ h2 { font-size: 18px; margin: 0 0 16px; }
 .select:focus { border-color: var(--accent); }
 
 .voices {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.voice-group-label {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+.voices-row {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 10px;
 }
-@media (max-width: 560px) {
-  .voices { grid-template-columns: 1fr; }
+@media (max-width: 900px) {
+  .voices-row { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 640px) {
+  .voices-row { grid-template-columns: 1fr; }
 }
 .voice-opt { cursor: pointer; position: relative; }
 .voice-opt input { position: absolute; opacity: 0; pointer-events: none; }
@@ -679,7 +694,8 @@ h2 { font-size: 18px; margin: 0 0 16px; }
   background: var(--panel-2); border: 1.5px solid var(--border);
   border-radius: 12px; transition: 0.15s; min-height: 52px;
 }
-.voice-card strong { flex: 1; font-size: 13px; font-weight: 600; text-align: left; }
+.voice-copy { flex: 1; min-width: 0; text-align: left; }
+.voice-card strong { display: block; font-size: 13px; font-weight: 600; }
 .voice-gender { color: var(--muted); font-size: 14px; }
 .voice-play {
   flex: none;
@@ -699,6 +715,12 @@ h2 { font-size: 18px; margin: 0 0 16px; }
 }
 .voices-tts {
   margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+@media (max-width: 640px) {
+  .voices-tts { grid-template-columns: 1fr; }
 }
 .voices-tts .voice-card strong { font-size: 12px; }
 

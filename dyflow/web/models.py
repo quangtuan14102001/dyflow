@@ -5,6 +5,7 @@ de so du + so cai (ledger) luon nhat quan.
 """
 from __future__ import annotations
 
+import os
 import secrets
 import sqlite3
 import time
@@ -19,6 +20,14 @@ STATUS_QUEUED = "queued"
 STATUS_RUNNING = "running"
 STATUS_COMPLETED = "completed"
 STATUS_FAILED = "failed"
+
+
+def max_concurrent_per_user(default: int = 2) -> int:
+    """Gioi han job running dong thoi moi user (env ghi de config)."""
+    env = os.getenv("DYFLOW_MAX_CONCURRENT_PER_USER")
+    if env and env.isdigit():
+        return max(1, int(env))
+    return max(1, int(default))
 
 # Loai giao dich credit
 TX_TOPUP = "topup"       # nap qua crypto
@@ -205,6 +214,32 @@ def create_user(email: str, password_hash: str, bonus: int = 0) -> dict:
             )
         conn.commit()
     return {"id": uid, "email": email.lower().strip(), "credits": bonus}
+
+
+DESKTOP_EMAIL = "desktop@local"
+
+
+def ensure_desktop_owner() -> dict:
+    """User local cho app desktop: admin, khong tru credit."""
+    from . import auth as _auth
+
+    existing = get_user_by_email(DESKTOP_EMAIL)
+    if existing is None:
+        existing = create_user(
+            DESKTOP_EMAIL,
+            _auth.hash_password(secrets.token_urlsafe(24)),
+            bonus=99999,
+        )
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE users SET is_admin=1, is_super_admin=1, credits=99999 WHERE id=?",
+            (existing["id"],),
+        )
+        conn.commit()
+    user = get_user(existing["id"])
+    if user is None:
+        raise RuntimeError("Khong tao duoc user desktop")
+    return user
 
 
 def get_user_by_email(email: str) -> Optional[dict[str, Any]]:
@@ -949,15 +984,24 @@ def create_jobs_with_trial(
         job_ids: list[str] = []
         engine = (tts_engine or "edge").strip().lower() or "edge"
         model = (openai_model or "tts-1").strip() or "tts-1"
+        running_now = conn.execute(
+            "SELECT COUNT(*) AS n FROM jobs WHERE user_id=? AND status=?",
+            (user_id, STATUS_RUNNING),
+        ).fetchone()["n"]
+        lim = max_concurrent_per_user(2)
         for source, cost in zip(sources, costs):
             job_id = f"web_{uuid.uuid4().hex}"
+            # Job moi luon queued; worker chi start khi user con slot (< lim running)
+            msg = "Dang cho xu ly..."
+            if int(running_now) >= lim:
+                msg = f"Cho slot (toi da {lim} job song song / user)..."
             conn.execute(
                 "INSERT INTO jobs (id, user_id, source_url, voice, target_lang, tts_engine, openai_model, status, stage, "
                 "progress, message, credits_cost, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     job_id, user_id, source, voice, target_lang or "vi", engine, model,
-                    STATUS_QUEUED, "queued", 0, "Dang cho xu ly...", cost, now,
+                    STATUS_QUEUED, "queued", 0, msg, cost, now,
                 ),
             )
             job_ids.append(job_id)
@@ -1021,23 +1065,58 @@ def list_jobs(
 
 
 def queue_position(job_id: str) -> tuple[int, int]:
-    """Vi tri hang doi (1-based) va tong so queued. (0,0) neu khong con queued."""
+    """Vi tri hang doi (1-based) trong cac job co the start (user con slot).
+
+    Chi dem queued cua cac user dang duoi gioi han running — dung voi
+    max_concurrent_per_user. (0,0) neu job khong con queued.
+    """
+    lim = max_concurrent_per_user(2)
     with _connect() as conn:
         job = conn.execute(
-            "SELECT status, created_at FROM jobs WHERE id=?", (job_id,),
+            "SELECT status, created_at, user_id FROM jobs WHERE id=?", (job_id,),
         ).fetchone()
         if not job or job["status"] != STATUS_QUEUED:
             total = conn.execute(
-                "SELECT COUNT(*) AS n FROM jobs WHERE status=?", (STATUS_QUEUED,),
+                "SELECT COUNT(*) AS n FROM jobs j WHERE j.status=? AND ("
+                "  SELECT COUNT(*) FROM jobs r WHERE r.user_id=j.user_id AND r.status=?"
+                ") < ?",
+                (STATUS_QUEUED, STATUS_RUNNING, lim),
             ).fetchone()["n"]
             return 0, int(total)
+        # Neu chinh user nay da full slot: hang doi trong user
+        user_running = conn.execute(
+            "SELECT COUNT(*) AS n FROM jobs WHERE user_id=? AND status=?",
+            (job["user_id"], STATUS_RUNNING),
+        ).fetchone()["n"]
+        if int(user_running) >= lim:
+            user_q = conn.execute(
+                "SELECT COUNT(*) AS n FROM jobs WHERE user_id=? AND status=?",
+                (job["user_id"], STATUS_QUEUED),
+            ).fetchone()["n"]
+            ahead = conn.execute(
+                "SELECT COUNT(*) AS n FROM jobs WHERE user_id=? AND status=? AND ("
+                "created_at < ? OR (created_at = ? AND id <= ?))",
+                (
+                    job["user_id"], STATUS_QUEUED,
+                    job["created_at"], job["created_at"], job_id,
+                ),
+            ).fetchone()["n"]
+            return int(ahead), int(user_q)
         ahead = conn.execute(
-            "SELECT COUNT(*) AS n FROM jobs WHERE status=? AND ("
-            "created_at < ? OR (created_at = ? AND id <= ?))",
-            (STATUS_QUEUED, job["created_at"], job["created_at"], job_id),
+            "SELECT COUNT(*) AS n FROM jobs j WHERE j.status=? AND ("
+            "  SELECT COUNT(*) FROM jobs r WHERE r.user_id=j.user_id AND r.status=?"
+            ") < ? AND ("
+            "j.created_at < ? OR (j.created_at = ? AND j.id <= ?))",
+            (
+                STATUS_QUEUED, STATUS_RUNNING, lim,
+                job["created_at"], job["created_at"], job_id,
+            ),
         ).fetchone()["n"]
         total = conn.execute(
-            "SELECT COUNT(*) AS n FROM jobs WHERE status=?", (STATUS_QUEUED,),
+            "SELECT COUNT(*) AS n FROM jobs j WHERE j.status=? AND ("
+            "  SELECT COUNT(*) FROM jobs r WHERE r.user_id=j.user_id AND r.status=?"
+            ") < ?",
+            (STATUS_QUEUED, STATUS_RUNNING, lim),
         ).fetchone()["n"]
     return int(ahead), int(total)
 
@@ -1059,22 +1138,49 @@ def count_jobs(user_id: Optional[str] = None, status: Optional[str] = None) -> i
     return int(row["n"] if row else 0)
 
 
-def claim_next_job() -> Optional[dict[str, Any]]:
-    """Lay 1 job queued cu nhat, doi sang running trong 1 transaction.
+def count_user_jobs(user_id: str, status: str) -> int:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM jobs WHERE user_id=? AND status=?",
+            (user_id, status),
+        ).fetchone()
+    return int(row["n"] if row else 0)
 
-    An toan cho nhieu worker nho BEGIN IMMEDIATE (SQLite khoa ghi)."""
+
+def claim_next_job(max_concurrent_per_user: int = 2) -> Optional[dict[str, Any]]:
+    """Lay job queued cu nhat ma user con slot chay song song.
+
+    Khong gioi han global theo 'chi 2 job ca he thong'. Gioi han duy nhat:
+    moi user_id toi da `max_concurrent_per_user` job status=running.
+    Nhieu user (vd 100) co the running dong thoi neu co du worker/may.
+
+    An toan multi-worker nho BEGIN IMMEDIATE (SQLite khoa ghi).
+    """
+    lim = max(1, int(max_concurrent_per_user or 2))
     with _connect() as conn:
         conn.execute("BEGIN IMMEDIATE;")
         row = conn.execute(
-            "SELECT * FROM jobs WHERE status=? ORDER BY created_at ASC LIMIT 1",
-            (STATUS_QUEUED,),
+            "SELECT j.* FROM jobs j "
+            "WHERE j.status=? AND ("
+            "  SELECT COUNT(*) FROM jobs r "
+            "  WHERE r.user_id = j.user_id AND r.status=?"
+            ") < ? "
+            "ORDER BY j.created_at ASC LIMIT 1",
+            (STATUS_QUEUED, STATUS_RUNNING, lim),
         ).fetchone()
         if row is None:
             conn.commit()
             return None
         conn.execute(
-            "UPDATE jobs SET status=?, stage=?, started_at=? WHERE id=?",
-            (STATUS_RUNNING, "starting", time.time(), row["id"]),
+            "UPDATE jobs SET status=?, stage=?, progress=?, message=?, started_at=? WHERE id=?",
+            (
+                STATUS_RUNNING,
+                "starting",
+                1,
+                "Bat dau xu ly...",
+                time.time(),
+                row["id"],
+            ),
         )
         conn.commit()
         return dict(row)

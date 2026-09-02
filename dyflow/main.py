@@ -140,6 +140,21 @@ def process_job(job: dict, cfg: dict, progress: Optional[ProgressFn] = None) -> 
             sync_to_video = True
             log.info("Audio mode: %s (%d doan thoai)", audio_mode, len(segments))
 
+            if audio_mode != "subtitle" and bool(
+                (vo_cfg.get("auto") or {}).get("cast_speakers", True)
+            ):
+                from . import speakers as speakers_mod
+                _emit(progress, "transcribing", 55, "Nhan dien nhan vat, gan giong...")
+                segments = speakers_mod.assign_cast(
+                    segments,
+                    source_video=raw,
+                    work_dir=work,
+                    lang=str(job.get("lang") or "vi"),
+                    fallback_voice=str(vo_cfg.get("voice_id") or ""),
+                    fallback_cfg=vo_cfg,
+                )
+                segment_cues = segments
+
             if audio_mode == "subtitle":
                 voice_file = None
                 jcfg["voiceover"] = {**vo_cfg, "mute_original": False}
