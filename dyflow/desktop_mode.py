@@ -114,6 +114,9 @@ def _seed_openai_key(user_env: Path, bundled: Path | None) -> None:
 def prepare() -> Path:
     """Tao thu muc data, copy config, chdir. Goi TRUOC khi import web app."""
     os.environ["DYFLOW_DESKTOP"] = "1"
+    # Windows proxy he thong lam urlopen(127.0.0.1) timeout — exe khong mo duoc.
+    os.environ["NO_PROXY"] = "127.0.0.1,localhost,::1"
+    os.environ["no_proxy"] = "127.0.0.1,localhost,::1"
     # Luon 1 worker local. Khong lay DYFLOW_WEB_WORKERS=64 / NO_WORKER tu .env SaaS.
     root = data_dir()
     work = root / "work"

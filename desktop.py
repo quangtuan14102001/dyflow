@@ -23,17 +23,45 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
+def _no_proxy_opener():
+    """Windows: proxy he thong lam GET 127.0.0.1 bi timeout."""
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def _wait_up(url: str, timeout: float = 30.0) -> None:
     deadline = time.time() + timeout
     last: Exception | None = None
+    opener = _no_proxy_opener()
     while time.time() < deadline:
         try:
-            urllib.request.urlopen(url, timeout=1)
+            opener.open(url, timeout=2)
             return
         except (urllib.error.URLError, OSError) as e:
             last = e
             time.sleep(0.25)
     raise RuntimeError(f"Server khong mo duoc {url}: {last}")
+
+
+def _startup_log() -> Path:
+    try:
+        from dyflow.desktop_mode import data_dir
+
+        return data_dir() / "startup.log"
+    except Exception:
+        base = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "VideosCreator"
+        base.mkdir(parents=True, exist_ok=True)
+        return base / "startup.log"
+
+
+def _log_startup(msg: str) -> None:
+    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {msg}\n"
+    try:
+        p = _startup_log()
+        with p.open("a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
+    print(msg, flush=True)
 
 
 def main() -> int:
@@ -42,6 +70,8 @@ def main() -> int:
     prepare()
     os.environ["DYFLOW_DESKTOP"] = "1"
     os.environ["DYFLOW_WEB_WORKERS"] = "1"
+    os.environ["NO_PROXY"] = "127.0.0.1,localhost,::1"
+    os.environ["no_proxy"] = "127.0.0.1,localhost,::1"
     os.environ.setdefault("PUBLIC_BASE_URL", "http://127.0.0.1:8765")
     # FastAPI startup khong start worker: uvicorn trong thread Windows
     # de soat startup. Ta start worker o main thread cho chac.
@@ -59,20 +89,36 @@ def main() -> int:
     recovered = models.recover_stale(include_queued=True)
     models.ensure_desktop_owner()
     cfg_path = os.getenv("DYFLOW_CONFIG") or "config.yaml"
-    worker.start_background(cfg_path)
     if recovered:
         print(f"Da go {recovered} job cu bi ket (running) — hang doi se chay tiep.")
 
     host = "127.0.0.1"
     port = int(os.getenv("DYFLOW_DESKTOP_PORT") or "8765")
     url = f"http://{host}:{port}/"
+    serve_err: list[BaseException] = []
 
     def _serve() -> None:
-        uvicorn.run(app, host=host, port=port, log_level="info", access_log=False)
+        try:
+            _log_startup(f"uvicorn bind {host}:{port}")
+            uvicorn.run(app, host=host, port=port, log_level="info", access_log=False)
+        except Exception as e:  # noqa: BLE001
+            serve_err.append(e)
+            _log_startup(f"uvicorn crash: {e!r}")
 
+    # Mo HTTP truoc, warmup worker sau — lan dau Win nạp torch co the >30s.
     t = threading.Thread(target=_serve, name="dyflow-uvicorn", daemon=True)
     t.start()
-    _wait_up(url)
+    wait_sec = 180.0 if getattr(sys, "frozen", False) else 45.0
+    try:
+        _wait_up(url, timeout=wait_sec)
+    except RuntimeError as e:
+        extra = f" | uvicorn: {serve_err[0]!r}" if serve_err else ""
+        _log_startup(f"wait_up fail: {e}{extra}")
+        raise RuntimeError(
+            f"{e}{extra}. Tat proxy Windows cho localhost, hoac xem "
+            f"{_startup_log()}"
+        ) from e
+    worker.start_background(cfg_path)
 
     try:
         import webview
@@ -162,5 +208,8 @@ def _mac_title_icon(window, icon_path: str) -> None:
 
 
 if __name__ == "__main__":
+    import multiprocessing
+
+    multiprocessing.freeze_support()
     raise SystemExit(main())
 
