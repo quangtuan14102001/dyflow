@@ -1,44 +1,56 @@
 {% extends "base.html" %}
 {% block title %}{{ brand }} — job{% endblock %}
 {% block robots %}noindex, nofollow{% endblock %}
+{% block container_class %}container-studio{% endblock %}
 
 {% block content %}
-<div class="grid">
-  <section class="card preview">
-    <div class="video-wrap" id="video-wrap">
-      <div class="video-placeholder" id="video-placeholder">
-        <div class="spinner"></div>
-        <p id="placeholder-text">{{ t('job_processing') }}</p>
-      </div>
+<div class="studio-desk studio-job">
+  <section class="studio-center">
+    <div class="studio-tab">
+      <span class="studio-tab-on">{{ t('studio_tab') }}</span>
     </div>
-    <div class="result-actions" id="result-actions" hidden>
-      <a class="btn primary" id="download-btn" href="#">{{ t('download_mp4') }}</a>
-      <a class="btn ghost" href="/">{{ t('new_video') }}</a>
-    </div>
-    <p class="hint left" id="auto-dl-note" hidden>{{ t('auto_download_note') }}</p>
-  </section>
-
-  <section class="card status">
-    <h2>{{ t('job_title') }}</h2>
-    <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
-    <p class="progress-msg" id="progress-msg">{{ t('job_init') }}</p>
-
-    <ol class="stepper" id="stepper">
+    <ol class="studio-steps" id="stepper">
       {% for stage, label in stages %}
       {% if stage not in ("queued", "starting") %}
       <li data-stage="{{ stage }}">
-        <span class="dot"></span><span class="step-label">{{ label }}</span>
+        <b></b><span class="step-label">{{ label }}</span>
       </li>
       {% endif %}
       {% endfor %}
     </ol>
-
-    <p class="error" id="job-error" hidden></p>
-    <div id="qa-box" hidden>
-      <h3 class="qa-title">{{ t('qa_title') }}</h3>
-      <ul class="qa-list" id="qa-list"></ul>
+    <div class="studio-preview">
+      <div class="video-wrap" id="video-wrap">
+        <div class="video-placeholder" id="video-placeholder">
+          <div class="spinner"></div>
+          <p id="placeholder-text">{{ t('job_processing') }}</p>
+        </div>
+      </div>
+    </div>
+    <div class="result-actions" id="result-actions" hidden>
+      <a class="btn primary" id="download-btn" href="#">{{ t('download_mp4') }}</a>
+      <a class="btn ghost" id="editor-btn" href="/jobs/{{ job_id }}/editor">{{ t('open_editor') }}</a>
+      <a class="btn ghost" href="/">{{ t('new_video') }}</a>
+    </div>
+    <p class="hint left" id="auto-dl-note" hidden>{{ t('auto_download_note') }}</p>
+    <div class="studio-log">
+      <div class="studio-log-h">
+        <strong>{{ t('studio_log') }}</strong>
+        <button type="button" class="btn ghost danger btn-sm" id="cancel-job-btn">{{ t('cancel') }}</button>
+      </div>
+      <p class="progress-msg" id="progress-msg">{{ t('job_init') }}</p>
+      <p class="error" id="job-error" hidden></p>
     </div>
   </section>
+  <aside class="studio-inspector">
+    <section class="st-sec st-sec-purple">
+      <h2>{{ t('job_title') }}</h2>
+      <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+      <div id="qa-box" hidden>
+        <h3 class="qa-title">{{ t('qa_title') }}</h3>
+        <ul class="qa-list" id="qa-list"></ul>
+      </div>
+    </section>
+  </aside>
 </div>
 {% endblock %}
 

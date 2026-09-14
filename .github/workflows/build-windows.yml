@@ -46,6 +46,29 @@ jobs:
           Copy-Item scripts\WINDOWS_README.txt dist\VideosCreator\README.txt -Force
           Get-Item dist\VideosCreator\VideosCreator.exe
 
+      - name: Bundle OPENAI_API_KEY into dist .env
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        shell: pwsh
+        run: |
+          if (-not $env:OPENAI_API_KEY) {
+            throw "Thieu GitHub secret OPENAI_API_KEY. Dat secret roi Run workflow lai."
+          }
+          $body = "OPENAI_API_KEY=$($env:OPENAI_API_KEY)`r`nDYFLOW_DESKTOP=1`r`n"
+          $dests = @(
+            "dist\VideosCreator\.env",
+            "dist\VideosCreator\_internal\.env"
+          )
+          foreach ($d in $dests) {
+            $dir = Split-Path $d
+            if (Test-Path $dir) {
+              Set-Content -Path $d -Value $body -Encoding ascii -NoNewline
+            }
+          }
+          if (-not (Test-Path "dist\VideosCreator\.env")) {
+            throw "Khong ghi duoc dist\VideosCreator\.env"
+          }
+
       - uses: actions/upload-artifact@v4
         with:
           name: VideosCreator-windows

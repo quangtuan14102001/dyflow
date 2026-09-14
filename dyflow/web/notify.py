@@ -7,8 +7,10 @@ Bien moi truong:
 """
 from __future__ import annotations
 
+import html as html_lib
 import json
 import os
+import threading
 import urllib.error
 import urllib.request
 
@@ -20,6 +22,52 @@ def is_configured() -> bool:
         (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
         and (os.getenv("TELEGRAM_ADMIN_CHAT_ID") or "").strip()
     )
+
+
+def alert_ops(kind: str, message: str, *, job_id: str = "") -> None:
+    """Bao Cursor/admin (Telegram). Khong gui cho end-user. Chay nen, khong block job."""
+    if not is_configured():
+        return
+    title = html_lib.escape(kind or "ops")
+    body = html_lib.escape(message or "")
+    jid = html_lib.escape(job_id or "")
+    text = f"🚨 <b>[OPS] {title}</b>"
+    if jid:
+        text += f"\njob: <code>{jid}</code>"
+    text += f"\n{body}"
+    threading.Thread(
+        target=_send_admin_html,
+        args=(text,),
+        daemon=True,
+        name="ops-telegram",
+    ).start()
+
+
+def _send_admin_html(text: str) -> bool:
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.getenv("TELEGRAM_ADMIN_CHAT_ID", "").strip()
+    if not token or not chat_id:
+        return False
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            body = json.loads(resp.read().decode())
+        return bool(body.get("ok"))
+    except Exception as e:  # noqa: BLE001
+        log.warning("OPS Telegram loi: %s", e)
+        return False
 
 
 def _public_base() -> str:

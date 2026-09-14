@@ -10,17 +10,23 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
+import sys
 import time
+import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
 try:
     from dotenv import load_dotenv
     load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+    from ..preflight import hydrate_openai_key
+    hydrate_openai_key()
 except Exception:  # noqa: BLE001
     pass
 
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -33,7 +39,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from ..pipeline import extract_douyin_urls, normalize_douyin_url
+from ..pipeline import normalize_douyin_url
 from ..utils import load_config, log, setup_logging
 from ..voices import list_languages, list_tts_choices, resolve_preset, resolve_tts
 from . import auth, billing, i18n, mail, models, notify, payments, quote, storage, telegram_api, verify_tron, worker
@@ -41,7 +47,48 @@ from ..brand import BRAND_DOMAIN, BRAND_NAME
 from .progress import STAGES, stage_index, stage_label
 
 _MAX_BATCH_URLS = 20
+_MAX_BATCH_URLS_DESKTOP = 40
+_MAX_CHANNEL_FULL = 40
+_MAX_CHANNEL_FULL_DESKTOP = 200
+_MAX_LOCAL_VIDEO_BYTES = 2 * 1024 * 1024 * 1024
+_VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 _CFG_CACHE: dict | None = None
+
+
+def _batch_limit() -> int:
+    try:
+        from ..desktop_mode import enabled as desktop_on
+        return _MAX_BATCH_URLS_DESKTOP if desktop_on() else _MAX_BATCH_URLS
+    except Exception:  # noqa: BLE001
+        return _MAX_BATCH_URLS
+
+
+def _channel_full_cap() -> int:
+    try:
+        from ..desktop_mode import enabled as desktop_on
+        return _MAX_CHANNEL_FULL_DESKTOP if desktop_on() else _MAX_CHANNEL_FULL
+    except Exception:  # noqa: BLE001
+        return _MAX_CHANNEL_FULL
+
+
+def _channel_fetch_limit(mode: str, count: str) -> int:
+    """So video lay tu kenh: N moi nhat, hoac full (cap an toan)."""
+    cap = _channel_full_cap()
+    if (mode or "").strip().lower() == "full":
+        return cap
+    try:
+        n = int(str(count or "10").strip())
+    except ValueError:
+        n = 10
+    return max(1, min(n, cap))
+
+
+def _uploads_dir() -> Path:
+    try:
+        from ..desktop_mode import data_dir, enabled as desktop_on
+        return (data_dir() if desktop_on() else Path("work")) / "uploads"
+    except Exception:  # noqa: BLE001
+        return Path("work") / "uploads"
 
 
 def _public_base() -> str:
@@ -84,6 +131,39 @@ def _validate_douyin(url: str) -> str:
     return normalized
 
 
+def _items_from_quoted_json(raw: str, *, limit: int) -> list[dict]:
+    """Tai su dung bang gia UI — tranh liet ke kenh (Chrome) lan 2 khi bam Start."""
+    text = (raw or "").strip()
+    if not text or limit <= 0:
+        return []
+    try:
+        blob = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    rows = blob if isinstance(blob, list) else []
+    out: list[dict] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        href = str(row.get("url") or "").strip()
+        if not href or href in seen:
+            continue
+        try:
+            href = _validate_douyin(href)
+        except ValueError:
+            continue
+        try:
+            credits = max(1, int(row.get("credits") or 1))
+        except (TypeError, ValueError):
+            credits = 1
+        seen.add(href)
+        out.append({"url": href, "credits": credits})
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _require_user(request: Request) -> dict:
     user = auth.current_user(request)
     if not user:
@@ -101,12 +181,28 @@ def _startup() -> None:
     if _desktop_on():
         models.ensure_desktop_owner()
         log.info("Desktop mode: user local, khong tru credit")
+    recovered = models.recover_stale()
+    if recovered:
+        log.info("Khoi phuc %d job running dang do -> that bai", recovered)
     if os.getenv("DYFLOW_WEB_NO_WORKER") != "1":
-        worker.start_background()
+        worker.start_background(os.getenv("DYFLOW_CONFIG") or "config.yaml")
     log.info("dyflow web san sang tai http://localhost:8080")
 
 
+@app.middleware("http")
+async def _kick_worker(request: Request, call_next):
+    """Windows: uvicorn trong thread co the bo qua startup -> worker khong chay."""
+    try:
+        worker.ensure_started()
+    except Exception:  # noqa: BLE001
+        pass
+    return await call_next(request)
+
+
 def _require_admin(request: Request) -> dict:
+    from ..desktop_mode import enabled as desktop_on
+    if desktop_on():
+        raise HTTPException(404, "Khong dung tren app desktop")
     user = _require_user(request)
     if models.is_blocked_user(user):
         raise HTTPException(403, "Tai khoan bi khoa")
@@ -203,6 +299,8 @@ def robots_txt():
         "Disallow: /jobs/\n"
         "Disallow: /billing\n"
         "Disallow: /library\n"
+        "Disallow: /queue\n"
+        "Disallow: /batch\n"
         "Disallow: /forgot-password\n"
         "Disallow: /reset-password\n"
         f"Sitemap: https://{domain}/sitemap.xml\n"
@@ -293,6 +391,37 @@ def reset_page(request: Request, token: str = ""):
         request, "reset.html",
         token=token, token_ok=token_ok, user=None,
     )
+
+
+@app.get("/batch", response_class=HTMLResponse)
+def batch_page(request: Request, page: int = 1):
+    """Cung form tao video, nhung o URL lon — dan nhieu link / 1 link kenh."""
+    return index(request, page=page)
+
+
+@app.get("/queue", response_class=HTMLResponse)
+def queue_page(request: Request):
+    user = auth.current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+
+    jobs = models.list_jobs(
+        user_id=user["id"],
+        limit=50,
+        statuses=(
+            models.STATUS_RUNNING,
+            models.STATUS_QUEUED,
+            models.STATUS_FAILED,
+            models.STATUS_CANCELLED,
+        ),
+    )
+    for j in jobs:
+        if j.get("status") == models.STATUS_QUEUED:
+            pos, total_q = models.queue_position(j["id"])
+            j["queue_pos"] = pos
+            j["queue_total"] = total_q
+
+    return _page(request, "queue.html", user=user, jobs=jobs)
 
 
 @app.get("/library", response_class=HTMLResponse)
@@ -565,6 +694,22 @@ def job_page(request: Request, job_id: str):
         user=user,
         job_id=job_id,
         stages=i18n.stages_for(i18n.get_ui_lang(request)),
+    )
+
+
+@app.get("/jobs/{job_id}/editor", response_class=HTMLResponse)
+def editor_page(request: Request, job_id: str):
+    user = auth.current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    job = models.get_job(job_id)
+    if not job or job["user_id"] != user["id"]:
+        raise HTTPException(404, "Khong tim thay job")
+    return _page(
+        request, "editor.html",
+        user=user,
+        job_id=job_id,
+        job_status=job.get("status") or "",
     )
 
 
@@ -872,50 +1017,210 @@ def api_voice_preview(
 
 
 @app.post("/api/quote")
-def api_quote(request: Request, url: str = Form(...)):
+def api_quote(
+    request: Request,
+    url: str = Form(...),
+    channel_mode: str = Form("count"),
+    channel_count: str = Form("10"),
+):
     """Uoc tinh credit theo do dai tung link (khong tao job)."""
     _require_user(request)
     cfg = _web_cfg()
     dl_cfg = dict(cfg.get("download") or {})
-    result = quote.quote_urls(url, dl_cfg, limit=_MAX_BATCH_URLS)
+    ch_lim = _channel_fetch_limit(channel_mode, channel_count)
+    try:
+        result = quote.quote_urls(
+            url, dl_cfg, limit=_batch_limit(), channel_limit=ch_lim,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
     return result
+
+
+@app.get("/api/caption-presets")
+def api_caption_presets(request: Request):
+    _require_user(request)
+    from ..export_style import PRESETS, preset_names
+
+    return {
+        "default": "classic",
+        "presets": [
+            {
+                "id": name,
+                "primary_color": PRESETS[name]["primary_color"],
+                "outline_color": PRESETS[name]["outline_color"],
+                "border_style": PRESETS[name]["border_style"],
+            }
+            for name in preset_names()
+        ],
+    }
+
+
+def _save_local_videos(uploads: list[UploadFile], *, limit: int) -> list[str]:
+    """Luu video tu may vao uploads/, tra ve path local (source job)."""
+    up = _uploads_dir()
+    up.mkdir(parents=True, exist_ok=True)
+    paths: list[str] = []
+    for upload in uploads or []:
+        if len(paths) >= limit:
+            break
+        name = (upload.filename or "").strip()
+        if not name:
+            continue
+        ext = Path(name).suffix.lower()
+        if ext not in _VIDEO_EXTS:
+            raise HTTPException(400, f"Dinh dang khong ho tro: {name}")
+        dest = up / f"local_{uuid.uuid4().hex}{ext}"
+        size = 0
+        try:
+            with dest.open("wb") as fh:
+                while True:
+                    chunk = upload.file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > _MAX_LOCAL_VIDEO_BYTES:
+                        dest.unlink(missing_ok=True)
+                        raise HTTPException(400, "Video toi da 2GB / file")
+                    fh.write(chunk)
+        finally:
+            try:
+                upload.file.close()
+            except Exception:  # noqa: BLE001
+                pass
+        if size < 1000:
+            dest.unlink(missing_ok=True)
+            raise HTTPException(400, f"File rong: {name}")
+        paths.append(str(dest.resolve()))
+    return paths
+
+
+def _credits_for_local(path: str) -> int:
+    from ..utils import probe_duration
+    from . import billing as _billing
+
+    try:
+        dur = probe_duration(path)
+    except Exception:  # noqa: BLE001
+        dur = None
+    return int(_billing.credits_for_duration(dur))
 
 
 @app.post("/api/jobs")
 def api_create_job(
     request: Request,
-    url: str = Form(...),
-    voice: str = Form("male"),
-    lang: str = Form("vi"),
-    tts: str = Form("edge"),
+    url: str = Form(""),
+    voice: str = Form(""),
+    lang: str = Form(""),
+    tts: str = Form(""),
+    preset_name: str = Form("classic"),
+    video_speed: str = Form("1.0"),
+    logo_path: str = Form(""),
+    logo_position: str = Form("top_right"),
+    logo_size_percent: str = Form("10"),
+    sub_pos_x: str = Form(""),
+    sub_pos_y: str = Form(""),
+    sub_scale: str = Form(""),
+    logo: UploadFile | None = File(None),
+    videos: list[UploadFile] = File(default=[]),
+    channel_mode: str = Form("count"),
+    channel_count: str = Form("10"),
+    quoted_json: str = Form(""),
 ):
-    """Tao 1 hoac nhieu job tu o dán (nhieu link / nhieu dong)."""
+    """Tao 1 hoac nhieu job: link Douyin (ke ca full kenh), hoac video local."""
     user = _require_user(request)
     if models.is_blocked_user(user):
         raise HTTPException(403, "Tai khoan bi khoa")
+    lang = (lang or "").strip()
+    voice = (voice or "").strip()
+    tts = (tts or "").strip()
+    if not lang:
+        raise HTTPException(400, "Chon ngon ngu dich truoc khi bat dau.")
+    if not voice:
+        raise HTTPException(400, "Chon giong du phong truoc khi bat dau.")
+    if not tts:
+        raise HTTPException(400, "Chon engine TTS truoc khi bat dau.")
     try:
         resolve_preset(lang, voice)
         tts_cfg = resolve_tts(tts)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    # Probe do dai + tinh credit (cung logic /api/quote) — xu ly full clip theo so credit
     cfg = _web_cfg()
+    from ..preflight import assert_job_ready
+    try:
+        assert_job_ready(cfg, {"voiceover": {"tts_engine": tts_cfg["tts_engine"]}})
+    except RuntimeError as e:
+        raise HTTPException(400, str(e)) from e
+
+    limit = _batch_limit()
+    ch_lim = _channel_fetch_limit(channel_mode, channel_count)
+    uploads = [v for v in (videos or []) if v is not None and (v.filename or "").strip()]
+    local_paths = _save_local_videos(uploads, limit=max(limit, ch_lim)) if uploads else []
+
+    # Probe do dai + tinh credit (cung logic /api/quote) — xu ly full clip theo so credit
     dl_cfg = dict(cfg.get("download") or {})
-    quoted = quote.quote_urls(url, dl_cfg, limit=_MAX_BATCH_URLS)
-    sources = [str(i["url"]) for i in quoted.get("items") or []]
-    if not sources:
-        raise HTTPException(
-            400,
-            "Khong nhan dien link Douyin. Dan 1 hoac nhieu link (moi link 1 dong).",
-        )
+    quoted_items: list[dict] = []
+    room = max(limit, ch_lim) - len(local_paths)
+    reused = _items_from_quoted_json(quoted_json, limit=room)
+    if reused:
+        quoted_items = reused
+    elif (url or "").strip() and room > 0:
+        try:
+            quoted = quote.quote_urls(
+                url, dl_cfg, limit=room, channel_limit=min(ch_lim, room),
+                allow_chrome=False,
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        quoted_items = list(quoted.get("items") or [])
+
+    sources = [str(i["url"]) for i in quoted_items]
+    costs = [int(i["credits"]) for i in quoted_items]
     for s in sources:
         try:
             _validate_douyin(s)
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
 
-    costs = [int(i["credits"]) for i in quoted["items"]]
+    for path in local_paths:
+        sources.append(path)
+        costs.append(_credits_for_local(path))
+
+    if not sources:
+        raise HTTPException(
+            400,
+            "Dan link Douyin (video hoac kenh) hoac chon video tu may.",
+        )
+
+    from ..export_style import normalize_output_opts
+
+    logo_saved = str(logo_path or "").strip()
+    if logo is not None and logo.filename:
+        raw = logo.file.read()
+        if raw:
+            if len(raw) > 8 * 1024 * 1024:
+                raise HTTPException(400, "Logo toi da 8MB")
+            up = _uploads_dir()
+            up.mkdir(parents=True, exist_ok=True)
+            ext = Path(logo.filename).suffix.lower() or ".png"
+            if ext not in {".png", ".jpg", ".jpeg", ".webp"}:
+                ext = ".png"
+            dest = up / f"logo_{uuid.uuid4().hex}{ext}"
+            dest.write_bytes(raw)
+            logo_saved = str(dest)
+
+    opts = normalize_output_opts({
+        "preset_name": preset_name,
+        "video_speed": video_speed,
+        "logo_path": logo_saved,
+        "logo_position": logo_position,
+        "logo_size_percent": logo_size_percent,
+        "sub_pos_x": sub_pos_x or None,
+        "sub_pos_y": sub_pos_y or None,
+        "sub_scale": sub_scale or None,
+    })
+    opts_json = json.dumps(opts, ensure_ascii=False)
 
     ref = f"job-batch:{user['id']}:{int(time.time())}:{len(sources)}"
     trial = _trial_for_user(user)
@@ -929,6 +1234,7 @@ def api_create_job(
         trial_ok=bool(trial.get("active")),
         tts_engine=tts_cfg["tts_engine"],
         openai_model=tts_cfg["openai_model"],
+        output_opts_json=opts_json,
     )
     if result is None:
         raise HTTPException(402, "Khong du credit. Vui long nap them.")
@@ -966,9 +1272,19 @@ def _job_public(job: dict) -> dict:
         "source_url": job.get("source_url") or "",
         "target_lang": job.get("target_lang") or "",
         "voice": job.get("voice") or "",
+        "preset_name": "classic",
         "created_at": job.get("created_at"),
         "qa": None,
     }
+    raw_opts = job.get("output_opts_json")
+    if raw_opts:
+        try:
+            opts = json.loads(raw_opts)
+            if isinstance(opts, dict):
+                data["preset_name"] = opts.get("preset_name") or "classic"
+                data["output_opts"] = opts
+        except (TypeError, json.JSONDecodeError):
+            pass
     raw_qa = job.get("qa_json")
     if raw_qa:
         try:
@@ -986,6 +1302,24 @@ def _job_public(job: dict) -> dict:
 def api_list_jobs(request: Request):
     user = _require_user(request)
     return {"jobs": [_job_public(j) for j in models.list_jobs(user_id=user["id"], limit=50)]}
+
+
+@app.post("/api/jobs/cancel-active")
+def api_cancel_active(request: Request):
+    user = _require_user(request)
+    n = models.cancel_active_jobs(user["id"])
+    return {"ok": True, "cancelled": n}
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+def api_cancel_job(request: Request, job_id: str):
+    user = _require_user(request)
+    job = models.get_job(job_id)
+    if not job or job["user_id"] != user["id"]:
+        raise HTTPException(404, "Khong tim thay job")
+    if not models.cancel_job(job_id, user["id"]):
+        raise HTTPException(400, "Job khong the huy (da xong hoac da huy)")
+    return {"ok": True, "id": job_id, "status": "cancelled"}
 
 
 @app.get("/api/jobs/{job_id}")
@@ -1014,7 +1348,11 @@ def api_job_events(request: Request, job_id: str):
             if snapshot != last:
                 yield f"data: {snapshot}\n\n"
                 last = snapshot
-            if j["status"] in (models.STATUS_COMPLETED, models.STATUS_FAILED):
+            if j["status"] in (
+                models.STATUS_COMPLETED,
+                models.STATUS_FAILED,
+                models.STATUS_CANCELLED,
+            ):
                 break
             time.sleep(1.0)
 
@@ -1025,18 +1363,73 @@ def api_job_events(request: Request, job_id: str):
     )
 
 
+def _output_roots() -> list[Path]:
+    roots = [Path("output").resolve(), Path("work").resolve()]
+    try:
+        from ..desktop_mode import data_dir
+
+        roots.append((data_dir() / "output").resolve())
+        roots.append((data_dir() / "work").resolve())
+    except Exception:  # noqa: BLE001
+        pass
+    paths = (_web_cfg().get("paths") or {})
+    for key in ("output_dir", "work_dir"):
+        raw = str(paths.get(key) or "").strip()
+        if raw:
+            roots.append(Path(raw).expanduser().resolve())
+    return roots
+
+
+def _job_output_file(job: dict) -> Path:
+    if not job.get("output_path"):
+        raise HTTPException(409, "Chua co file xuat")
+    out = Path(str(job["output_path"])).expanduser().resolve()
+    if not out.exists():
+        raise HTTPException(404, "File khong ton tai")
+    out_s = out.resolve()
+    if not any(_is_relative_to(out_s, r) for r in _output_roots()):
+        raise HTTPException(404, "File khong ton tai")
+    return out
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _user_downloads() -> Path:
+    home = Path.home()
+    for name in ("Downloads", "Tải xuống"):
+        p = home / name
+        if p.is_dir():
+            return p
+    p = home / "Downloads"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _reveal_file(path: Path) -> None:
+    try:
+        if sys.platform == "win32":
+            subprocess.Popen(["explorer", "/select,", str(path)])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", str(path)])
+        else:
+            subprocess.Popen(["xdg-open", str(path.parent)])
+    except Exception:  # noqa: BLE001
+        log.warning("Khong mo duoc thu muc: %s", path)
+
+
 @app.get("/api/jobs/{job_id}/download")
 def api_download(request: Request, job_id: str, dl: int = 0):
     user = _require_user(request)
     job = models.get_job(job_id)
     if not job or job["user_id"] != user["id"]:
         raise HTTPException(404, "Khong tim thay job")
-    if job["status"] != models.STATUS_COMPLETED or not job["output_path"]:
-        raise HTTPException(409, "Job chua hoan tat")
-    out = Path(job["output_path"]).resolve()
-    out_root = (Path("output").resolve(), Path("work").resolve())
-    if not any(str(out).startswith(str(r)) for r in out_root) or not out.exists():
-        raise HTTPException(404, "File khong ton tai")
+    out = _job_output_file(job)
     # dl=1: bat buoc download ve may; khong co dl: cho phep xem inline (the video)
     return FileResponse(
         out,
@@ -1044,3 +1437,210 @@ def api_download(request: Request, job_id: str, dl: int = 0):
         filename=f"videoscreator_{job_id[:12]}.mp4",
         content_disposition_type="attachment" if dl else "inline",
     )
+
+
+@app.post("/api/jobs/{job_id}/export-local")
+def api_export_local(request: Request, job_id: str):
+    """App desktop (pywebview): copy MP4 vao Downloads + mo Explorer. Khong dung <a download>."""
+    from ..desktop_mode import enabled as desktop_on
+
+    if not desktop_on():
+        raise HTTPException(400, "Chi dung tren app desktop")
+    user = _require_user(request)
+    job = models.get_job(job_id)
+    if not job or job["user_id"] != user["id"]:
+        raise HTTPException(404, "Khong tim thay job")
+    src = _job_output_file(job)
+    dest_dir = _user_downloads()
+    dest = dest_dir / f"videoscreator_{job_id[:12]}.mp4"
+    if not (dest.exists() and dest.stat().st_size == src.stat().st_size):
+        n = 2
+        while dest.exists():
+            dest = dest_dir / f"videoscreator_{job_id[:12]}_{n}.mp4"
+            n += 1
+        shutil.copy2(src, dest)
+    _reveal_file(dest)
+    return {"ok": True, "path": str(dest)}
+
+
+def _owned_job(request: Request, job_id: str) -> dict:
+    user = _require_user(request)
+    job = models.get_job(job_id)
+    if not job or job["user_id"] != user["id"]:
+        raise HTTPException(404, "Khong tim thay job")
+    return job
+
+
+def _editor_video(job: dict):
+    from ..video_editor import find_apply_source, find_preview_video
+
+    cfg = _web_cfg()
+    preview = find_preview_video(job["id"], job, cfg)
+    if not preview:
+        raise HTTPException(409, "Chua co video de sua. Cho pipeline tai/xuat xong.")
+    return find_apply_source(job["id"], job, cfg, preview)
+
+
+@app.get("/api/jobs/{job_id}/editor")
+def api_editor_get(request: Request, job_id: str):
+    from ..utils import probe_duration, probe_video_size
+    from ..video_editor import job_work_dir, load_layout
+
+    job = _owned_job(request, job_id)
+    cfg = _web_cfg()
+    try:
+        src = _editor_video(job)
+    except HTTPException as exc:
+        return JSONResponse(
+            {"ok": False, "has_video": False, "detail": exc.detail},
+            status_code=409,
+        )
+    w, h = probe_video_size(src)
+    duration = probe_duration(src)
+    work = job_work_dir(job_id, cfg)
+    layout = load_layout(work, video_w=w, video_h=h, duration=duration)
+    logo = work / "editor_logo.png"
+    return {
+        "ok": True,
+        "has_video": True,
+        "status": job.get("status"),
+        "duration": duration,
+        "video_w": w,
+        "video_h": h,
+        "has_logo": logo.is_file(),
+        "layout": layout,
+        "media_url": f"/api/jobs/{job_id}/editor/media",
+    }
+
+
+@app.put("/api/jobs/{job_id}/editor")
+def api_editor_save(request: Request, job_id: str, payload: dict = Body(...)):
+    from ..utils import probe_duration, probe_video_size
+    from ..video_editor import job_work_dir, normalize_layout, save_layout
+
+    job = _owned_job(request, job_id)
+    cfg = _web_cfg()
+    src = _editor_video(job)
+    w, h = probe_video_size(src)
+    duration = probe_duration(src)
+    layout = normalize_layout(
+        payload.get("layout") if isinstance(payload, dict) else payload,
+        video_w=w, video_h=h, duration=duration,
+    )
+    save_layout(job_work_dir(job_id, cfg), layout)
+    return {"ok": True, "layout": layout}
+
+
+@app.get("/api/jobs/{job_id}/editor/media")
+def api_editor_media(request: Request, job_id: str, dl: int = 0):
+    job = _owned_job(request, job_id)
+    src = _editor_video(job)
+    return FileResponse(
+        src,
+        media_type="video/mp4",
+        filename=f"videoscreator_{job_id[:12]}.mp4",
+        content_disposition_type="attachment" if dl else "inline",
+    )
+
+
+@app.post("/api/jobs/{job_id}/editor/scan")
+def api_editor_scan(request: Request, job_id: str, payload: dict = Body(default=None)):
+    from ..video_editor import scan_text_regions
+
+    job = _owned_job(request, job_id)
+    src = _editor_video(job)
+    body = payload or {}
+    try:
+        t = float(body.get("t") or 0)
+    except (TypeError, ValueError):
+        t = 0.0
+    try:
+        window = float(body.get("window") or 0)
+    except (TypeError, ValueError):
+        window = 0.0
+    window = max(0.0, min(60.0, window))
+    try:
+        regions = scan_text_regions(src, t=t, window_sec=window)
+    except ImportError:
+        raise HTTPException(503, "Chua cai RapidOCR (pip install rapidocr-onnxruntime)") from None
+    except Exception as e:  # noqa: BLE001
+        log.warning("Editor OCR loi: %s", e)
+        raise HTTPException(500, f"OCR that bai: {e}") from e
+    return {"ok": True, "regions": regions, "count": len(regions)}
+
+
+@app.post("/api/jobs/{job_id}/editor/logo")
+async def api_editor_logo(request: Request, job_id: str, file: UploadFile = File(...)):
+    from ..video_editor import job_work_dir, save_logo
+
+    job = _owned_job(request, job_id)
+    raw = await file.read()
+    if len(raw) > 8 * 1024 * 1024:
+        raise HTTPException(400, "Logo toi da 8MB")
+    suffix = Path(file.filename or "logo.png").suffix
+    dest = save_logo(job_work_dir(job_id, _web_cfg()), raw, suffix=suffix)
+    return {"ok": True, "has_logo": dest.is_file()}
+
+
+@app.get("/api/jobs/{job_id}/editor/logo")
+def api_editor_logo_get(request: Request, job_id: str):
+    from ..video_editor import job_work_dir
+
+    job = _owned_job(request, job_id)
+    path = job_work_dir(job_id, _web_cfg()) / "editor_logo.png"
+    if not path.is_file():
+        raise HTTPException(404, "Chua co logo")
+    return FileResponse(path, media_type="image/png")
+
+
+@app.post("/api/jobs/{job_id}/editor/apply")
+def api_editor_apply(request: Request, job_id: str, payload: dict = Body(default=None)):
+    from ..utils import probe_duration, probe_video_size
+    from ..video_editor import (
+        apply_layout,
+        find_apply_source,
+        job_output_dir,
+        job_work_dir,
+        normalize_layout,
+        save_layout,
+    )
+
+    job = _owned_job(request, job_id)
+    cfg = _web_cfg()
+    preview = _editor_video(job)
+    src = find_apply_source(job_id, job, cfg, preview)
+    work = job_work_dir(job_id, cfg)
+    pinned = work / "editor_source.mp4"
+    if not pinned.exists() and src.resolve() != pinned.resolve():
+        try:
+            work.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, pinned)
+            src = pinned
+        except OSError:
+            pass
+    w, h = probe_video_size(src)
+    duration = probe_duration(src)
+    body = payload or {}
+    layout = normalize_layout(
+        body.get("layout") if isinstance(body, dict) else body,
+        video_w=w, video_h=h, duration=duration,
+    )
+    save_layout(work, layout)
+    dst = job_output_dir(cfg) / f"{job_id}_edit.mp4"
+    logo = work / "editor_logo.png"
+    font = str((cfg.get("paths") or {}).get("font_path") or "")
+    try:
+        apply_layout(
+            src, dst, layout,
+            logo_path=logo if logo.is_file() else None,
+            font_path=font,
+        )
+    except RuntimeError as e:
+        log.warning("Editor apply loi: %s", e)
+        raise HTTPException(500, str(e)[:400]) from e
+    models.set_output_path(job_id, str(dst))
+    return {
+        "ok": True,
+        "output": str(dst),
+        "download": f"/api/jobs/{job_id}/editor/media?dl=1",
+    }

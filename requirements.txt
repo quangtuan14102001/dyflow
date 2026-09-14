@@ -4,6 +4,7 @@ PyYAML>=6.0
 python-telegram-bot>=21.0
 deep-translator>=1.11.0
 faster-whisper>=1.0.0
+librosa>=0.10.0
 curl_cffi>=0.7
 demucs>=4.0.0
 rapidocr-onnxruntime>=1.4.4

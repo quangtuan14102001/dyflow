@@ -41,7 +41,11 @@ def main() -> int:
 
     prepare()
     os.environ["DYFLOW_DESKTOP"] = "1"
+    os.environ["DYFLOW_WEB_WORKERS"] = "1"
     os.environ.setdefault("PUBLIC_BASE_URL", "http://127.0.0.1:8765")
+    # FastAPI startup khong start worker: uvicorn trong thread Windows
+    # de soat startup. Ta start worker o main thread cho chac.
+    os.environ["DYFLOW_WEB_NO_WORKER"] = "1"
 
     from dyflow.stdlib_fix import ensure_thread_stdlib
 
@@ -49,6 +53,15 @@ def main() -> int:
 
     import uvicorn
     from dyflow.web.app import app
+    from dyflow.web import models, worker
+
+    models.init_db()
+    recovered = models.recover_stale(include_queued=True)
+    models.ensure_desktop_owner()
+    cfg_path = os.getenv("DYFLOW_CONFIG") or "config.yaml"
+    worker.start_background(cfg_path)
+    if recovered:
+        print(f"Da go {recovered} job cu bi ket (running) — hang doi se chay tiep.")
 
     host = "127.0.0.1"
     port = int(os.getenv("DYFLOW_DESKTOP_PORT") or "8765")
@@ -73,16 +86,81 @@ def main() -> int:
             return 0
         return 0
 
-    webview.create_window(
-        "VideosCreator",
-        url,
-        width=1280,
-        height=840,
-        min_size=(900, 600),
-    )
-    webview.start()
+    icon = _app_icon()
+    try:
+        win = webview.create_window(
+            "VideosCreator",
+            url,
+            width=1440,
+            height=900,
+            min_size=(1100, 700),
+            maximized=True,
+        )
+    except TypeError:
+        win = webview.create_window(
+            "VideosCreator",
+            url,
+            width=1440,
+            height=900,
+            min_size=(1100, 700),
+        )
+    if icon and win is not None:
+        win.events.shown += lambda: _mac_title_icon(win, icon)
+    if icon:
+        try:
+            webview.start(icon=icon)
+        except TypeError:
+            webview.start()
+    else:
+        webview.start()
     return 0
+
+
+def _app_icon() -> str | None:
+    png = ROOT / "dyflow" / "web" / "static" / "logo-512.png"
+    ico = ROOT / "dyflow" / "web" / "static" / "favicon.ico"
+    try:
+        from dyflow.desktop_mode import resource_root
+
+        bundled = resource_root()
+        p2 = bundled / "dyflow" / "web" / "static" / "logo-512.png"
+        i2 = bundled / "dyflow" / "web" / "static" / "favicon.ico"
+        if p2.is_file():
+            png = p2
+        if i2.is_file():
+            ico = i2
+    except Exception:
+        pass
+    if sys.platform == "win32" and ico.is_file():
+        return str(ico)
+    if png.is_file():
+        return str(png)
+    if ico.is_file():
+        return str(ico)
+    return None
+
+
+def _mac_title_icon(window, icon_path: str) -> None:
+    """Logo nho tren thanh title macOS (canh chu VideosCreator)."""
+    if sys.platform != "darwin" or not icon_path:
+        return
+    try:
+        from AppKit import NSImage
+        from Foundation import NSURL
+
+        img = NSImage.alloc().initWithContentsOfFile_(icon_path)
+        native = getattr(window, "native", None)
+        if img is None or native is None:
+            return
+        native.setRepresentedURL_(NSURL.fileURLWithPath_(icon_path))
+        btn = native.standardWindowButton_(4)
+        if btn is not None:
+            btn.setImage_(img)
+            btn.setHidden_(False)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

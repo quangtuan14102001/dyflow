@@ -39,12 +39,26 @@ def _web_num(cfg: dict | None, key: str, default: float) -> float:
 
 
 def discard_job_work(job_id: str) -> None:
-    """Xoa thu muc trung gian ngay sau khi job xong/that bai. MP4 output giu nguyen."""
+    """Xoa thu muc trung gian ngay sau khi job xong/that bai. MP4 output giu nguyen.
+
+    Giu timing + QA de so toc do / thu tu doan (khong can giu raw/Demucs/TTS).
+    """
     if not job_id or job_id.startswith("_"):
         return
     work_job = Path("work") / job_id
     if not work_job.exists() or not work_job.is_dir():
         return
+    keep_dir = Path("output") / "_reports"
+    keep_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("timing.txt", "timing.json", "segments_qa.json"):
+        src = work_job / name
+        if src.exists() and src.stat().st_size > 0:
+            dest = keep_dir / f"{job_id}_{name}"
+            try:
+                shutil.copy2(src, dest)
+                log.info("Giu %s -> %s", name, dest)
+            except OSError as e:
+                log.warning("Khong copy %s: %s", name, e)
     try:
         shutil.rmtree(work_job)
         log.info("Da xoa work/%s (trung gian)", job_id)

@@ -369,6 +369,86 @@ def tts_fields(lang: str, voice_id: str) -> dict[str, str]:
     }
 
 
+# --- Voice profile (F0) -------------------------------------------------
+# Bang nay co dinh theo target_lang. Dien / sua tts_voice_name khi co
+# bang chinh thuc cho tung ngon ngu. Thieu lang -> fallback voice_id preset.
+PROFILE_MALE_ADULT = "male_adult"
+PROFILE_FEMALE_ADULT = "female_adult"
+PROFILE_CHILD = "child"
+
+# Nguong F0 tham khao (Hz). Khoang 155-165 va chong 250-255 xu ly o classify.
+F0_MALE_ADULT = (85.0, 155.0)
+F0_FEMALE_ADULT = (165.0, 255.0)
+F0_CHILD = (250.0, 400.0)
+F0_MALE_FEMALE_SPLIT = 160.0  # giua 155 va 165
+
+_PROFILE_VOICE_ID = {
+    PROFILE_MALE_ADULT: "male_adult",
+    PROFILE_FEMALE_ADULT: "female_adult",
+    PROFILE_CHILD: "male_child",
+}
+
+VOICE_PROFILE_MAP: dict[str, dict[str, dict[str, str]]] = {
+    "vi": {
+        PROFILE_MALE_ADULT: {
+            "voice_id": "male_adult",
+            "tts_voice_name": "vi-VN-NamMinhNeural",
+        },
+        PROFILE_FEMALE_ADULT: {
+            "voice_id": "female_adult",
+            "tts_voice_name": "vi-VN-HoaiMyNeural",
+        },
+        PROFILE_CHILD: {
+            "voice_id": "male_child",
+            "tts_voice_name": "vi-VN-NamMinhNeural",
+        },
+    },
+}
+
+
+def classify_f0_profile(f0_hz: float | None) -> str | None:
+    """Nam truong thanh / nu truong thanh / tre em tu median F0.
+
+    85-155 nam, 165-255 nu, 250-400 tre em.
+    Chong 250-255: tre em. Khoang 155-165: moc 160 (≤160 nam).
+    """
+    if f0_hz is None:
+        return None
+    try:
+        f0 = float(f0_hz)
+    except (TypeError, ValueError):
+        return None
+    if f0 <= 0:
+        return None
+    if f0 < F0_CHILD[0]:
+        if f0 <= F0_MALE_ADULT[1]:
+            return PROFILE_MALE_ADULT
+        if f0 < F0_FEMALE_ADULT[0]:
+            return (
+                PROFILE_MALE_ADULT
+                if f0 <= F0_MALE_FEMALE_SPLIT
+                else PROFILE_FEMALE_ADULT
+            )
+        return PROFILE_FEMALE_ADULT
+    return PROFILE_CHILD
+
+
+def resolve_voice_profile(lang: str, profile: str) -> dict[str, str]:
+    """Map voice_profile -> TTS fields + tts_voice_name (bang VOICE_PROFILE_MAP)."""
+    lang = (lang or DEFAULT_LANG).strip().lower()
+    prof = (profile or "").strip().lower()
+    row = (VOICE_PROFILE_MAP.get(lang) or {}).get(prof) or {}
+    vid = str(row.get("voice_id") or _PROFILE_VOICE_ID.get(prof) or "male_adult")
+    fields = tts_fields(lang, vid)
+    name = str(row.get("tts_voice_name") or fields["tts_voice"])
+    return {
+        **fields,
+        "voice_profile": prof,
+        "tts_voice_name": name,
+        "tts_voice": name,
+    }
+
+
 def infer_voice_id(voice: str, *, gender: str = "", age: str = "") -> str:
     """Map id / alias / ten Edge -> male_adult style id."""
     g = (gender or "").strip().lower()

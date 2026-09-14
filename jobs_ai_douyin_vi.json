@@ -6,6 +6,7 @@
     "voiceover": {
       "audio_mode": "dub"
     },
+    
     "export": {
       "fit": "source",
       "formats": ["source"]

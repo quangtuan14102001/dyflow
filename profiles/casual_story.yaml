@@ -10,9 +10,9 @@ voiceover:
   dub_volume: 5.0
   auto:
     target_chars_per_sec: 13.5   # hoi cham hon review de giu ngu khi
-    merge_gap_sec: 0.40
-    merge_max_dur: 3.5
-    merge_max_chars: 56
+    merge_gap_sec: 0.55
+    merge_max_dur: 8.0
+    merge_max_chars: 220
     translate_llm: budgeted
     content_domain: story
   dub_auto_shorten: true

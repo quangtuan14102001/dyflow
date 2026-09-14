@@ -119,7 +119,14 @@ def normalize_segment_timings(
         start = float(seg["start"])
         end = float(seg["end"])
         if out:
-            prev_end = float(out[-1]["end"])
+            prev = out[-1]
+            prev_end = float(prev["end"])
+            prev_start = float(prev["start"])
+            if start < prev_end:
+                # Giu moc goc cua doan sau; thu ngan cuoi doan truoc neu chong timestamp.
+                prev["end"] = round(max(prev_start + min_dur, start - min_gap), 3)
+                out[-1] = prev
+                prev_end = float(prev["end"])
             if start < prev_end + min_gap:
                 start = prev_end + min_gap
             if end < start + min_dur:
@@ -314,8 +321,8 @@ def analyze_segments(
         pace = _clamp(pace, 0.55, 1.8)
         energy = _clamp(energy, 0.45, 2.0)
 
-        # Cam xuc: chu yeu pitch/volume; rate chi lech nhe
-        rate_emo = _clamp((pace - 1.0) * 10.0, -6, 5)
+        # Cam xuc: chu yeu pitch/volume; rate chi lech nhe theo nhip goc (khong tua de nhet slot)
+        rate_emo = _clamp((pace - 1.0) * 8.0, -5, 6)
         pitch_emo = _clamp((energy - 1.0) * 7.0 + (pace - 1.0) * 2.0, -8, 10)
         vol_emo = _clamp((energy - 1.0) * 14.0, -8, 12)
         tr, tp, tv = _text_emotion_bias(f["src"])
@@ -324,26 +331,10 @@ def analyze_segments(
         pitch_emo += tp * 0.6 + tp2 * 0.35
         vol_emo += tv * 0.6 + tv2 * 0.35
 
-        # Doc o toc do thoai mai truoc, roi moi tinh soft_slot
-        rate_final = _clamp(comfort_base + rate_emo, _RATE_MIN, _RATE_MAX)
+        rate_final = _clamp(comfort_base + rate_emo, -8, 8)
         natural = _est_tts_seconds(f["dst"], rate_pct=rate_final)
-
-        # soft_slot: lay gap de chua het cau o toc do thoai mai
         soft_slot = min(max(slot, natural * 1.02), max_avail)
-        # Neu van thieu cho: tang rate RAT NHE (toi da +8%), roi keo soft_slot lai
         rate_fit = 0.0
-        if natural > max_avail * 0.98:
-            need = natural / max(max_avail * 0.98, 0.12)
-            rate_fit = _clamp((need - 1.0) * 100.0, 0, _RATE_FIT_MAX)
-            rate_final = _clamp(rate_final + rate_fit, _RATE_MIN, _RATE_MAX)
-            natural = _est_tts_seconds(f["dst"], rate_pct=rate_final)
-            soft_slot = min(max(slot, natural * 1.01), max_avail)
-        elif natural < slot * 0.55:
-            # Qua ngan so voi khung goc: giam toc nhe cho kip nhip (khong de trong qua lau)
-            slow = _clamp((natural / max(slot * 0.75, 0.12) - 1.0) * 100.0, -10, 0)
-            rate_final = _clamp(rate_final + slow, _RATE_MIN, _RATE_MAX)
-            natural = _est_tts_seconds(f["dst"], rate_pct=rate_final)
-            soft_slot = min(max(slot, natural * 1.02), max_avail)
 
         pitch_final = seg_bp + pitch_emo
         vol_final = seg_bv + vol_emo

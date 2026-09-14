@@ -20,6 +20,7 @@ STATUS_QUEUED = "queued"
 STATUS_RUNNING = "running"
 STATUS_COMPLETED = "completed"
 STATUS_FAILED = "failed"
+STATUS_CANCELLED = "cancelled"
 
 
 def max_concurrent_per_user(default: int = 2) -> int:
@@ -83,7 +84,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     error        TEXT,
     created_at   REAL NOT NULL,
     started_at   REAL,
-    finished_at  REAL
+    finished_at  REAL,
+    output_opts_json TEXT NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS credit_tx (
@@ -128,7 +130,7 @@ CREATE TABLE IF NOT EXISTS telegram_link_tokens (
 
 def _connect() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA foreign_keys=ON;")
@@ -151,6 +153,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE jobs ADD COLUMN openai_model TEXT NOT NULL DEFAULT 'tts-1'")
     if "qa_json" not in job_cols:
         conn.execute("ALTER TABLE jobs ADD COLUMN qa_json TEXT")
+    if "output_opts_json" not in job_cols:
+        conn.execute("ALTER TABLE jobs ADD COLUMN output_opts_json TEXT NOT NULL DEFAULT '{}'")
 
     user_cols = {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
     if "telegram_id" not in user_cols:
@@ -176,18 +180,22 @@ def init_db() -> None:
         conn.commit()
 
 
-def recover_stale() -> int:
-    """Job con 'running' tu process cu -> that bai + hoan credit."""
+def recover_stale(*, include_queued: bool = False) -> int:
+    """Job con 'running' (va queued neu desktop) tu process cu -> that bai + hoan credit."""
     n = 0
+    statuses: tuple[str, ...] = (STATUS_RUNNING,)
+    if include_queued:
+        statuses = (STATUS_RUNNING, STATUS_QUEUED)
     with _connect() as conn:
+        qmarks = ",".join("?" * len(statuses))
         rows = conn.execute(
-            "SELECT id, user_id, credits_cost, refunded FROM jobs WHERE status=?",
-            (STATUS_RUNNING,),
+            f"SELECT id, user_id, credits_cost, refunded FROM jobs WHERE status IN ({qmarks})",
+            statuses,
         ).fetchall()
         for r in rows:
             conn.execute(
                 "UPDATE jobs SET status=?, error=?, finished_at=? WHERE id=?",
-                (STATUS_FAILED, "Bi gian doan (server khoi dong lai)", time.time(), r["id"]),
+                (STATUS_FAILED, "Bi gian doan (dong app / khoi dong lai)", time.time(), r["id"]),
             )
             if r["user_id"] and r["credits_cost"] and not r["refunded"]:
                 _refund_locked(conn, r["user_id"], r["id"], r["credits_cost"])
@@ -920,6 +928,7 @@ def create_jobs_with_trial(
     trial_ok: bool = True,
     tts_engine: str = "edge",
     openai_model: str = "tts-1",
+    output_opts_json: str = "{}",
 ) -> tuple[list[str], list[int]] | None:
     """Tao nhieu job: dung free trial truoc, con lai tru credit.
     Tra ve (job_ids, costs) hoac None neu khong du.
@@ -997,11 +1006,11 @@ def create_jobs_with_trial(
                 msg = f"Cho slot (toi da {lim} job song song / user)..."
             conn.execute(
                 "INSERT INTO jobs (id, user_id, source_url, voice, target_lang, tts_engine, openai_model, status, stage, "
-                "progress, message, credits_cost, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "progress, message, credits_cost, created_at, output_opts_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     job_id, user_id, source, voice, target_lang or "vi", engine, model,
-                    STATUS_QUEUED, "queued", 0, msg, cost, now,
+                    STATUS_QUEUED, "queued", 0, msg, cost, now, output_opts_json or "{}",
                 ),
             )
             job_ids.append(job_id)
@@ -1039,6 +1048,7 @@ def list_jobs(
     limit: int = 50,
     offset: int = 0,
     status: Optional[str] = None,
+    statuses: Optional[tuple[str, ...]] = None,
 ) -> list[dict[str, Any]]:
     offset = max(0, int(offset))
     limit = max(1, min(100, int(limit)))
@@ -1048,7 +1058,12 @@ def list_jobs(
         if user_id:
             clauses.append("user_id=?")
             args.append(user_id)
-        if status:
+        if statuses:
+            clean = [s for s in statuses if s]
+            if clean:
+                clauses.append(f"status IN ({','.join('?' * len(clean))})")
+                args.extend(clean)
+        elif status:
             clauses.append("status=?")
             args.append(status)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
@@ -1189,8 +1204,8 @@ def claim_next_job(max_concurrent_per_user: int = 2) -> Optional[dict[str, Any]]
 def update_progress(job_id: str, stage: str, progress: int, message: str) -> None:
     with _connect() as conn:
         conn.execute(
-            "UPDATE jobs SET stage=?, progress=?, message=? WHERE id=?",
-            (stage, int(progress), message, job_id),
+            "UPDATE jobs SET stage=?, progress=?, message=? WHERE id=? AND status=?",
+            (stage, int(progress), message, job_id, STATUS_RUNNING),
         )
         conn.commit()
 
@@ -1198,16 +1213,98 @@ def update_progress(job_id: str, stage: str, progress: int, message: str) -> Non
 def mark_completed(job_id: str, output_path: str, qa_json: str | None = None) -> None:
     with _connect() as conn:
         conn.execute(
-            "UPDATE jobs SET status=?, stage=?, progress=?, message=?, output_path=?, qa_json=?, finished_at=? WHERE id=?",
-            (STATUS_COMPLETED, "completed", 100, "Hoan tat!", output_path, qa_json, time.time(), job_id),
+            "UPDATE jobs SET status=?, stage=?, progress=?, message=?, output_path=?, qa_json=?, finished_at=? "
+            "WHERE id=? AND status=?",
+            (
+                STATUS_COMPLETED, "completed", 100, "Hoan tat!", output_path, qa_json,
+                time.time(), job_id, STATUS_RUNNING,
+            ),
         )
         conn.commit()
 
 
-def mark_failed(job_id: str, error: str) -> None:
+def set_output_path(job_id: str, output_path: str) -> None:
+    """Cap nhat file xuat (sau khi Editor apply), giu status/QA."""
     with _connect() as conn:
         conn.execute(
-            "UPDATE jobs SET status=?, stage=?, message=?, error=?, finished_at=? WHERE id=?",
-            (STATUS_FAILED, "failed", "Xu ly that bai", error[:2000], time.time(), job_id),
+            "UPDATE jobs SET output_path=? WHERE id=?",
+            (output_path, job_id),
         )
+        conn.commit()
+
+
+def is_cancelled(job_id: str) -> bool:
+    row = get_job(job_id)
+    return bool(row and row.get("status") == STATUS_CANCELLED)
+
+
+def cancel_job(job_id: str, user_id: str) -> bool:
+    """Huy queued/running. Hoan credit. Tra ve False neu khong huy duoc."""
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE;")
+        row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if (
+            row is None
+            or row["user_id"] != user_id
+            or row["status"] not in (STATUS_QUEUED, STATUS_RUNNING)
+        ):
+            conn.commit()
+            return False
+        conn.execute(
+            "UPDATE jobs SET status=?, stage=?, message=?, error=?, finished_at=? WHERE id=?",
+            (
+                STATUS_CANCELLED,
+                "cancelled",
+                "Da huy",
+                "Da huy boi nguoi dung",
+                time.time(),
+                job_id,
+            ),
+        )
+        if row["user_id"] and row["credits_cost"] and not row["refunded"]:
+            _refund_locked(conn, row["user_id"], job_id, row["credits_cost"])
+        conn.commit()
+        return True
+
+
+def cancel_active_jobs(user_id: str) -> int:
+    """Huy moi job queued/running cua user. Tra ve so job da huy."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id FROM jobs WHERE user_id=? AND status IN (?, ?)",
+            (user_id, STATUS_QUEUED, STATUS_RUNNING),
+        ).fetchall()
+    n = 0
+    for r in rows:
+        if cancel_job(r["id"], user_id):
+            n += 1
+    return n
+
+
+def mark_failed(job_id: str, error: str, qa_json: str | None = None) -> None:
+    with _connect() as conn:
+        if qa_json is not None:
+            conn.execute(
+                "UPDATE jobs SET status=?, stage=?, message=?, error=?, qa_json=?, finished_at=? "
+                "WHERE id=? AND status=?",
+                (
+                    STATUS_FAILED,
+                    "failed",
+                    "Xu ly that bai",
+                    error[:2000],
+                    qa_json,
+                    time.time(),
+                    job_id,
+                    STATUS_RUNNING,
+                ),
+            )
+        else:
+            conn.execute(
+                "UPDATE jobs SET status=?, stage=?, message=?, error=?, finished_at=? "
+                "WHERE id=? AND status=?",
+                (
+                    STATUS_FAILED, "failed", "Xu ly that bai", error[:2000],
+                    time.time(), job_id, STATUS_RUNNING,
+                ),
+            )
         conn.commit()

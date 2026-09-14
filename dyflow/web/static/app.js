@@ -68,15 +68,23 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   const toggle = document.getElementById("nav-toggle");
-  const nav = document.getElementById("site-nav");
+  const nav = document.getElementById("site-nav") || document.getElementById("studio-rail");
+  const scrim = document.getElementById("studio-scrim");
   if (toggle && nav) {
+    const desktopMq = document.body.classList.contains("studio")
+      ? "(min-width: 1101px)"
+      : "(min-width: 761px)";
     const setOpen = (open) => {
       document.body.classList.toggle("nav-open", open);
       toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      if (scrim) scrim.hidden = !open;
     };
     toggle.addEventListener("click", () => {
       setOpen(!document.body.classList.contains("nav-open"));
     });
+    if (scrim) {
+      scrim.addEventListener("click", () => setOpen(false));
+    }
     nav.querySelectorAll("a, button.nav-link").forEach((el) => {
       el.addEventListener("click", () => setOpen(false));
     });
@@ -84,7 +92,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (e.key === "Escape") setOpen(false);
     });
     window.addEventListener("resize", () => {
-      if (window.matchMedia("(min-width: 761px)").matches) setOpen(false);
+      if (window.matchMedia(desktopMq).matches) setOpen(false);
     });
   }
 });
@@ -448,28 +456,93 @@ const DyflowHome = {
     this._audio = null;
     this._quoteTimer = null;
     this._quoteSeq = 0;
+    this._filePicks = [];
+    this._folderPicks = [];
+    this._liveTimer = null;
+    this._cancelling = false;
+    this._lastQuoteUrl = "";
+    this._lastQuoteItems = [];
+    this._quoteBusy = false;
+    this._quoteBusyMsg = "";
+    this._quoteClock = null;
+    this._quoteStarted = 0;
+    this._jobsBusy = false;
     this._renderVoices();
     this._renderTts();
+    this._bindStudio();
+    this._pollLiveLog();
+    this._liveTimer = setInterval(() => this._pollLiveLog(), 2000);
     if (langSel) {
       langSel.addEventListener("change", () => this._renderVoices());
     }
     if (urlInput) {
-      urlInput.addEventListener("input", () => this._scheduleQuote());
+      urlInput.addEventListener("input", () => {
+        this._syncChannelOpts();
+        this._scheduleQuote();
+      });
       urlInput.addEventListener("paste", () => {
-        setTimeout(() => this._scheduleQuote(true), 50);
+        setTimeout(() => {
+          this._syncChannelOpts();
+          this._scheduleQuote(true);
+        }, 50);
       });
       // Neu da co text (browser restore) -> quote 1 lan
+      this._syncChannelOpts();
       if ((urlInput.value || "").trim()) this._scheduleQuote(true);
     }
 
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       err.textContent = "";
+      const urlVal = ((document.getElementById("url") || {}).value || "").trim();
+      const locals = this._localFiles();
+      if (!urlVal && !locals.length) {
+        err.textContent = _("home_src_needed");
+        const u = document.getElementById("url");
+        if (u) u.focus();
+        return;
+      }
+      const langVal = ((document.getElementById("lang") || {}).value || "").trim();
+      if (!langVal) {
+        err.textContent = _("home_lang_needed");
+        const l = document.getElementById("lang");
+        if (l) l.focus();
+        return;
+      }
+      const voiceVal = (document.querySelector('input[name="voice"]:checked') || {}).value;
+      if (!voiceVal) {
+        err.textContent = _("home_voice_needed");
+        return;
+      }
+      const ttsVal = (document.querySelector('input[name="tts"]:checked') || {}).value;
+      if (!ttsVal) {
+        err.textContent = _("home_tts_needed");
+        return;
+      }
       btn.disabled = true;
       btn.textContent = _("sending");
+      const ac = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const hangTimer = setTimeout(() => {
+        if (ac) ac.abort();
+        }, 60000);
       try {
         const data = new FormData(form);
-        const res = await fetch("/api/jobs", { method: "POST", body: data });
+        data.delete("videos");
+        locals.forEach((f) => data.append("videos", f, f.name));
+        const logoOn = document.getElementById("logo-enable");
+        if (logoOn && !logoOn.checked) data.delete("logo");
+        if (
+          this._lastQuoteItems &&
+          this._lastQuoteItems.length &&
+          this._lastQuoteUrl === urlVal
+        ) {
+          data.set("quoted_json", JSON.stringify(this._lastQuoteItems));
+        }
+        const res = await fetch("/api/jobs", {
+          method: "POST",
+          body: data,
+          signal: ac ? ac.signal : undefined,
+        });
         if (res.status === 402) {
           err.innerHTML = _("no_credit");
           btn.disabled = false;
@@ -486,17 +559,303 @@ const DyflowHome = {
         }
         window.location.href = `/jobs/${ids[0] || body.id}`;
       } catch (ex) {
-        err.textContent = ex.message;
+        const aborted = ex && (ex.name === "AbortError" || /aborted/i.test(ex.message || ""));
+        err.textContent = aborted
+          ? _("job_create_timeout")
+          : (ex.message || _("job_create_fail"));
         btn.disabled = false;
         btn.textContent = _("start");
+      } finally {
+        clearTimeout(hangTimer);
       }
     });
+  },
+
+  _bindStudio() {
+    const previewBtn = document.getElementById("preview-quote-btn");
+    if (previewBtn) {
+      previewBtn.addEventListener("click", () => this._scheduleQuote(true));
+    }
+    const urlInput = document.getElementById("url");
+    if (urlInput && urlInput.getAttribute("data-batch") === "1") {
+      urlInput.focus();
+    }
+    const logo = document.getElementById("logo");
+    const logoName = document.getElementById("logo-name");
+    const logoOn = document.getElementById("logo-enable");
+    if (logoName && logo) {
+      logoName.addEventListener("click", () => logo.click());
+      logo.addEventListener("change", () => {
+        const f = logo.files && logo.files[0];
+        logoName.value = f ? f.name : "";
+        if (f && logoOn) logoOn.checked = true;
+      });
+    }
+    const pickFiles = document.getElementById("pick-files-btn");
+    const pickFolder = document.getElementById("pick-folder-btn");
+    const fileInput = document.getElementById("local-files");
+    const folderInput = document.getElementById("local-folder");
+    if (pickFiles && fileInput) {
+      pickFiles.addEventListener("click", () => fileInput.click());
+      fileInput.addEventListener("change", () => {
+        this._filePicks = this._videoFiles(fileInput.files);
+        this._syncLocalCount();
+      });
+    }
+    if (pickFolder && folderInput) {
+      pickFolder.addEventListener("click", () => folderInput.click());
+      folderInput.addEventListener("change", () => {
+        this._folderPicks = this._videoFiles(folderInput.files);
+        this._syncLocalCount();
+      });
+    }
+    this._bindChannelOpts();
+    const cancelBtn = document.getElementById("cancel-btn");
+    if (cancelBtn) {
+      cancelBtn.addEventListener("click", () => this._cancelActive());
+    }
+    const live = document.getElementById("live-log");
+    if (live) {
+      live.addEventListener("click", (ev) => {
+        const b = ev.target.closest("[data-cancel-id]");
+        if (!b) return;
+        ev.preventDefault();
+        this._cancelOne(b.getAttribute("data-cancel-id"));
+      });
+    }
+  },
+
+  async _cancelActive() {
+    const btn = document.getElementById("cancel-btn");
+    if (this._cancelling) return;
+    this._cancelling = true;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = _("cancelling");
+    }
+    try {
+      const res = await fetch("/api/jobs/cancel-active", { method: "POST" });
+      if (!res.ok) throw new Error(_("cancel_fail"));
+      await this._pollLiveLog();
+    } catch (ex) {
+      const err = document.getElementById("form-error");
+      if (err) err.textContent = ex.message || _("cancel_fail");
+    } finally {
+      this._cancelling = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = _("cancel");
+      }
+    }
+  },
+
+  async _cancelOne(jobId) {
+    if (!jobId) return;
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/cancel`, { method: "POST" });
+      if (!res.ok) throw new Error(_("cancel_fail"));
+      await this._pollLiveLog();
+    } catch (ex) {
+      const err = document.getElementById("form-error");
+      if (err) err.textContent = ex.message || _("cancel_fail");
+    }
+  },
+
+  _isChannelText(text) {
+    return /douyin\.com\/(user|channel|share\/user)\//i.test(text || "")
+      || /iesdouyin\.com\/share\/user\//i.test(text || "");
+  },
+
+  _syncChannelOpts() {
+    const box = document.getElementById("channel-opts");
+    const urlInput = document.getElementById("url");
+    if (!box) return;
+    box.hidden = !this._isChannelText((urlInput && urlInput.value) || "");
+    this._syncChannelCountEnabled();
+  },
+
+  _syncChannelCountEnabled() {
+    const count = document.getElementById("channel-count");
+    const full = document.querySelector('input[name="channel_mode"][value="full"]');
+    if (!count) return;
+    count.disabled = !!(full && full.checked);
+  },
+
+  _bindChannelOpts() {
+    const box = document.getElementById("channel-opts");
+    if (!box) return;
+    box.querySelectorAll('input[name="channel_mode"]').forEach((el) => {
+      el.addEventListener("change", () => {
+        this._syncChannelCountEnabled();
+        this._scheduleQuote(true);
+      });
+    });
+    const count = document.getElementById("channel-count");
+    if (count) {
+      count.addEventListener("focus", () => {
+        const r = document.querySelector('input[name="channel_mode"][value="count"]');
+        if (r) r.checked = true;
+        this._syncChannelCountEnabled();
+      });
+      count.addEventListener("change", () => this._scheduleQuote(true));
+      count.addEventListener("input", () => {
+        const max = Number(window.DYFLOW_CHANNEL_MAX || count.max || 200);
+        let n = parseInt(count.value, 10);
+        if (!Number.isFinite(n)) return;
+        if (n < 1) n = 1;
+        if (n > max) n = max;
+        if (String(n) !== count.value) count.value = String(n);
+      });
+    }
+  },
+
+  _channelFields() {
+    const modeEl = document.querySelector('input[name="channel_mode"]:checked');
+    const countEl = document.getElementById("channel-count");
+    return {
+      channel_mode: (modeEl && modeEl.value) || "count",
+      channel_count: (countEl && countEl.value) || "10",
+    };
+  },
+
+  _videoFiles(list) {
+    return Array.from(list || []).filter((f) =>
+      /\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(f.name || "")
+    );
+  },
+
+  _localFiles() {
+    const seen = new Set();
+    const out = [];
+    (this._filePicks || []).concat(this._folderPicks || []).forEach((f) => {
+      const key = `${f.name}:${f.size}:${f.lastModified}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(f);
+    });
+    return out;
+  },
+
+  _syncLocalCount() {
+    const el = document.getElementById("local-count");
+    if (!el) return;
+    const n = this._localFiles().length;
+    el.textContent = n ? _("studio_local_n").replace("{n}", String(n)) : "";
+  },
+
+  _shortSrc(url) {
+    const s = url || "";
+    if (!s) return "";
+    if (/^[A-Za-z]:[\\/]/.test(s) || s.startsWith("/") || s.startsWith("\\\\")) {
+      const parts = s.replace(/\\/g, "/").split("/");
+      return parts[parts.length - 1] || s;
+    }
+    return s.replace(/^https?:\/\//, "");
+  },
+
+  async _pollLiveLog() {
+    const el = document.getElementById("live-log");
+    if (!el) return;
+    try {
+      const res = await fetch("/api/jobs");
+      if (!res.ok) return;
+      const body = await res.json();
+      this._renderLive(body.jobs || []);
+    } catch (_) { /* ignore */ }
+  },
+
+  _renderLive(jobs) {
+    const el = document.getElementById("live-log");
+    if (!el) return;
+    const active = (jobs || []).filter(
+      (j) => j.status === "queued" || j.status === "running"
+    );
+    const cancelBtn = document.getElementById("cancel-btn");
+    if (cancelBtn && !this._cancelling) cancelBtn.hidden = !active.length;
+    this._jobsBusy = !!active.length;
+    this._syncStudioBusy();
+    if (!active.length) {
+      el.innerHTML = `<li class="empty">${_("studio_log_empty")}</li>`;
+      return;
+    }
+    el.innerHTML = active
+      .map((j) => {
+        const pct = Math.max(0, Math.min(100, Number(j.progress) || 0));
+        const label =
+          j.status === "queued"
+            ? _("status_queued")
+            : j.stage_label || _("status_running");
+        const extra = j.status === "running" && pct ? ` · ${pct}%` : "";
+        const src = this._shortSrc(j.source_url);
+        const msg = j.message || "";
+        return (
+          `<li>` +
+          `<div class="live-row">` +
+          `<span class="live-row-title">` +
+          (j.status === "running" ? `<i class="quote-spin"></i>` : "") +
+          `<strong>${label}${extra}</strong>` +
+          `</span>` +
+          `<button type="button" class="btn ghost danger btn-xs" data-cancel-id="${j.id}">${_("cancel")}</button>` +
+          `</div>` +
+          (src ? `<span>${src}</span>` : "") +
+          (msg ? `<span>${msg}</span>` : "") +
+          `<span class="live-bar"><i style="width:${pct}%"></i></span>` +
+          `</li>`
+        );
+      })
+      .join("");
   },
 
   _scheduleQuote(immediate) {
     clearTimeout(this._quoteTimer);
     const wait = immediate ? 200 : 700;
     this._quoteTimer = setTimeout(() => this._fetchQuote(), wait);
+  },
+
+  _syncStudioBusy() {
+    const quoting = !!this._quoteBusy;
+    const jobs = !!this._jobsBusy;
+    const frame = document.getElementById("studio-preview-frame");
+    const spin = document.getElementById("studio-preview-spin");
+    const text = document.getElementById("studio-preview-text");
+    if (spin) spin.hidden = !(quoting || jobs);
+    if (frame) frame.classList.toggle("is-busy", quoting || jobs);
+    if (text) {
+      text.textContent = quoting
+        ? ""
+        : jobs
+          ? _("job_processing")
+          : _("studio_preview_empty");
+    }
+  },
+
+  _setQuoteLoading(on, msg) {
+    const box = document.getElementById("quote-box");
+    const spin = document.getElementById("quote-spin");
+    const list = document.getElementById("quote-list");
+    const prev = document.getElementById("preview-quote-btn");
+    const statusEl = document.getElementById("quote-status");
+    this._quoteBusy = !!on;
+    this._quoteBusyMsg = msg || "";
+    if (box) box.classList.toggle("is-loading", !!on);
+    if (spin) spin.hidden = !on;
+    if (prev) prev.disabled = !!on;
+    if (on && list) list.innerHTML = "";
+    clearInterval(this._quoteClock);
+    this._quoteClock = null;
+    if (on) {
+      this._quoteStarted = Date.now();
+      const tick = () => {
+        const sec = Math.max(0, Math.round((Date.now() - this._quoteStarted) / 1000));
+        const line = `${msg || _("quote_checking")} · ${sec}s`;
+        this._quoteBusyMsg = line;
+        if (statusEl) statusEl.textContent = line;
+        this._syncStudioBusy();
+      };
+      tick();
+      this._quoteClock = setInterval(tick, 1000);
+    }
+    this._syncStudioBusy();
   },
 
   async _fetchQuote() {
@@ -509,6 +868,9 @@ const DyflowHome = {
 
     const text = (urlInput.value || "").trim();
     if (!text) {
+      this._lastQuoteUrl = "";
+      this._lastQuoteItems = [];
+      this._setQuoteLoading(false);
       box.hidden = true;
       list.innerHTML = "";
       if (totalEl) totalEl.textContent = "";
@@ -517,19 +879,35 @@ const DyflowHome = {
 
     const seq = ++this._quoteSeq;
     box.hidden = false;
-    if (statusEl) statusEl.textContent = _("quote_checking");
+    const waitMsg = this._isChannelText(text)
+      ? _("quote_channel")
+      : _("quote_checking");
+    this._setQuoteLoading(true, waitMsg);
     if (totalEl) totalEl.textContent = "…";
 
     try {
       const data = new FormData();
       data.set("url", text);
+      const ch = this._channelFields();
+      data.set("channel_mode", ch.channel_mode);
+      data.set("channel_count", ch.channel_count);
       const res = await fetch("/api/quote", { method: "POST", body: data });
       const body = await res.json().catch(() => ({}));
       if (seq !== this._quoteSeq) return;
-      if (!res.ok) throw new Error(body.detail || _("quote_fail"));
+      this._setQuoteLoading(false);
+      if (!res.ok) {
+        const d = body.detail;
+        const msg = Array.isArray(d)
+          ? d.map((x) => (x && x.msg) || x).join(" ")
+          : (typeof d === "string" ? d : _("quote_fail"));
+        throw new Error(msg || _("quote_fail"));
+      }
 
       const items = body.items || [];
+      this._lastQuoteUrl = text;
+      this._lastQuoteItems = items;
       if (!items.length) {
+        this._lastQuoteUrl = "";
         box.hidden = true;
         list.innerHTML = "";
         if (totalEl) totalEl.textContent = "";
@@ -537,7 +915,11 @@ const DyflowHome = {
         return;
       }
 
-      if (statusEl) statusEl.textContent = _("quote_title");
+      if (statusEl) {
+        statusEl.textContent = body.channel_incomplete
+          ? _("quote_channel_one")
+          : _("quote_title");
+      }
       list.innerHTML = items
         .map((it, idx) => {
           const dur = it.unknown
@@ -563,14 +945,18 @@ const DyflowHome = {
       }
     } catch (ex) {
       if (seq !== this._quoteSeq) return;
-      if (statusEl) statusEl.textContent = _("quote_fail");
+      this._setQuoteLoading(false);
+      this._lastQuoteUrl = "";
+      this._lastQuoteItems = [];
+      if (statusEl) statusEl.textContent = ex.message || _("quote_fail");
       list.innerHTML = "";
       if (totalEl) totalEl.textContent = "";
     }
   },
 
   _currentLangMeta() {
-    const langId = (document.getElementById("lang") || {}).value || "en";
+    const langId = ((document.getElementById("lang") || {}).value || "").trim();
+    if (!langId) return null;
     return (this._languages || []).find((l) => l.id === langId) || null;
   },
 
@@ -602,13 +988,14 @@ const DyflowHome = {
     }
     const prev = (wrap.querySelector('input[name="voice"]:checked') || {}).value;
     wrap.innerHTML = "";
+    if (!meta) {
+      wrap.innerHTML = `<p class="hint left">${_("home_lang_needed")}</p>`;
+      return;
+    }
     const groups = [
       { gender: "male", title: _("voice_male") },
       { gender: "female", title: _("voice_female") },
     ];
-    const defaultId = voices.some((v) => v.id === "male_adult")
-      ? "male_adult"
-      : ((voices[0] || {}).id || "male");
     groups.forEach((g) => {
       const items = voices.filter((v) => v.gender === g.gender);
       if (!items.length) return;
@@ -621,8 +1008,7 @@ const DyflowHome = {
       const row = document.createElement("div");
       row.className = "voices-row";
       items.forEach((v) => {
-        const checked = prev ? prev === v.id : v.id === defaultId;
-        row.appendChild(this._voiceCard(v, checked));
+        row.appendChild(this._voiceCard(v, prev === v.id));
       });
       block.appendChild(row);
       wrap.appendChild(block);
@@ -647,7 +1033,7 @@ const DyflowHome = {
     const prev = (wrap.querySelector('input[name="tts"]:checked') || {}).value;
     wrap.innerHTML = "";
     choices.forEach((t) => {
-      const checked = prev ? prev === t.id : t.id === "edge";
+      const checked = prev === t.id;
       const el = document.createElement("label");
       el.className = "voice-opt";
       el.innerHTML = `
@@ -714,7 +1100,28 @@ const DyflowJob = {
     this.steps = Array.from(document.querySelectorAll("#stepper li"));
     this.errEl = document.getElementById("job-error");
     this._autoDownloaded = false;
+    this._bindCancel();
     this.connect();
+  },
+
+  _bindCancel() {
+    const btn = document.getElementById("cancel-job-btn");
+    if (!btn) return;
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      btn.textContent = _("cancelling");
+      try {
+        const res = await fetch(`/api/jobs/${this.jobId}/cancel`, { method: "POST" });
+        if (!res.ok) throw new Error(_("cancel_fail"));
+      } catch (ex) {
+        if (this.errEl) {
+          this.errEl.hidden = false;
+          this.errEl.textContent = ex.message || _("cancel_fail");
+        }
+        btn.disabled = false;
+        btn.textContent = _("cancel");
+      }
+    });
   },
 
   connect() {
@@ -722,7 +1129,7 @@ const DyflowJob = {
     src.onmessage = (ev) => {
       const job = JSON.parse(ev.data);
       this.render(job);
-      if (job.status === "completed" || job.status === "failed") {
+      if (job.status === "completed" || job.status === "failed" || job.status === "cancelled") {
         src.close();
       }
     };
@@ -738,7 +1145,7 @@ const DyflowJob = {
       const res = await fetch(`/api/jobs/${this.jobId}`);
       const job = await res.json();
       this.render(job);
-      if (job.status !== "completed" && job.status !== "failed") {
+      if (job.status !== "completed" && job.status !== "failed" && job.status !== "cancelled") {
         setTimeout(() => this.poll(), 1500);
       }
     } catch (e) {
@@ -772,12 +1179,27 @@ const DyflowJob = {
       if (job.status === "completed") li.classList.add("done");
     });
 
+    const cancelBtn = document.getElementById("cancel-job-btn");
+    if (cancelBtn) {
+      const live = job.status === "queued" || job.status === "running";
+      cancelBtn.hidden = !live;
+    }
+
+    if (job.status === "cancelled") {
+      this.msg.textContent = _("job_cancelled");
+      if (ph) ph.textContent = _("status_cancelled");
+      const spin = document.querySelector(".spinner");
+      if (spin) spin.style.display = "none";
+      this._showEditorActions(false);
+    }
+
     if (job.status === "failed") {
       this.errEl.hidden = false;
       this.errEl.textContent = job.error || _("job_fail_msg");
       if (ph) ph.textContent = _("job_failed");
       const spin = document.querySelector(".spinner");
       if (spin) spin.style.display = "none";
+      this._showEditorActions(false);
     }
 
     if (job.status === "completed" && job.has_output) {
@@ -796,11 +1218,16 @@ const DyflowJob = {
       box.hidden = true;
       return;
     }
-    const flagLabel = (f) => _("qa_flag_" + f) || f;
+    const QA_ALERT = new Set(["chua_dich", "qua_dai", "qua_nhanh"]);
+    const flagLabel = (f) => {
+      if (String(f).startsWith("shortened_x")) return _("qa_flag_shortened") || f;
+      return _("qa_flag_" + f) || f;
+    };
     list.innerHTML = rows
       .map((r) => {
-        const flags = (r.flags || []).map(flagLabel).join(", ") || _("qa_ok");
-        const cls = (r.flags || []).length ? "qa-bad" : "qa-ok";
+        const rawFlags = r.flags || [];
+        const flags = rawFlags.map(flagLabel).join(", ") || _("qa_ok");
+        const cls = rawFlags.some((f) => QA_ALERT.has(f)) ? "qa-bad" : "qa-ok";
         const txt = (r.text || "").replace(/</g, "&lt;");
         return `<li class="${cls}"><span class="qa-meta">#${r.i + 1} · ${r.speed}x · ${flags}</span><span class="qa-text">${txt}</span></li>`;
       })
@@ -808,25 +1235,62 @@ const DyflowJob = {
     box.hidden = false;
   },
 
+  _showEditorActions(hasDownload) {
+    const actions = document.getElementById("result-actions");
+    const dl = document.getElementById("download-btn");
+    if (actions) actions.hidden = false;
+    if (dl) dl.hidden = !hasDownload;
+  },
+
   showResult() {
     const wrap = document.getElementById("video-wrap");
-    const actions = document.getElementById("result-actions");
     const playUrl = `/api/jobs/${this.jobId}/download`;
     const dlUrl = `/api/jobs/${this.jobId}/download?dl=1`;
     wrap.innerHTML = `<video controls autoplay muted playsinline src="${playUrl}"></video>`;
-    if (actions) {
-      actions.hidden = false;
-      document.getElementById("download-btn").href = dlUrl;
+    this._showEditorActions(true);
+    const btn = document.getElementById("download-btn");
+    if (btn) {
+      btn.href = dlUrl;
+      btn.onclick = (ev) => {
+        if (!window.DYFLOW_DESKTOP) return;
+        ev.preventDefault();
+        this._saveLocal();
+      };
     }
     const note = document.getElementById("auto-dl-note");
     if (note) note.hidden = false;
     this._autoDownload(dlUrl);
   },
 
+  async _saveLocal() {
+    const note = document.getElementById("auto-dl-note");
+    try {
+      const res = await fetch(`/api/jobs/${this.jobId}/export-local`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        throw new Error(data.detail || _("save_download_fail"));
+      }
+      const msg = (_("saved_to_downloads") || "Saved: {path}").replace("{path}", data.path || "");
+      if (note) {
+        note.hidden = false;
+        note.textContent = msg;
+      }
+    } catch (e) {
+      if (note) {
+        note.hidden = false;
+        note.textContent = _("save_download_fail");
+      }
+    }
+  },
+
   _autoDownload(url) {
-    // Chi tu dong 1 lan / job; can giu tab trang job dang mo.
+    // pywebview khong co thanh Downloads — copy file thay vi <a download>.
     if (this._autoDownloaded) return;
     this._autoDownloaded = true;
+    if (window.DYFLOW_DESKTOP) {
+      this._saveLocal();
+      return;
+    }
     try {
       const a = document.createElement("a");
       a.href = url;
@@ -836,7 +1300,6 @@ const DyflowJob = {
       a.click();
       a.remove();
     } catch (_) {
-      // Fallback: iframe an (mot so trinh duyet chan a.click khong gesture)
       const iframe = document.createElement("iframe");
       iframe.style.display = "none";
       iframe.src = url;
@@ -851,5 +1314,151 @@ const DyflowJob = {
   ],
   _stageIndex(stage) {
     return this._stages.indexOf(stage);
+  },
+};
+
+const DyflowQueue = {
+  init() {
+    if (!document.getElementById("queue-page")) return;
+    this._cancelling = false;
+    this._poll();
+    this._timer = setInterval(() => this._poll(), 2000);
+    const cancelAll = document.getElementById("cancel-btn");
+    if (cancelAll) {
+      cancelAll.addEventListener("click", () => this._cancelActive());
+    }
+    const live = document.getElementById("live-log");
+    if (live) {
+      live.addEventListener("click", (ev) => {
+        const b = ev.target.closest("[data-cancel-id]");
+        if (!b) return;
+        ev.preventDefault();
+        this._cancelOne(b.getAttribute("data-cancel-id"));
+      });
+    }
+  },
+
+  _shortSrc(url) {
+    const s = url || "";
+    if (!s) return "";
+    if (/^[A-Za-z]:[\\/]/.test(s) || s.startsWith("/") || s.startsWith("\\\\")) {
+      const parts = s.replace(/\\/g, "/").split("/");
+      return parts[parts.length - 1] || s;
+    }
+    return s.replace(/^https?:\/\//, "");
+  },
+
+  async _poll() {
+    try {
+      const res = await fetch("/api/jobs");
+      if (!res.ok) return;
+      const body = await res.json();
+      this._render(body.jobs || []);
+    } catch (_) { /* ignore */ }
+  },
+
+  _render(jobs) {
+    const live = document.getElementById("live-log");
+    const recent = document.getElementById("queue-recent");
+    const cancelBtn = document.getElementById("cancel-btn");
+    const list = jobs || [];
+    const active = list.filter((j) => j.status === "queued" || j.status === "running");
+    const done = list.filter(
+      (j) => j.status === "failed" || j.status === "cancelled"
+    );
+    if (cancelBtn && !this._cancelling) cancelBtn.hidden = !active.length;
+
+    if (live) {
+      if (!active.length) {
+        live.innerHTML = `<li class="empty">${_("queue_empty")}</li>`;
+      } else {
+        live.innerHTML = active.map((j) => this._activeRow(j)).join("");
+      }
+    }
+    if (recent) {
+      if (!done.length) {
+        recent.innerHTML = `<li class="empty">${_("queue_recent_empty")}</li>`;
+      } else {
+        recent.innerHTML = done.map((j) => this._recentRow(j)).join("");
+      }
+    }
+  },
+
+  _activeRow(j) {
+    const pct = Math.max(0, Math.min(100, Number(j.progress) || 0));
+    const label =
+      j.status === "queued"
+        ? _("status_queued")
+        : j.stage_label || _("status_running");
+    const extra = j.status === "running" && pct ? ` · ${pct}%` : "";
+    const src = this._shortSrc(j.source_url);
+    const msg = j.message || "";
+    return (
+      `<li>` +
+      `<div class="live-row">` +
+      `<span class="live-row-title">` +
+      (j.status === "running" ? `<i class="quote-spin"></i>` : "") +
+      `<strong>${label}${extra}</strong>` +
+      `</span>` +
+      `<button type="button" class="btn ghost danger btn-xs" data-cancel-id="${j.id}">${_("cancel")}</button>` +
+      `</div>` +
+      (src ? `<span>${src}</span>` : "") +
+      (msg ? `<span>${msg}</span>` : "") +
+      `<span class="live-bar"><i style="width:${pct}%"></i></span>` +
+      `</li>`
+    );
+  },
+
+  _recentRow(j) {
+    const src = this._shortSrc(j.source_url);
+    const label =
+      j.status === "cancelled" ? _("status_cancelled") : _("status_failed");
+    const msg = j.error || j.message || "";
+    return (
+      `<li>` +
+      `<div class="live-row">` +
+      `<span class="live-row-title"><strong>${label}</strong></span>` +
+      `<a class="btn ghost btn-xs" href="/jobs/${j.id}">${_("queue_open")}</a>` +
+      `</div>` +
+      (src ? `<span>${src}</span>` : "") +
+      (msg ? `<span>${msg}</span>` : "") +
+      `</li>`
+    );
+  },
+
+  async _cancelActive() {
+    const btn = document.getElementById("cancel-btn");
+    if (this._cancelling) return;
+    this._cancelling = true;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = _("cancelling");
+    }
+    try {
+      const res = await fetch("/api/jobs/cancel-active", { method: "POST" });
+      if (!res.ok) throw new Error(_("cancel_fail"));
+      await this._poll();
+    } catch (ex) {
+      const err = document.getElementById("form-error");
+      if (err) err.textContent = ex.message || _("cancel_fail");
+    } finally {
+      this._cancelling = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = _("queue_cancel_all") || _("cancel");
+      }
+    }
+  },
+
+  async _cancelOne(jobId) {
+    if (!jobId) return;
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/cancel`, { method: "POST" });
+      if (!res.ok) throw new Error(_("cancel_fail"));
+      await this._poll();
+    } catch (ex) {
+      const err = document.getElementById("form-error");
+      if (err) err.textContent = ex.message || _("cancel_fail");
+    }
   },
 };

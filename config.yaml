@@ -103,16 +103,18 @@ voiceover:
   max_atempo_stretch: 1.08    # chi tua NHANH khi TTS dai hon slot (khong keo cham)
   dub_timing: natural         # natural = toc do 1.0x; fill_slot = keo cham (robot)
   caption_sync_voice: true    # phu de chi hien khi co giong
-  dub_qa_fail_closed: true    # moi job: fail neu QA dub loi (Edge nghiem hon OpenAI)
+  dub_qa_fail_closed: true    # fail neu chong doan sau >20%, chu Han, hoac toc khong an toan
+  qa_max_qua_dai_ratio: 0.20
+  qa_max_drift_pct: 50
   auto:
     prefer_platform_subs: true
     min_sub_coverage: 0.35   # phu de Douyin < 35% video -> dung Whisper
     whisper_model: medium
     vad: false                # QUAN TRONG: true se bo sot gan het thoai
     retry_on_loop: true       # phat hien lap -> tu Whisper lai (user van bam 1 lan)
-    merge_gap_sec: 0.35
-    merge_max_dur: 3.2        # doan ngan hon -> TTS khop nhip, it im lang
-    merge_max_chars: 52
+    merge_gap_sec: 0.55
+    merge_max_dur: 8.0        # gop manh Whisper thanh cau, roi moi dich
+    merge_max_chars: 220
     translate_from: zh-CN
     source_lang: zh
     cast_speakers: true       # 1 video: moi nhan vat 1 giong (gioi tinh + tuoi)

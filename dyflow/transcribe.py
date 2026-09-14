@@ -2,9 +2,14 @@
 from __future__ import annotations
 import json
 import re
+import threading
+import time
 from pathlib import Path
 
 from .dub_constants import (
+    DUB_GROUP_MAX_CHARS,
+    DUB_GROUP_MAX_DUR_SEC,
+    DUB_GROUP_MAX_GAP_SEC,
     TRANSLATE_MAX_RETRIES,
     TRANSLATE_MIN_CHAR_RATIO,
     TRANSLATE_RETRY_SLEEP_SEC,
@@ -339,6 +344,8 @@ def transcribe_segments(audio, model_size="small", source_lang="zh",
                         repetition_penalty: float = 1.2,
                         no_repeat_ngram_size: int = 3,
                         compression_ratio_threshold: float = 2.0,
+                        progress=None,
+                        audio_dur: float | None = None,
                         ) -> tuple[list[dict], bool]:
     """Whisper -> (segments, had_raw_loops)."""
     try:
@@ -358,8 +365,22 @@ def transcribe_segments(audio, model_size="small", source_lang="zh",
     try:
         if key not in _MODEL_CACHE:
             log.info("Tai/nap Whisper model '%s'...", model_size)
+            if progress:
+                progress("transcribing", 35, f"Dang tai Whisper {model_size}...")
             _MODEL_CACHE[key] = WhisperModel(model_size, device="cpu", compute_type=compute_type)
+        else:
+            log.info(
+                "Whisper model cache HIT %s/%s — khong load lai (cung process desktop.py)",
+                model_size, compute_type,
+            )
         model = _MODEL_CACHE[key]
+        from .job_timing import note as timing_note, step as timing_step
+        timing_note(
+            "Whisper",
+            model=model_size,
+            device="cpu",
+            compute_type=compute_type,
+        )
         use_vad = WHISPER_VAD_DEFAULT if vad is None else bool(vad)
         kwargs: dict = {
             "language": source_lang or None,
@@ -380,15 +401,51 @@ def transcribe_segments(audio, model_size="small", source_lang="zh",
             log.info("Whisper VAD: ON (threshold=0.35, min_silence=%dms)", WHISPER_VAD_MIN_SILENCE_MS)
         else:
             log.info("Whisper VAD: OFF (nghe toan bo audio — phu hop clip nhac nen)")
-        raw_segments, info = model.transcribe(str(audio), **kwargs)
-        log.info("Whisper detect ngon ngu: %s (p=%.2f)", info.language, info.language_probability)
+        cancelled = threading.Event()
+        t0 = time.monotonic()
+        last_pct = 35
 
+        def _emit(pct: int, msg: str) -> None:
+            nonlocal last_pct
+            if progress is None:
+                return
+            last_pct = max(last_pct, int(pct))
+            try:
+                progress("transcribing", last_pct, msg)
+            except Exception:  # noqa: BLE001
+                cancelled.set()
+
+        def _beat() -> None:
+            while not cancelled.wait(6):
+                elapsed = int(time.monotonic() - t0)
+                _emit(last_pct, f"Whisper dang nghe... {elapsed}s")
+
+        beat = threading.Thread(target=_beat, name="whisper-beat", daemon=True)
+        _emit(35, f"Whisper {model_size} bat dau...")
+        beat.start()
         raw_list: list[dict] = []
-        for seg in raw_segments:
-            text = re.sub(r"\s+", " ", (seg.text or "")).strip()
-            if not text:
-                continue
-            raw_list.append({"start": float(seg.start), "end": float(seg.end), "text": text})
+        try:
+            with timing_step("Whisper"):
+                raw_segments, info = model.transcribe(str(audio), **kwargs)
+                log.info("Whisper detect ngon ngu: %s (p=%.2f)", info.language, info.language_probability)
+
+                dur = float(audio_dur or 0) or None
+                for seg in raw_segments:
+                    if cancelled.is_set():
+                        from .main import JobCancelled
+                        raise JobCancelled("Da huy")
+                    text = re.sub(r"\s+", " ", (seg.text or "")).strip()
+                    if not text:
+                        continue
+                    raw_list.append({"start": float(seg.start), "end": float(seg.end), "text": text})
+                    end = float(seg.end)
+                    if dur and dur > 0:
+                        pct = 36 + int(18 * min(1.0, end / dur))
+                        _emit(pct, f"Whisper {end:.0f}/{dur:.0f}s")
+                    else:
+                        _emit(38, f"Whisper {len(raw_list)} doan...")
+        finally:
+            cancelled.set()
         had_loops = segments_look_loopy(raw_list)
         if had_loops:
             log.warning(
@@ -413,27 +470,123 @@ def _has_cjk(text: str) -> bool:
     return bool(_CJK_RE.search(text or ""))
 
 
+class _OpenAILineTranslator:
+    """Dich 1 cau bang OpenAI — Google hay fail voi cum ngan (没有, 走...)."""
+
+    def __init__(self, target: str):
+        self._target = target or "vi"
+        self._client = None
+
+    def _lang(self) -> str:
+        names = {
+            "vi": "Vietnamese",
+            "en": "English",
+            "ja": "Japanese",
+            "pt": "Brazilian Portuguese",
+            "hi": "Hindi",
+            "de": "German",
+            "id": "Indonesian",
+            "tl": "Filipino",
+        }
+        return names.get(self._target.lower(), self._target)
+
+    def translate(self, text: str) -> str:
+        from .preflight import hydrate_openai_key
+        key = hydrate_openai_key()
+        if not key:
+            raise RuntimeError("thieu OPENAI_API_KEY")
+        if self._client is None:
+            from openai import OpenAI
+            self._client = OpenAI(api_key=key)
+        import os
+        r = self._client.chat.completions.create(
+            model=os.getenv("OPENAI_TRANSLATE_MODEL") or "gpt-4o-mini",
+            temperature=0,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        f"Translate Chinese dialogue into spoken {self._lang()}. "
+                        "Return ONLY the translation, no quotes, no explanation. "
+                        "Short interjections (没有, 走, 好) must still be translated."
+                    ),
+                },
+                {"role": "user", "content": text},
+            ],
+        )
+        out = (r.choices[0].message.content or "").strip().strip("\"'")
+        if not out:
+            raise RuntimeError("openai empty translation")
+        return out
+
+
+def _build_translators(source: str, target: str) -> list[tuple[str, object]]:
+    """Google -> MyMemory -> OpenAI. Khong giu nguyen tieng Trung khi 1 API loi."""
+    from deep_translator import GoogleTranslator
+
+    src = source or "auto"
+    gsrc = "zh-CN" if src in ("auto", "zh", "zh-CN", "chinese") else src
+    out: list[tuple[str, object]] = [
+        ("google", GoogleTranslator(source=gsrc, target=target)),
+    ]
+    try:
+        from deep_translator import MyMemoryTranslator
+
+        mm_src = "zh-CN" if gsrc in ("zh-CN", "zh", "auto") else gsrc
+        mm_tgt = {
+            "vi": "vi-VN",
+            "en": "en-US",
+            "ja": "ja-JP",
+            "pt": "pt-BR",
+            "hi": "hi-IN",
+            "de": "de-DE",
+            "id": "id-ID",
+            "tl": "tl-PH",
+        }.get((target or "").lower(), target)
+        out.append(("mymemory", MyMemoryTranslator(source=mm_src, target=mm_tgt)))
+    except Exception as e:  # noqa: BLE001
+        log.warning("MyMemoryTranslator khong dung duoc: %s", e)
+    try:
+        from .preflight import hydrate_openai_key
+        if hydrate_openai_key():
+            out.append(("openai", _OpenAILineTranslator(target)))
+            log.info("Dich: co OpenAI fallback cho doan Google loi")
+    except Exception as e:  # noqa: BLE001
+        log.warning("Khong gan OpenAI translator: %s", e)
+    return out
+
+
 def _translate_one(text: str, tr) -> str:
     if not text.strip():
         return ""
     try:
-        return tr.translate(text) or text
+        out = (tr.translate(text) or "").strip()
     except Exception:
-        log.warning("Dich loi doan, giu nguyen: %s...", text[:40])
-        return text
+        # Google hay fail cum 1-4 chu: them dau cau roi thu lai
+        if len(text.strip()) <= 12 and not text.strip().endswith("。"):
+            out = (tr.translate(text.strip() + "。") or "").strip().rstrip("。.")
+        else:
+            raise
+    if not out:
+        raise RuntimeError("empty translation")
+    return out
 
 
 def _translate_cjk_leftovers(text: str, tr) -> str:
-    """Neu con chu Han/Trung trong ban dich, goi lai tung cum."""
+    """Neu con chu Han/Trung trong ban dich, goi lai tung cum. Khong tra ve chu Han."""
     if not _has_cjk(text):
         return text
 
     def _one(m: re.Match) -> str:
         chunk = m.group(0)
-        out = (_translate_one(chunk, tr) or "").strip()
+        try:
+            out = (_translate_one(chunk, tr) or "").strip()
+        except Exception as e:  # noqa: BLE001
+            log.warning("Dich cum Han loi: %s | %s", e, chunk[:40])
+            return ""
         if not out or _has_cjk(out):
-            log.warning("Con chu chua dich: %s", chunk)
-            return chunk
+            log.warning("Con chu chua dich sau retry: %s", chunk)
+            return ""
         return out
 
     return _CJK_RE.sub(_one, text)
@@ -445,39 +598,71 @@ def _min_translate_ratio(target: str) -> float:
 
 def _translate_validated_one(
     src: str,
-    tr,
+    translators: list[tuple[str, object]],
     *,
     target: str,
     min_ratio: float,
 ) -> tuple[str, int, str]:
-    """Dich 1 doan, retry neu rong hoac ngan bat thuong."""
+    """Dich 1 doan. Retry toi da 2 lan, xoay API. Khong bao gio tra ve chu Han goc."""
     import time
 
     src = (src or "").strip()
     if not src:
         return "", 0, "empty_src"
+    if not translators:
+        return "", 0, "fail"
     src_len = len(re.sub(r"\s+", "", src))
     best = ""
     status = "fail"
     retries = 0
-    for attempt in range(TRANSLATE_MAX_RETRIES + 1):
-        vi = _clean_text(_translate_one(src, tr))
-        if _has_cjk(vi):
-            vi = _clean_text(_translate_cjk_leftovers(vi, tr))
+    queue = list(translators)
+    extra = (TRANSLATE_MAX_RETRIES + 1) - len(queue)
+    if extra > 0 and queue:
+        queue = queue + [queue[-1]] * extra
+    n_try = max(1, len(queue))
+    for attempt, (name, tr) in enumerate(queue):
+        try:
+            vi = _clean_text(_translate_one(src, tr))
+            if _has_cjk(vi):
+                vi = _clean_text(_translate_cjk_leftovers(vi, tr))
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "Dich loi via %s (retry %d/%d): %s | %s",
+                name, attempt + 1, n_try, e, src[:50],
+            )
+            retries = attempt
+            if attempt + 1 < n_try:
+                from .job_timing import timed_sleep
+                timed_sleep(TRANSLATE_RETRY_SLEEP_SEC, "google_translate_retry")
+            continue
         dst_len = len(re.sub(r"\s+", "", vi))
         ratio = (dst_len / src_len) if src_len else 1.0
-        ok = bool(vi.strip()) and (src_len < 4 or ratio >= min_ratio)
-        if ok:
-            return vi, attempt, "ok"
-        best = vi or best
-        retries = attempt
-        if attempt < TRANSLATE_MAX_RETRIES:
+        if _has_cjk(vi):
+            status = "cjk"
+            best = vi or best
             log.warning(
-                "Dich doan ngan/rong (ratio %.2f, retry %d/%d): %s",
-                ratio, attempt + 1, TRANSLATE_MAX_RETRIES, src[:50],
+                "Dich van con chu Han via %s (retry %d/%d): %s",
+                name, attempt + 1, n_try, src[:50],
             )
-            time.sleep(TRANSLATE_RETRY_SLEEP_SEC)
-    return best, retries, "short" if best.strip() else "fail"
+        else:
+            ok = bool(vi.strip()) and (src_len < 4 or ratio >= min_ratio)
+            if ok:
+                if name != "google":
+                    log.info("Dich xong via %s: %s -> %s", name, src[:30], vi[:40])
+                return vi, attempt, "ok"
+            best = vi or best
+            status = "short" if vi.strip() else "fail"
+            log.warning(
+                "Dich doan ngan/rong via %s (ratio %.2f, retry %d/%d): %s",
+                name, ratio, attempt + 1, n_try, src[:50],
+            )
+        retries = attempt
+        if attempt + 1 < n_try:
+            from .job_timing import timed_sleep
+            timed_sleep(TRANSLATE_RETRY_SLEEP_SEC, "google_translate_retry")
+    if _has_cjk(best):
+        return "", retries, "cjk"
+    return best, retries, status
 
 
 def translate_segments(
@@ -488,23 +673,36 @@ def translate_segments(
 ) -> list[dict]:
     import time
     try:
-        from deep_translator import GoogleTranslator
+        translators = _build_translators(source, target)
     except ImportError as e:
         raise RuntimeError("Chua cai deep-translator. pip install deep-translator") from e
-    tr = GoogleTranslator(source=source, target=target)
     min_ratio = _min_translate_ratio(target)
     out: list[dict] = []
     audit_rows: list[dict] = []
     n = len(segments)
     leftover = 0
+    fail_n = 0
     for i, seg in enumerate(segments, 1):
         src = seg.get("text", "")
         src_len = len(re.sub(r"\s+", "", src))
+        t_one = time.perf_counter()
         vi, retries, status = _translate_validated_one(
-            src, tr, target=target, min_ratio=min_ratio,
+            src, translators, target=target, min_ratio=min_ratio,
         )
-        if _has_cjk(vi):
+        from .job_timing import add_bucket
+        add_bucket(
+            "google_translate_one",
+            time.perf_counter() - t_one,
+            log_line=False,
+            retries=retries,
+            status=status,
+        )
+        if _has_cjk(vi) or status == "cjk":
             leftover += 1
+            vi = ""
+            status = "cjk"
+        if status == "fail":
+            fail_n += 1
         dst_len = len(re.sub(r"\s+", "", vi))
         audit_rows.append({
             "i": i - 1,
@@ -518,25 +716,35 @@ def translate_segments(
             "source_text": src,
             "translated_text": vi,
         })
-        if vi.strip():
+        if vi.strip() and not _has_cjk(vi):
             row = {**seg, "text": vi, "source_text": seg.get("source_text") or src}
             out.append(row)
         if i % 50 == 0 or i == n:
             log.info("Dang dich: %d/%d doan...", i, n)
         if i % 20 == 0:
-            time.sleep(0.8)
+            from .job_timing import timed_sleep
+            timed_sleep(0.8, "google_translate_every20")
     if work_dir:
         write_translate_csv(Path(work_dir), audit_rows)
-    if leftover:
-        log.warning("Con %d doan van sot chu Trung/Han sau khi dich", leftover)
     short_n = sum(1 for r in audit_rows if r["status"] == "short")
     if short_n:
         log.warning("%d doan dich ngan bat thuong sau retry — xem translate_report.csv", short_n)
+    dropped = sum(1 for r in audit_rows if r["status"] not in ("ok", "short", "empty_src"))
+    if leftover or fail_n or dropped:
+        from .preflight import alert_ops
+        bad = [r for r in audit_rows if r["status"] in ("fail", "cjk")]
+        sample = " | ".join((r.get("source_text") or "")[:40] for r in bad[:5]) or "(khong ro)"
+        msg = (
+            f"Dich that bai: {leftover} doan con chu Trung/Han, {fail_n} doan khong dich duoc, "
+            f"loai {dropped}/{n} doan. Vi du: {sample}"
+        )
+        alert_ops("translate_fail", msg)
+        raise RuntimeError(msg)
     log.info("Dich xong: %d doan tieng Viet", len(out))
     return out
 
 
-def _whisper_with_quality(audio, cfg_auto) -> list[dict]:
+def _whisper_with_quality(audio, cfg_auto, progress=None, audio_dur=None) -> list[dict]:
     """Whisper 1 lan; neu raw bi lap thi tu chay lai (VAD + penalty chat) — user van chi bam 1 lan."""
     model_size = cfg_auto.get("whisper_model", "medium")
     source_lang = (cfg_auto.get("source_lang", "zh") or None)
@@ -555,6 +763,8 @@ def _whisper_with_quality(audio, cfg_auto) -> list[dict]:
         repetition_penalty=float(cfg_auto.get("repetition_penalty", 1.2)),
         no_repeat_ngram_size=int(cfg_auto.get("no_repeat_ngram_size", 3)),
         compression_ratio_threshold=float(cfg_auto.get("compression_ratio_threshold", 2.0)),
+        progress=progress,
+        audio_dur=audio_dur,
     )
     if had_loops and allow_retry:
         log.warning("Tu chay lai Whisper (chat hon) de tranh video lap chu — khong can user bam lai")
@@ -583,7 +793,7 @@ def _whisper_with_quality(audio, cfg_auto) -> list[dict]:
     return segments
 
 
-def auto_script(video, work_dir, cfg_auto) -> tuple[str, list[dict]]:
+def auto_script(video, work_dir, cfg_auto, progress=None) -> tuple[str, list[dict]]:
     """Lay script + timestamp. Uu tien phu de Douyin day du, fallback Whisper."""
     work_dir = Path(work_dir)
     video_dur = probe_duration(video)
@@ -600,8 +810,13 @@ def auto_script(video, work_dir, cfg_auto) -> tuple[str, list[dict]]:
 
     whisper_source = "platform_subs"
     if not segments:
+        if progress:
+            progress("transcribing", 33, "Tach am thanh de Whisper...")
         audio = extract_audio(video, work_dir / "audio16k.wav")
-        segments = _whisper_with_quality(audio, cfg_auto)
+        audio_dur = probe_duration(audio) or video_dur
+        segments = _whisper_with_quality(
+            audio, cfg_auto, progress=progress, audio_dur=audio_dur,
+        )
         whisper_source = "whisper"
 
     if not segments:
@@ -614,72 +829,104 @@ def auto_script(video, work_dir, cfg_auto) -> tuple[str, list[dict]]:
     if len(segments) != before:
         log.info("Dedupe goc: %d -> %d doan", before, len(segments))
 
+    from .dub_merge import group_utterances
+
+    grouped = group_utterances(segments)
+    if len(grouped) != len(segments):
+        log.info("Gop cau goc truoc khi dich: %d -> %d doan", len(segments), len(grouped))
+    segments = grouped
+
     write_transcribe_report(work_dir, segments, video_dur, source=whisper_source)
 
     raw_text = " ".join(s["text"] for s in segments)
-    vi_segments = translate_segments(
-        segments,
-        target=cfg_auto.get("translate_to", "vi"),
-        source=cfg_auto.get("translate_from", "zh-CN"),
-        work_dir=work_dir,
-    )
-    vi_segments = dedupe_segments(vi_segments)
-    vi_segments = merge_segments(
-        vi_segments,
-        max_gap=float(cfg_auto.get("merge_gap_sec", 0.5)),
-        max_dur=float(cfg_auto.get("merge_max_dur", 3.2)),
-        max_chars=int(cfg_auto.get("merge_max_chars", 52)),
-    )
-    vi_segments = dedupe_segments(vi_segments)
-    if not vi_segments:
-        raise RuntimeError("Dich xong nhung khong co doan hop le.")
-
-    from .translate_llm import maybe_rewrite
-    vi_segments = maybe_rewrite(vi_segments, cfg_auto)
-
-    # an toan cuoi: neu van con lap sau dich thi chat lai text (khong de xuat video loi)
-    fixed = []
-    for s in vi_segments:
-        t = collapse_loop_text(s["text"], max_repeat=1)
-        if t and not _is_junk_segment(t):
-            row = {**s, "text": t}
-            if s.get("source_text"):
-                row["source_text"] = s["source_text"]
-            fixed.append(row)
-    vi_segments = dedupe_segments(fixed) if fixed else vi_segments
-    leftover_n = sum(1 for s in vi_segments if _has_cjk(s.get("text") or ""))
-    if leftover_n:
-        log.warning("Con %d doan sot Han — dich lai Google, bo neu van loi", leftover_n)
-        try:
-            from deep_translator import GoogleTranslator
-
-            tr = GoogleTranslator(
-                source=str(cfg_auto.get("translate_from") or "zh-CN"),
-                target=str(cfg_auto.get("translate_to") or "vi"),
+    if bool(cfg_auto.get("defer_translate")):
+        vi_segments = []
+        for s in segments:
+            src = str(s.get("source_text") or s.get("text") or "").strip()
+            vi_segments.append({**s, "text": src, "source_text": src})
+        log.info(
+            "Defer dich: %d doan ZH — khoa xung ho + dich budget sau assign_cast",
+            len(vi_segments),
+        )
+    else:
+        vi_segments = translate_segments(
+            segments,
+            target=cfg_auto.get("translate_to", "vi"),
+            source=cfg_auto.get("translate_from", "zh-CN"),
+            work_dir=work_dir,
+        )
+        vi_segments = dedupe_segments(vi_segments)
+        merge_gap = DUB_GROUP_MAX_GAP_SEC
+        merge_dur = DUB_GROUP_MAX_DUR_SEC
+        merge_chars = DUB_GROUP_MAX_CHARS
+        raw_chars = cfg_auto.get("merge_max_chars")
+        raw_dur = cfg_auto.get("merge_max_dur")
+        raw_gap = cfg_auto.get("merge_gap_sec")
+        if raw_chars is not None and int(raw_chars) != int(merge_chars):
+            log.info(
+                "Bo qua merge_max_chars=%s (config cu) — dung %d",
+                raw_chars, merge_chars,
             )
-            for s in vi_segments:
-                if not _has_cjk(s.get("text") or ""):
-                    continue
-                src = (s.get("source_text") or s.get("text") or "").strip()
-                if not src:
-                    continue
-                try:
-                    s["text"] = tr.translate(src)
-                except Exception as e:  # noqa: BLE001
-                    log.warning("Google leftover fail: %s", e)
-        except Exception as e:  # noqa: BLE001
-            log.warning("Khong Google duoc leftover: %s", e)
-        dropped = sum(1 for s in vi_segments if _has_cjk(s.get("text") or ""))
-        if dropped:
-            log.warning("Bo %d doan van sot Han (khong TTS chu Trung)", dropped)
-        vi_segments = [
-            s for s in vi_segments
-            if (s.get("text") or "").strip() and not _has_cjk(s.get("text") or "")
-        ]
+        if raw_dur is not None and float(raw_dur) < 5.0:
+            log.info("Bo qua merge_max_dur=%s (config cu) — dung %.1f", raw_dur, merge_dur)
+        if raw_gap is not None and float(raw_gap) < 0.45:
+            log.info("Bo qua merge_gap_sec=%s (config cu) — dung %.2f", raw_gap, merge_gap)
+        vi_segments = group_utterances(
+            vi_segments,
+            max_gap=merge_gap,
+            max_dur=merge_dur,
+            max_chars=merge_chars,
+        )
+        vi_segments = dedupe_segments(vi_segments)
         if not vi_segments:
-            raise RuntimeError("Dich xong nhung khong con doan Viet hop le.")
-    if segments_look_loopy(vi_segments, ratio=0.5):
-        log.warning("Van con dau hieu lap sau xu ly — da collapse toi da truoc khi TTS")
+            raise RuntimeError("Dich xong nhung khong co doan hop le.")
+
+        from .translate_llm import maybe_rewrite
+        vi_segments = maybe_rewrite(vi_segments, cfg_auto)
+
+        # an toan cuoi: neu van con lap sau dich thi chat lai text (khong de xuat video loi)
+        fixed = []
+        for s in vi_segments:
+            t = collapse_loop_text(s["text"], max_repeat=1)
+            if t and not _is_junk_segment(t):
+                row = {**s, "text": t}
+                if s.get("source_text"):
+                    row["source_text"] = s["source_text"]
+                fixed.append(row)
+        vi_segments = dedupe_segments(fixed) if fixed else vi_segments
+        leftover_n = sum(1 for s in vi_segments if _has_cjk(s.get("text") or ""))
+        if leftover_n:
+            log.warning("Con %d doan sot Han — dich lai Google, bo neu van loi", leftover_n)
+            try:
+                from deep_translator import GoogleTranslator
+
+                tr = GoogleTranslator(
+                    source=str(cfg_auto.get("translate_from") or "zh-CN"),
+                    target=str(cfg_auto.get("translate_to") or "vi"),
+                )
+                for s in vi_segments:
+                    if not _has_cjk(s.get("text") or ""):
+                        continue
+                    src = (s.get("source_text") or s.get("text") or "").strip()
+                    if not src:
+                        continue
+                    try:
+                        s["text"] = tr.translate(src)
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("Google leftover fail: %s", e)
+            except Exception as e:  # noqa: BLE001
+                log.warning("Khong Google duoc leftover: %s", e)
+            dropped = sum(1 for s in vi_segments if _has_cjk(s.get("text") or ""))
+            if dropped:
+                log.warning("Bo %d doan van sot Han (khong TTS chu Trung)", dropped)
+            vi_segments = [
+                s for s in vi_segments
+                if (s.get("text") or "").strip() and not _has_cjk(s.get("text") or "")
+            ]
+            if not vi_segments:
+                raise RuntimeError("Dich xong nhung khong con doan Viet hop le.")
+        if segments_look_loopy(vi_segments, ratio=0.5):
+            log.warning("Van con dau hieu lap sau xu ly — da collapse toi da truoc khi TTS")
 
     cov = _speech_coverage(vi_segments, video_dur)
     log.info(

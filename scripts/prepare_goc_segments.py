@@ -10,16 +10,21 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from dyflow.dub_constants import TARGET_CHARS_PER_SEC  # noqa: E402
+from dyflow.dub_constants import (  # noqa: E402
+    DUB_GROUP_MAX_CHARS,
+    DUB_GROUP_MAX_DUR_SEC,
+    DUB_GROUP_MAX_GAP_SEC,
+    TARGET_CHARS_PER_SEC,
+)
 from dyflow.dub_report import (  # noqa: E402
     scan_content_review_flags,
     write_content_review_flags,
     write_transcribe_report,
 )
+from dyflow.dub_merge import group_utterances  # noqa: E402
 from dyflow.transcribe import (  # noqa: E402
     dedupe_segments,
     extract_audio,
-    merge_segments,
     transcribe_segments,
 )
 from dyflow.translate_llm import translate_segments_budgeted  # noqa: E402
@@ -41,9 +46,9 @@ def main() -> int:
     auto_cfg = cfg.get("voiceover", {}).get("auto", {})
     model_size = auto_cfg.get("whisper_model", "medium")
     source_lang = auto_cfg.get("source_lang", "zh")
-    merge_gap = float(auto_cfg.get("merge_gap_sec", 0.35))
-    merge_max_dur = float(auto_cfg.get("merge_max_dur", 3.2))
-    merge_max_chars = int(auto_cfg.get("merge_max_chars", 52))
+    merge_gap = DUB_GROUP_MAX_GAP_SEC
+    merge_max_dur = DUB_GROUP_MAX_DUR_SEC
+    merge_max_chars = DUB_GROUP_MAX_CHARS
     cps = float(auto_cfg.get("target_chars_per_sec") or TARGET_CHARS_PER_SEC)
 
     zh_segs, had_loops = transcribe_segments(
@@ -66,7 +71,7 @@ def main() -> int:
     zh_path = work / "segments_zh_whisper.json"
     zh_path.write_text(json.dumps(zh_segs, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    zh_merged = merge_segments(
+    zh_merged = group_utterances(
         [
             {
                 "start": float(s["start"]),

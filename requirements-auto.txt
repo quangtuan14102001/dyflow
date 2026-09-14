@@ -2,3 +2,4 @@
 #   pip install -r requirements-auto.txt
 faster-whisper>=1.0.0
 deep-translator>=1.11.0
+librosa>=0.10.0

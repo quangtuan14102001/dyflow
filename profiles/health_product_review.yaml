@@ -10,9 +10,9 @@ voiceover:
   dub_volume: 5.0
   auto:
     target_chars_per_sec: 14.5
-    merge_gap_sec: 0.35
-    merge_max_dur: 3.2
-    merge_max_chars: 52
+    merge_gap_sec: 0.55
+    merge_max_dur: 8.0
+    merge_max_chars: 220
     translate_llm: budgeted
     content_domain: health
   dub_auto_shorten: true

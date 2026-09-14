@@ -127,6 +127,422 @@ def probe_remote_duration(url: str, cfg: dict | None = None) -> float | None:
     return seconds
 
 
+def _ytdlp_cookies(cfg: dict) -> tuple[str | None, str | None]:
+    """(cookies_file, cookies_from_browser) — giong probe/download."""
+    cookies_path: str | None = None
+    from_browser = (cfg.get("cookies_from_browser") or "").strip() or None
+    try:
+        if cfg.get("auto_refresh_cookies", True) or cfg.get("cookies_file") or from_browser:
+            cookies_path = cookie_util.ensure_cookies(cfg)
+    except Exception as e:  # noqa: BLE001
+        log.debug("ytdlp cookies: %s", e)
+        cookies_path = (cfg.get("cookies_file") or "").strip() or None
+    return cookies_path, None if cookies_path else from_browser
+
+
+_AWEME_ID_RE = re.compile(
+    r"(?:douyin\.com/(?:share/)?video/|[?&]vid=|aweme_id[\"'=\s:]+|modal_id=)(\d{10,})",
+    re.I,
+)
+_SHARE_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+)
+
+
+def resolve_share_url(url: str, timeout: float = 12) -> str:
+    """Theo redirect short link v.douyin.com -> user/video that."""
+    url = extract_url(url)
+    if "v.douyin.com" not in (url or "").lower() and "iesdouyin.com" not in (url or "").lower():
+        return url
+    try:
+        import urllib.request
+
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": _SHARE_UA, "Accept": "text/html,*/*"},
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            final = resp.geturl() or url
+            return final.split("#")[0]
+    except Exception as e:  # noqa: BLE001
+        log.debug("resolve_share_url %s: %s", url[:80], e)
+        return url
+
+
+def _aweme_id_from_url(url: str) -> int:
+    m = re.search(r"/video/(\d{10,})", url or "")
+    try:
+        return int(m.group(1)) if m else 0
+    except ValueError:
+        return 0
+
+
+def _newest_urls(rows: list[tuple[int, str]], *, limit: int) -> list[str]:
+    """rows = (sort_key, url); video moi hon co key lon hon (timestamp / aweme id)."""
+    rows.sort(key=lambda x: x[0], reverse=True)
+    out: list[str] = []
+    seen: set[str] = set()
+    for _key, href in rows:
+        if not href or href in seen:
+            continue
+        seen.add(href)
+        out.append(href)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _video_urls_from_text(blob: str, *, limit: int) -> list[str]:
+    rows: list[tuple[int, str]] = []
+    seen: set[str] = set()
+    for m in _AWEME_ID_RE.finditer(blob or ""):
+        vid = m.group(1)
+        href = f"https://www.douyin.com/video/{vid}"
+        if href in seen:
+            continue
+        seen.add(href)
+        rows.append((int(vid), href))
+    return _newest_urls(rows, limit=limit)
+
+
+def _entry_to_video_url(entry: dict) -> str | None:
+    vid = str(entry.get("id") or "").strip()
+    webpage = str(entry.get("webpage_url") or entry.get("url") or "").strip()
+    if re.fullmatch(r"\d{10,}", vid):
+        return f"https://www.douyin.com/video/{vid}"
+    found = _video_urls_from_text(webpage, limit=1)
+    if found:
+        return found[0]
+    if re.fullmatch(r"\d{10,}", webpage):
+        return f"https://www.douyin.com/video/{webpage}"
+    return None
+
+
+def _ytdlp_flat_channel(url: str, cfg: dict, limit: int) -> list[str]:
+    cookies_path, from_browser = _ytdlp_cookies(cfg)
+    cmd = [
+        *ytdlp_argv(),
+        "--yes-playlist",
+        "--flat-playlist",
+        "--skip-download",
+        "--no-warnings",
+        "-j",
+        "--socket-timeout", "30",
+        "--playlist-end", str(limit),
+    ]
+    if cookies_path:
+        cmd += ["--cookies", cookies_path]
+    elif from_browser:
+        cmd += ["--cookies-from-browser", from_browser]
+    if cfg.get("impersonate"):
+        cmd += ["--impersonate", str(cfg["impersonate"])]
+    cmd.append(url)
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=90 + min(120, limit),
+        )
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError("Het thoi gian khi lay danh sach kenh Douyin.") from e
+    rows: list[tuple[int, str]] = []
+    seen: set[str] = set()
+    for line in (proc.stdout or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            info = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(info, dict):
+            continue
+        href = _entry_to_video_url(info)
+        if not href or href in seen:
+            continue
+        seen.add(href)
+        ts = 0
+        for key in ("timestamp", "release_timestamp"):
+            try:
+                ts = int(info.get(key) or 0)
+            except (TypeError, ValueError):
+                ts = 0
+            if ts:
+                break
+        rows.append((ts or _aweme_id_from_url(href), href))
+    out = _newest_urls(rows, limit=limit)
+    if out:
+        return out
+    err = (proc.stderr or "")[-400:]
+    if proc.returncode != 0:
+        raise RuntimeError(err or "yt-dlp fail")
+    return []
+
+
+def _http_fetch(opener, url: str, *, accept: str = "text/html,application/xhtml+xml") -> str:
+    import urllib.request
+
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": _SHARE_UA,
+            "Accept": accept,
+            "Referer": "https://www.douyin.com/",
+        },
+    )
+    with opener.open(req, timeout=20) as resp:
+        return resp.read().decode("utf-8", errors="ignore")
+
+
+def _ids_from_channel_html(html: str, sec_uid: str) -> list[str]:
+    import urllib.parse
+
+    from .chrome_dl import aweme_ids_from_user_post
+
+    ids: list[str] = []
+    seen: set[str] = set()
+
+    def _take(chunk: list[str]) -> None:
+        for vid in chunk or []:
+            if vid in seen:
+                continue
+            seen.add(vid)
+            ids.append(vid)
+
+    for pat in (
+        r'id="RENDER_DATA"[^>]*>([^<]+)',
+        r'id="SIGI_STATE"[^>]*>([^<]+)',
+        r'<script[^>]*id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([^<]+)',
+    ):
+        m = re.search(pat, html or "")
+        if not m:
+            continue
+        raw = urllib.parse.unquote(m.group(1))
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        _take(aweme_ids_from_user_post(data, sec_uid, require_owner=bool(sec_uid)))
+
+        def _walk(obj):
+            if isinstance(obj, dict):
+                if "aweme_list" in obj or "awemeList" in obj:
+                    _take(aweme_ids_from_user_post(obj, sec_uid, require_owner=bool(sec_uid)))
+                for v in obj.values():
+                    _walk(v)
+            elif isinstance(obj, list):
+                for v in obj:
+                    _walk(v)
+
+        _walk(data)
+
+    if not ids and sec_uid:
+        # Chi nhat aweme gan sec_uid trong HTML (tranh video goi y)
+        for m in re.finditer(
+            rf"{re.escape(sec_uid)}.{{0,400}}?aweme_id[\"'=\s:]+(\d{{15,}})"
+            rf"|aweme_id[\"'=\s:]+(\d{{15,}}).{{0,400}}?{re.escape(sec_uid)}",
+            html or "",
+            re.I | re.S,
+        ):
+            vid = m.group(1) or m.group(2)
+            if vid and vid not in seen:
+                seen.add(vid)
+                ids.append(vid)
+    return ids
+
+
+def _http_aweme_post(opener, sec_uid: str, limit: int) -> list[str]:
+    """Goi API 作品 bang cookie — khong mo Chrome."""
+    import urllib.parse
+
+    from .chrome_dl import aweme_ids_from_user_post, post_has_more
+
+    if not sec_uid:
+        return []
+    ids: list[str] = []
+    seen: set[str] = set()
+    cursor = 0
+    for _ in range(12):
+        if len(ids) >= limit:
+            break
+        qs = urllib.parse.urlencode({
+            "device_platform": "webapp",
+            "aid": "6383",
+            "channel": "channel_pc_web",
+            "sec_user_id": sec_uid,
+            "max_cursor": str(cursor),
+            "count": "20",
+            "version_code": "170400",
+            "version_name": "17.4.0",
+        })
+        href = f"https://www.douyin.com/aweme/v1/web/aweme/post/?{qs}"
+        try:
+            raw = _http_fetch(opener, href, accept="application/json,text/plain,*/*")
+            data = json.loads(raw)
+        except Exception as e:  # noqa: BLE001
+            log.debug("aweme/post HTTP: %s", e)
+            break
+        if not isinstance(data, dict):
+            break
+        chunk = aweme_ids_from_user_post(data, sec_uid, require_owner=False)
+        added = 0
+        for vid in chunk:
+            if vid in seen:
+                continue
+            seen.add(vid)
+            ids.append(vid)
+            added += 1
+        if added == 0 or post_has_more(data) is False:
+            break
+        nxt = data.get("max_cursor") or (data.get("data") or {}).get("max_cursor")
+        try:
+            nxt_i = int(nxt or 0)
+        except (TypeError, ValueError):
+            nxt_i = 0
+        if nxt_i <= cursor:
+            break
+        cursor = nxt_i
+    return ids
+
+
+def _http_scrape_channel(url: str, cookies_path: str | None, limit: int) -> list[str]:
+    from http.cookiejar import MozillaCookieJar
+
+    from .chrome_dl import sec_uid_from_user_url
+
+    jar = MozillaCookieJar()
+    if cookies_path:
+        try:
+            jar.load(cookies_path, ignore_discard=True, ignore_expires=True)
+        except Exception as e:  # noqa: BLE001
+            log.debug("load cookies scrape: %s", e)
+    import urllib.request
+
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    sec_uid = sec_uid_from_user_url(url)
+    pages = [url]
+    if sec_uid:
+        pages.extend((
+            f"https://www.douyin.com/user/{sec_uid}",
+            f"https://www.iesdouyin.com/share/user/{sec_uid}",
+        ))
+    seen_page: set[str] = set()
+    ids: list[str] = []
+    seen_id: set[str] = set()
+    for page in pages:
+        key = page.split("?")[0]
+        if key in seen_page:
+            continue
+        seen_page.add(key)
+        try:
+            html = _http_fetch(opener, page)
+        except Exception as e:  # noqa: BLE001
+            log.debug("scrape page %s: %s", page[:70], e)
+            continue
+        for vid in _ids_from_channel_html(html, sec_uid):
+            if vid in seen_id:
+                continue
+            seen_id.add(vid)
+            ids.append(vid)
+        if len(ids) >= limit:
+            break
+    if len(ids) < limit and sec_uid:
+        for vid in _http_aweme_post(opener, sec_uid, limit):
+            if vid in seen_id:
+                continue
+            seen_id.add(vid)
+            ids.append(vid)
+    if not ids:
+        return []
+    rows = [(int(v), f"https://www.douyin.com/video/{v}") for v in ids if v.isdigit()]
+    return _newest_urls(rows, limit=limit)
+
+
+def list_channel_videos(
+    url: str,
+    cfg: dict | None = None,
+    *,
+    limit: int = 40,
+    allow_chrome: bool = False,
+) -> list[str]:
+    """Liet ke video cua user/kênh Douyin, khong tai file.
+
+    Chrome (allow_chrome) chi khi yt-dlp + scrape chua du, va co timeout.
+    """
+    url = resolve_share_url(extract_url(url))
+    cfg = cfg or {}
+    limit = max(1, min(int(limit or 40), 200))
+    errors: list[str] = []
+    merged: list[str] = []
+    seen: set[str] = set()
+
+    def _absorb(chunk: list[str]) -> None:
+        for href in chunk or []:
+            if href in seen:
+                continue
+            seen.add(href)
+            merged.append(href)
+
+    if check_tool("yt-dlp"):
+        from .chrome_dl import sec_uid_from_user_url
+
+        ytdlp_urls = [url]
+        sec = sec_uid_from_user_url(url)
+        if sec:
+            ytdlp_urls.append(f"https://www.iesdouyin.com/share/user/{sec}")
+        last_err = ""
+        for href in ytdlp_urls:
+            try:
+                got = _ytdlp_flat_channel(href, cfg, limit)
+                if got:
+                    log.info("Kenh %s: yt-dlp liet ke %d video", href[:70], len(got))
+                    _absorb(got)
+                    break
+            except Exception as e:  # noqa: BLE001
+                last_err = str(e)
+                log.warning("list_channel yt-dlp: %s", e)
+        if not merged:
+            errors.append(f"yt-dlp: {last_err or 'khong thay video'}")
+
+    if len(merged) < limit:
+        cookies_path, _from_browser = _ytdlp_cookies(cfg)
+        try:
+            got = _http_scrape_channel(url, cookies_path, limit)
+            if got:
+                log.info("Kenh %s: scrape HTML %d video", url[:70], len(got))
+                _absorb(got)
+            else:
+                errors.append("trang kenh khong co danh sach video")
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"scrape: {e}")
+            log.warning("list_channel scrape: %s", e)
+
+    # Chrome chi khi yt-dlp + scrape chua du. Timeout 40s, khong giu UI vo tan.
+    if allow_chrome and len(merged) < limit:
+        try:
+            from .chrome_dl import list_user_videos_with_chrome
+
+            got = list_user_videos_with_chrome(
+                url, cfg, limit=limit, timeout_sec=70, headed_fallback=True,
+            )
+            if got:
+                _absorb(got)
+            else:
+                errors.append("Chrome khong thay video")
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"Chrome: {e}")
+            log.warning("list_channel Chrome: %s", e)
+
+    if not merged:
+        raise RuntimeError(" | ".join(errors) or "Khong liet ke duoc kenh")
+    rows = [(_aweme_id_from_url(h) or i, h) for i, h in enumerate(merged)]
+    out = _newest_urls(rows, limit=limit)
+    log.info("Kenh %s: tong %d video (gop nguon)", url[:70], len(out))
+    return out
+
+
 def _build_ytdlp_cmd(
     url: str,
     out_tmpl: str,

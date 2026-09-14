@@ -32,7 +32,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=vc22" />
+  <link rel="stylesheet" href="/static/app.css?v=vc42" />
   {% block head_extra %}{% endblock %}
   <script type="application/ld+json">
   {
@@ -60,7 +60,10 @@
   </script>
   {% block jsonld %}{% endblock %}
 </head>
-<body class="{% block body_class %}{% endblock %}">
+<body class="{% block body_class %}{% endblock %}{% if user %} studio{% endif %}{% if desktop %} desktop-app{% endif %}">
+  {% if user %}
+  {% include "_studio_rail.html" %}
+  {% endif %}
   {% block topbar %}
   <header class="topbar">
     <div class="topbar-brand">
@@ -80,26 +83,15 @@
         class="nav-toggle"
         id="nav-toggle"
         aria-expanded="false"
-        aria-controls="site-nav"
+        aria-controls="{% if user %}studio-rail{% else %}site-nav{% endif %}"
         aria-label="{{ t('nav_menu') }}"
       >
         <span class="nav-toggle-bars" aria-hidden="true"></span>
       </button>
+      {% if not user %}
       <nav class="nav" id="site-nav">
-        {% if user %}
-        <a class="nav-link-a" href="/library">{{ t('library_nav') }}</a>
-        {% if user.is_admin or user.is_super_admin %}
-        <a class="nav-link-a" href="/admin">{{ t('admin_link') }}</a>
-        {% endif %}
-        {% if not desktop %}
-        <a class="credits-pill credits-pill--menu" href="/billing" title="{{ t('credits_title') }}">
-          <strong>{{ user.credits }}</strong> {{ t('credits') }}
-        </a>
-        {% endif %}
-        {% else %}
         <a class="nav-link-a" href="/login">{{ t('login_title') }}</a>
         <a class="nav-link-a" href="/register">{{ t('register_free') }}</a>
-        {% endif %}
         <label class="ui-lang" title="{{ t('ui_lang') }}">
           <span class="sr-only">{{ t('ui_lang') }}</span>
           <select id="ui-lang" aria-label="{{ t('ui_lang') }}">
@@ -108,11 +100,8 @@
             {% endfor %}
           </select>
         </label>
-        {% if user and not desktop %}
-        <span class="nav-email">{{ user.email }}</span>
-        <button type="button" class="nav-link" id="logout-btn">{{ t('logout') }}</button>
-        {% endif %}
       </nav>
+      {% endif %}
     </div>
   </header>
   {% endblock %}
@@ -122,8 +111,9 @@
   <script>
     window.DYFLOW_I18N = {{ i18n_js | default({}) | tojson }};
     window.DYFLOW_UI_LANG = {{ ui_lang | default('en') | tojson }};
+    window.DYFLOW_DESKTOP = {{ desktop | default(false) | tojson }};
   </script>
-  <script src="/static/app.js?v=vc22"></script>
+  <script src="/static/app.js?v=vc41"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

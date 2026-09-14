@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}{{ brand }} — {{ t('editor_title') }}{% endblock %}
+{% block robots %}noindex, nofollow{% endblock %}
+{% block body_class %}editor-page{% endblock %}
+{% block container_class %}container-editor{% endblock %}
+
+{% block content %}
+<div class="ed-shell" id="ed-root" data-job="{{ job_id }}">
+  <header class="ed-head">
+    <div class="ed-head-left">
+      <a class="btn ghost ed-back" href="/jobs/{{ job_id }}">{{ t('editor_back') }}</a>
+      <div>
+        <h1>{{ t('editor_title') }}</h1>
+        <p class="sub ed-sub">{{ t('editor_sub') }}</p>
+      </div>
+    </div>
+    <div class="ed-head-actions">
+      <button type="button" class="btn ghost" id="ed-save">{{ t('editor_save') }}</button>
+      <button type="button" class="btn primary" id="ed-apply">{{ t('editor_apply') }}</button>
+    </div>
+  </header>
+
+  <p class="error" id="ed-error" hidden></p>
+  <p class="hint left" id="ed-status" hidden></p>
+
+  <div class="ed-legend">
+    <span><i class="ed-dot overlay"></i> {{ t('editor_legend_overlay') }}</span>
+    <span><i class="ed-dot blur"></i> {{ t('editor_legend_blur') }}</span>
+    <span><i class="ed-dot sub"></i> {{ t('editor_legend_sub') }}</span>
+    <span>{{ t('editor_legend_box') }}</span>
+  </div>
+
+  <div class="ed-stage">
+    <div class="ed-player" id="ed-player">
+      <div class="ed-video-frame" id="ed-frame">
+        <video id="ed-video" playsinline></video>
+        <div class="ed-overlay" id="ed-overlay"></div>
+      </div>
+      <div class="ed-transport">
+        <button type="button" class="btn ghost ed-icon" id="ed-back1" title="-1s">−1s</button>
+        <button type="button" class="btn ghost ed-icon" id="ed-play">▶</button>
+        <button type="button" class="btn ghost ed-icon" id="ed-fwd1" title="+1s">+1s</button>
+        <input type="range" id="ed-seek" min="0" max="0" step="0.05" value="0" />
+        <span class="ed-time" id="ed-time">0.0s / 0s</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="ed-toolbar">
+    <button type="button" class="btn ghost" id="ed-add-sub">{{ t('editor_add_sub') }}</button>
+    <button type="button" class="btn ghost" id="ed-add-overlay">{{ t('editor_add_overlay') }}</button>
+    <button type="button" class="btn ghost" id="ed-add-blur">{{ t('editor_add_blur') }}</button>
+    <button type="button" class="btn ghost" id="ed-scan">{{ t('editor_scan') }}</button>
+    <label class="ed-scan-win">
+      <span>{{ t('editor_scan_window') }}</span>
+      <select id="ed-scan-window" class="select">
+        <option value="0">{{ t('editor_scan_now') }}</option>
+        <option value="30" selected>30s</option>
+        <option value="10">10s</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="ed-panels">
+    <section class="card ed-panel">
+      <h2>{{ t('editor_sel_title') }}</h2>
+      <p class="hint left" id="ed-sel-empty">{{ t('editor_sel_empty') }}</p>
+      <div id="ed-sel" hidden>
+        <label class="field">
+          <span>{{ t('editor_kind') }}</span>
+          <select id="ed-kind" class="select">
+            <option value="sub">{{ t('editor_kind_sub') }}</option>
+            <option value="overlay">{{ t('editor_kind_overlay') }}</option>
+            <option value="blur">{{ t('editor_kind_blur') }}</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>{{ t('editor_src_text') }}</span>
+          <input class="select" id="ed-src" type="text" />
+        </label>
+        <label class="field">
+          <span>{{ t('editor_overlay_text') }}</span>
+          <input class="select" id="ed-text" type="text" placeholder="{{ t('editor_overlay_ph') }}" />
+        </label>
+        <label class="field">
+          <span>{{ t('editor_blur') }}</span>
+          <select id="ed-blur" class="select">
+            <option value="light">{{ t('editor_blur_light') }}</option>
+            <option value="medium" selected>{{ t('editor_blur_medium') }}</option>
+            <option value="heavy">{{ t('editor_blur_heavy') }}</option>
+          </select>
+        </label>
+        <div class="ed-time-btns">
+          <button type="button" class="btn ghost" id="ed-whole">{{ t('editor_whole') }}</button>
+          <button type="button" class="btn ghost" id="ed-start-here">{{ t('editor_start_here') }}</button>
+          <button type="button" class="btn ghost" id="ed-end-here">{{ t('editor_end_here') }}</button>
+          <button type="button" class="btn ghost" id="ed-del">{{ t('editor_delete') }}</button>
+        </div>
+        <p class="hint left" id="ed-range"></p>
+      </div>
+    </section>
+
+    <section class="card ed-panel">
+      <h2>{{ t('editor_look_title') }}</h2>
+      <label class="ed-check"><input type="checkbox" id="ed-hflip" /> {{ t('editor_hflip') }}</label>
+      <label class="field">
+        <span>{{ t('editor_rotate') }}</span>
+        <select id="ed-rotate" class="select">
+          <option value="0">0°</option>
+          <option value="90">90°</option>
+          <option value="180">180°</option>
+          <option value="270">270°</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>{{ t('editor_zoom') }}</span>
+        <input id="ed-zoom" class="select" type="number" min="1" max="1.4" step="0.02" value="1" />
+      </label>
+      <label class="field">
+        <span>{{ t('editor_logo') }}</span>
+        <input id="ed-logo-file" type="file" accept="image/png,image/jpeg,image/webp" />
+      </label>
+      <label class="ed-check"><input type="checkbox" id="ed-logo-on" /> {{ t('editor_logo_on') }}</label>
+      <label class="ed-check"><input type="checkbox" id="ed-logo-bounce" /> {{ t('editor_logo_bounce') }}</label>
+      <label class="ed-check"><input type="checkbox" id="ed-marquee-on" /> {{ t('editor_marquee_on') }}</label>
+      <label class="field">
+        <span>{{ t('editor_marquee') }}</span>
+        <input class="select" id="ed-marquee" type="text" maxlength="80" />
+      </label>
+    </section>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/editor.js?v=vc1"></script>
+<script>DyflowEditor.init("{{ job_id }}");</script>
+{% endblock %}

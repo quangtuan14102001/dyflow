@@ -10,6 +10,13 @@ from pathlib import Path
 
 from .utils import log, run, probe_duration, probe_video_size
 from . import audio_fx
+from .export_style import (
+    apply_video_speed,
+    dialogue_override,
+    logo_overlay_xy,
+    resolve_ass_style,
+    style_line,
+)
 
 
 ASPECT = {
@@ -17,6 +24,11 @@ ASPECT = {
     "1:1": (1080, 1080),
     "16:9": (1920, 1080),
 }
+
+
+def _ffmpeg_filter_path(p: str | Path) -> str:
+    """FFmpeg filter path: forward slashes, escape drive colon (Windows)."""
+    return Path(p).resolve().as_posix().replace(":", r"\:")
 
 
 def _caption_layout(cfg_cap: dict) -> tuple[int, int]:
@@ -143,12 +155,10 @@ def _font_ass_name(font_path: str) -> str:
 
 
 def _ass_header(cfg_cap: dict, font_path: str, play_w: int, play_h: int) -> str:
-    fs = cfg_cap.get("font_size", 56)
-    primary = cfg_cap.get("primary_color", "&H00FFFFFF")
-    outline_c = cfg_cap.get("outline_color", "&H00000000")
-    outline = cfg_cap.get("outline", 3)
-    margin_v = cfg_cap.get("margin_v", 220)
-    font_name = cfg_cap.get("font_name") or _font_ass_name(font_path)
+    st = resolve_ass_style(
+        cfg_cap, font_path, play_w, play_h,
+        font_ass_name=_font_ass_name(font_path),
+    )
     return f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {play_w}
@@ -156,7 +166,7 @@ PlayResY: {play_h}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font_name},{fs},{primary},{outline_c},&H66000000,1,0,1,{outline},1,2,40,40,{margin_v},1
+{style_line(st)}
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -172,12 +182,13 @@ def _write_ass_cues(
     play_h: int,
 ) -> None:
     chars_per_line, max_lines = _caption_layout(cfg_cap)
+    ov = dialogue_override(cfg_cap, play_w, play_h)
     lines = []
     for cue in cues:
         display = _wrap_lines(cue["text"], chars_per_line, max_lines)
         lines.append(
             f"Dialogue: 0,{_ts(cue['start'])},{_ts(cue['end'])},"
-            f"Default,,0,0,0,,{display}"
+            f"Default,,0,0,0,,{ov}{display}"
         )
     ass_path.write_text(
         _ass_header(cfg_cap, font_path, play_w, play_h) + "\n".join(lines),
@@ -191,13 +202,14 @@ def _write_ass(script: str, ass_path: Path, cfg_cap: dict, font_path: str,
     chars_per_line, max_lines = _caption_layout(cfg_cap)
     chunks = _chunk_text(script, chars_per_line, max_lines)
     per = video_dur / len(chunks)
+    ov = dialogue_override(cfg_cap, play_w, play_h)
 
     lines = []
     for i, chunk in enumerate(chunks):
         display = _wrap_lines(chunk, chars_per_line, max_lines)
         lines.append(
             f"Dialogue: 0,{_ts(i * per)},{_ts((i + 1) * per)},"
-            f"Default,,0,0,0,,{display}"
+            f"Default,,0,0,0,,{ov}{display}"
         )
     ass_path.write_text(
         _ass_header(cfg_cap, font_path, play_w, play_h) + "\n".join(lines),
@@ -277,7 +289,8 @@ def compose(video: str | Path, voice: str | Path | None, script: str,
             music: str | None,
             word_timings: list[dict] | None = None,
             segment_cues: list[dict] | None = None,
-            sync_to_video: bool = False) -> list[Path]:
+            sync_to_video: bool = False,
+            ambient_bed: Path | None = None) -> list[Path]:
     video, out_dir = Path(video), Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     outputs: list[Path] = []
@@ -293,16 +306,22 @@ def compose(video: str | Path, voice: str | Path | None, script: str,
     video_dur = probe_duration(video)
     dur = video_dur if sync_to_video else (probe_duration(voice) if voice else video_dur)
 
-    # Tach giong goc (Demucs) -> chi giu nhac/FX
-    ambient_bed = None
+    # Tach giong goc (Demucs): INPUT la video goc (raw/edited), KHONG dung voice.mp3.
+    # voice chi la dieu kien "co ban dub thi moi tach nen".
     strip_vocals = bool(cfg_vo.get("strip_original_vocals", True))
     if voice and not cfg_vo.get("mute_original", True) and strip_vocals:
-        work_audio = Path(video).resolve().parent / "audio_fx"
-        ambient_bed = audio_fx.make_ambient_bed(
-            video, work_audio,
-            enabled=True,
-            model=str(cfg_vo.get("demucs_model", "htdemucs")),
-        )
+        if ambient_bed is None:
+            work_audio = Path(video).resolve().parent / "audio_fx"
+            from .job_timing import step as timing_step
+            with timing_step("Demucs"):
+                ambient_bed = audio_fx.make_ambient_bed(
+                    video, work_audio,
+                    enabled=True,
+                    model=str(cfg_vo.get("demucs_model", "htdemucs")),
+                )
+        else:
+            from .job_timing import note as timing_note
+            timing_note("Demucs reused (chay song song sau Download)", path=str(ambient_bed))
 
     # tao caption ASS 1 lan (PlayRes khop khung hinh xuat)
     ass_path = None
@@ -338,14 +357,13 @@ def compose(video: str | Path, voice: str | Path | None, script: str,
         vfilters = [_video_fit_filter(fit, W, H)]
         last_v = "[base]"
         if ass_path:
-            ass_abs = str(Path(ass_path).resolve())
-            esc = ass_abs.replace("\\", "\\\\").replace(":", "\\:")
+            esc = _ffmpeg_filter_path(ass_path)
             font_dir = str(Path(font_path).resolve().parent) if font_path else ""
             if font_dir:
-                fdir = font_dir.replace("\\", "\\\\").replace(":", "\\:")
-                vfilters.append(f"{last_v}ass=filename={esc}:fontsdir={fdir}[vsub]")
+                fdir = _ffmpeg_filter_path(font_dir)
+                vfilters.append(f"{last_v}ass=filename='{esc}':fontsdir='{fdir}'[vsub]")
             else:
-                vfilters.append(f"{last_v}ass=filename={esc}[vsub]")
+                vfilters.append(f"{last_v}ass=filename='{esc}'[vsub]")
             last_v = "[vsub]"
 
         cmd = ["ffmpeg", "-y"]
@@ -365,6 +383,22 @@ def compose(video: str | Path, voice: str | Path | None, script: str,
         if music and cfg_mus.get("enabled"):
             cmd += ["-stream_loop", "-1", "-i", str(music)]
             music_idx = ai; ai += 1
+
+        logo_idx = None
+        logo_raw = str(cfg_exp.get("logo_path") or "").strip()
+        logo_file = Path(logo_raw).expanduser() if logo_raw else None
+        if logo_file is not None and logo_file.is_file():
+            cmd += ["-i", str(logo_file)]
+            logo_idx = ai
+            ai += 1
+            pct = float(cfg_exp.get("logo_size_percent") or 10.0)
+            pct = max(2.0, min(40.0, pct))
+            lw = max(8, int(round(W * pct / 100.0)))
+            xy = logo_overlay_xy(str(cfg_exp.get("logo_position") or "top_right"))
+            vfilters.append(f"[{logo_idx}:v]scale={lw}:-1,format=rgba[lg]")
+            vfilters.append(f"{last_v}[lg]overlay={xy}:format=auto[vlogo]")
+            last_v = "[vlogo]"
+            log.info("Logo overlay %s size=%dpx pos=%s", logo_file.name, lw, xy)
 
         # --- audio mix ---
         # UU TIEN: ambient_bed (da bo giong Trung). Fallback: gate theo segment.
@@ -446,6 +480,13 @@ def compose(video: str | Path, voice: str | Path | None, script: str,
             str(out_path),
         ]
         run(cmd)
+        # video_speed: pass 2 SAU mix/QA/burn-in. Khong dung atempo per-segment.
+        try:
+            spd = float(cfg_exp.get("video_speed") or 1.0)
+        except (TypeError, ValueError):
+            spd = 1.0
+        if abs(spd - 1.0) > 1e-3:
+            apply_video_speed(out_path, out_path, spd)
         log.info("Export [%s, fit=%s, %dx%d]: %s", fmt, fit, W, H, out_path.name)
         outputs.append(out_path)
 

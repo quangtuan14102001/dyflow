@@ -9,23 +9,83 @@ from .main import process_job
 from .utils import load_config, log, run
 from .voices import DEFAULT_LANG, resolve_preset
 
+_VIDEO_ID_RE = re.compile(r"douyin\.com/(?:share/)?video/(\d{10,})", re.I)
+_MODAL_ID_RE = re.compile(r"modal_id=(\d{10,})", re.I)
+_VID_QUERY_RE = re.compile(r"[?&]vid=(\d{10,})", re.I)
+_SHORT_RE = re.compile(r"v\.douyin\.com/", re.I)
+_CHANNEL_RE = re.compile(
+    r"https?://(?:www\.)?(?:"
+    r"douyin\.com/(?:user|channel|share/user)/"
+    r"|iesdouyin\.com/share/user/"
+    r")[^\s/?#]+",
+    re.I,
+)
+_NOT_VIDEO_RE = re.compile(
+    r"douyin\.com/(search|discover|follow|live|hot|root)(?:/|\?|$)",
+    re.I,
+)
+
+_NOT_VIDEO_MSG = (
+    "Day la trang tim kiem/trang Douyin, khong phai link 1 video. "
+    "Mo video -> chia se -> sao chep link. Link dung co dang "
+    "https://www.douyin.com/video/1234567890 hoac https://v.douyin.com/xxxxx/"
+)
+
+
+def _is_douyin_non_video(url: str) -> bool:
+    return bool(_NOT_VIDEO_RE.search(url or ""))
+
+
+def is_channel_url(url: str) -> bool:
+    """Link user/kênh Douyin — expand thanh danh sach video, khong tai 1 clip."""
+    return bool(_CHANNEL_RE.search(url or ""))
+
+
+def embedded_video_urls(text: str) -> list[str]:
+    """Video id di kem link kenh (vid= / modal_id= / /video/).
+
+    Tren link /user/...&vid= thi vid chi la modal dang mo — khong phai
+    "chi 1 video cua kenh". Bo qua de expand_sources liet ke ca kenh.
+    """
+    if is_channel_url(text or ""):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for rx in (_VIDEO_ID_RE, _MODAL_ID_RE, _VID_QUERY_RE):
+        for m in rx.finditer(text or ""):
+            href = f"https://www.douyin.com/video/{m.group(1)}"
+            if href in seen:
+                continue
+            seen.add(href)
+            out.append(href)
+    return out
+
 
 def normalize_douyin_url(text: str) -> str:
-    """Chuan hoa link Douyin (ca link search co modal_id)."""
+    """Chuan hoa link Douyin (ca link search co modal_id, ca user/kênh)."""
     text = text.strip()
     m = re.search(r"https?://[^\s<>\"']+", text)
     url = m.group(0) if m else text
     # bo ky tu thua cuoi (dau cau khi copy)
     url = url.rstrip(".,;:!?)】」』\"'")
-    modal = re.search(r"modal_id=(\d+)", url)
+    modal = _MODAL_ID_RE.search(url)
     if modal:
         return f"https://www.douyin.com/video/{modal.group(1)}"
-    vid = re.search(r"douyin\.com/video/(\d+)", url)
+    vid = _VIDEO_ID_RE.search(url)
     if vid:
         return f"https://www.douyin.com/video/{vid.group(1)}"
+    ch = _CHANNEL_RE.search(url)
+    if ch:
+        return ch.group(0).rstrip("/")
+    if _is_douyin_non_video(url):
+        raise ValueError(_NOT_VIDEO_MSG)
+    if _SHORT_RE.search(url):
+        return url
     if re.search(r"douyin\.com", url, re.I):
         return url
-    raise ValueError("Khong nhan dien link Douyin. Gui link dang: https://www.douyin.com/video/...")
+    raise ValueError(
+        "Khong nhan dien link Douyin. Gui link dang: https://www.douyin.com/video/..."
+    )
 
 
 def extract_douyin_urls(text: str, *, limit: int = 20) -> list[str]:
@@ -45,6 +105,8 @@ def extract_douyin_urls(text: str, *, limit: int = 20) -> list[str]:
         try:
             url = normalize_douyin_url(raw)
         except ValueError:
+            if _is_douyin_non_video(raw):
+                raise
             continue
         if url in seen:
             continue

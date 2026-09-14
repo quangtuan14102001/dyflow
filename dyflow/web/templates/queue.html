@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{{ brand }} — {{ t('queue_title') }}{% endblock %}
+{% block robots %}noindex, nofollow{% endblock %}
+{% block canonical_path %}/queue{% endblock %}
+{% block container_class %}container-wide{% endblock %}
+
+{% block content %}
+<section class="library queue-page" id="queue-page">
+  <div class="library-head">
+    <div>
+      <h1>{{ t('queue_title') }}</h1>
+      <p class="sub">{{ t('queue_sub') }}</p>
+    </div>
+    <div class="queue-head-actions">
+      <button type="button" class="btn ghost danger" id="cancel-btn" hidden>{{ t('queue_cancel_all') }}</button>
+      <a class="btn ghost" href="/library">{{ t('studio_nav_library') }}</a>
+      <a class="btn primary library-new" href="/">{{ t('new_video') }}</a>
+    </div>
+  </div>
+  <p class="error" id="form-error"></p>
+
+  <h2 class="queue-h">{{ t('studio_log') }}</h2>
+  <ul class="live-log queue-log" id="live-log">
+    <li class="empty">{{ t('queue_empty') }}</li>
+  </ul>
+
+  <h2 class="queue-h">{{ t('queue_recent') }}</h2>
+  <ul class="live-log queue-log" id="queue-recent">
+    <li class="empty">{{ t('queue_recent_empty') }}</li>
+  </ul>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  DyflowQueue.init();
+</script>
+{% endblock %}

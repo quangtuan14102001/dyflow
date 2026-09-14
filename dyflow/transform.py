@@ -8,6 +8,7 @@ Luu y: day la bien doi KY THUAT, giam rui ro bi match. De ben vung that
 su van can bien doi NOI DUNG (b-roll, ke chuyen khac) - xem README.
 """
 from __future__ import annotations
+import shutil
 from pathlib import Path
 
 from .utils import log, run, probe_duration
@@ -61,8 +62,48 @@ def _segment_video_filter(
     )
 
 
+def _near(v: object, target: float = 1.0, eps: float = 1e-3) -> bool:
+    return abs(float(v) - target) <= eps
+
+
+def _is_noop(cfg: dict) -> bool:
+    """Khong doi hinh/am — copy file, khong encode lai (ARM VM treo 1h+)."""
+    fit = str(cfg.get("fit", "cover")).lower()
+    if fit not in ("source", ""):
+        return False
+    if int(cfg.get("segments", 3)) > 1:
+        return False
+    if bool(cfg.get("mirror", False)):
+        return False
+    if bool(cfg.get("denoise_audio", False)):
+        return False
+    if not _near(cfg.get("speed_factor", 1.0), 1.0):
+        return False
+    if not _near(cfg.get("zoom", 1.0), 1.0):
+        return False
+    if abs(float(cfg.get("zoom_step", 0.0) or 0)) > 1e-6:
+        return False
+    if abs(float(cfg.get("trim_intro_sec", 0) or 0)) > 1e-6:
+        return False
+    if abs(float(cfg.get("trim_outro_sec", 0) or 0)) > 1e-6:
+        return False
+    if not _near(cfg.get("contrast", 1.0), 1.0):
+        return False
+    if not _near(cfg.get("saturation", 1.0), 1.0):
+        return False
+    if not _near(cfg.get("gamma", 1.0), 1.0):
+        return False
+    return True
+
+
 def transform(src: str | Path, out_path: str | Path, cfg: dict) -> Path:
     src, out_path = Path(src), Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    if _is_noop(cfg):
+        if src.resolve() != out_path.resolve():
+            shutil.copy2(src, out_path)
+        log.info("Transform skip encode (noop copy): %s", out_path.name)
+        return out_path
 
     fit = str(cfg.get("fit", "cover")).lower()
     W = int(cfg.get("target_width", 1080))
@@ -74,7 +115,7 @@ def transform(src: str | Path, out_path: str | Path, cfg: dict) -> Path:
     mirror = bool(cfg.get("mirror", False))
     trim_in = float(cfg.get("trim_intro_sec", 0.0))
     trim_out = float(cfg.get("trim_outro_sec", 0.0))
-    denoise = bool(cfg.get("denoise_audio", True))
+    denoise = bool(cfg.get("denoise_audio", False))
 
     contrast = float(cfg.get("contrast", 1.03))
     saturation = float(cfg.get("saturation", 1.05))

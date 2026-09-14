@@ -1,0 +1,49 @@
+{% set path = request.url.path %}
+<aside class="studio-rail" id="studio-rail">
+  <a class="studio-brand" href="/">
+    <img class="studio-mark-img" src="/static/logo-512.png?v=vc42" width="56" height="56" alt="{{ brand }}" />
+    <span>
+      <strong>{{ brand }}</strong>
+      <em>{{ t('tagline') }}</em>
+    </span>
+  </a>
+
+  <nav class="studio-nav">
+    <a class="studio-link{% if path == '/' %} on{% endif %}" href="/">{{ t('studio_nav_create') }}</a>
+    <a class="studio-link{% if path.startswith('/library') or path.startswith('/jobs/') %} on{% endif %}" href="/library">{{ t('studio_nav_library') }}</a>
+    {% if not desktop %}
+    <a class="studio-link{% if path.startswith('/billing') %} on{% endif %}" href="/billing">{{ t('studio_nav_billing') }}</a>
+    {% if user.is_admin or user.is_super_admin %}
+    <a class="studio-link{% if path.startswith('/admin') %} on{% endif %}" href="/admin">{{ t('studio_nav_admin') }}</a>
+    {% endif %}
+    {% endif %}
+  </nav>
+
+  <p class="studio-tools-h">{{ t('studio_nav_tools') }}</p>
+  <nav class="studio-nav studio-nav-tools">
+    <a class="studio-link{% if path.startswith('/queue') %} on{% endif %}" href="/queue">{{ t('studio_nav_queue') }}</a>
+    <a class="studio-link{% if path.startswith('/batch') %} on{% endif %}" href="/batch">{{ t('studio_multi') }}</a>
+  </nav>
+
+  <div class="studio-rail-end">
+    {% if not desktop %}
+    <a class="studio-credits" href="/billing" title="{{ t('credits_title') }}">
+      <span>{{ t('credits_title') }}</span>
+      <strong>{{ user.credits }}</strong>
+    </a>
+    {% endif %}
+    <label class="ui-lang studio-lang" title="{{ t('ui_lang') }}">
+      <span class="sr-only">{{ t('ui_lang') }}</span>
+      <select id="ui-lang" aria-label="{{ t('ui_lang') }}">
+        {% for lang in ui_languages %}
+        <option value="{{ lang.id }}" {% if lang.id == ui_lang %}selected{% endif %}>{{ lang.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    {% if not desktop %}
+    <span class="nav-email">{{ user.email }}</span>
+    <button type="button" class="nav-link" id="logout-btn">{{ t('logout') }}</button>
+    {% endif %}
+  </div>
+</aside>
+<div class="studio-scrim" id="studio-scrim" hidden></div>

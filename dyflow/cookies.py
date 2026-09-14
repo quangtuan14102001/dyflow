@@ -7,6 +7,7 @@ Uu tien:
 """
 from __future__ import annotations
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -65,6 +66,23 @@ def write_netscape_cookies(cookies: list[dict], out_path: Path) -> Path:
     return out_path
 
 
+def _browser_candidates(configured: str) -> list[str]:
+    """Chrome/Edge tren Windows; khong can dang nhap Douyin, chi can mo trang 1 lan."""
+    ordered: list[str] = []
+    raw = (configured or "").strip().lower()
+    if raw:
+        ordered.append(raw.split(":")[0])
+    if sys.platform == "win32":
+        for name in ("edge", "chrome"):
+            if name not in ordered:
+                ordered.append(name)
+    elif sys.platform == "darwin":
+        for name in ("chrome", "edge", "safari"):
+            if name not in ordered:
+                ordered.append(name)
+    return ordered
+
+
 def refresh_from_browser(browser: str, out_path: str | Path) -> Path:
     """Lay cookie tu Chrome/Safari/Firefox bang yt-dlp --cookies-from-browser."""
     if not check_tool("yt-dlp"):
@@ -110,8 +128,8 @@ def refresh_with_playwright(
             "  playwright install chromium"
         ) from e
 
-    # Headed tren VPS can Xvfb
-    if not headless:
+    # Headed tren VPS can Xvfb (Windows dung Edge/Chrome that, khong can)
+    if not headless and sys.platform != "win32":
         try:
             from .display import ensure_display
             ensure_display()
@@ -122,26 +140,44 @@ def refresh_with_playwright(
     profile = Path(profile_dir or "./work/_chrome_dy_profile")
     profile.mkdir(parents=True, exist_ok=True)
     log.info("Dang lay cookie bang Playwright (headless=%s)...", headless)
+    channels = ("msedge", "chrome") if sys.platform == "win32" else ("chrome",)
     with sync_playwright() as p:
         browser = None
-        try:
-            context = p.chromium.launch_persistent_context(
-                user_data_dir=str(profile),
-                headless=headless,
-                locale="zh-CN",
-                args=["--disable-blink-features=AutomationControlled"],
-                viewport={"width": 1280, "height": 900},
-            )
-        except Exception:
-            browser = p.chromium.launch(headless=headless)
-            context = browser.new_context(
-                locale="zh-CN",
-                user_agent=(
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/122.0.0.0 Safari/537.36"
-                ),
-            )
+        context = None
+        for ch in channels:
+            try:
+                context = p.chromium.launch_persistent_context(
+                    user_data_dir=str(profile),
+                    channel=ch,
+                    headless=headless,
+                    locale="zh-CN",
+                    args=["--disable-blink-features=AutomationControlled"],
+                    viewport={"width": 1280, "height": 900},
+                )
+                log.info("Playwright cookie: channel=%s", ch)
+                break
+            except Exception as e:  # noqa: BLE001
+                log.warning("Playwright %s fail: %s", ch, e)
+                context = None
+        if context is None:
+            try:
+                context = p.chromium.launch_persistent_context(
+                    user_data_dir=str(profile),
+                    headless=headless,
+                    locale="zh-CN",
+                    args=["--disable-blink-features=AutomationControlled"],
+                    viewport={"width": 1280, "height": 900},
+                )
+            except Exception:
+                browser = p.chromium.launch(headless=headless)
+                context = browser.new_context(
+                    locale="zh-CN",
+                    user_agent=(
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/122.0.0.0 Safari/537.36"
+                    ),
+                )
         page = context.pages[0] if context.pages else context.new_page()
         page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(5000)
@@ -184,6 +220,8 @@ def ensure_cookies(cfg: dict) -> str | None:
 
     path = Path(cookies_file)
     need_refresh = auto and cookies_stale(path, max_age_sec=max_age)
+    if sys.platform == "win32":
+        need_refresh = True
 
     if not need_refresh:
         return str(path)
@@ -191,14 +229,15 @@ def ensure_cookies(cfg: dict) -> str | None:
     log.warning("Cookie het han / chua co -> tu dong lay lai...")
     errors: list[str] = []
 
-    # 1) browser
-    if method in ("browser", "auto") and from_browser:
-        try:
-            refresh_from_browser(from_browser, path)
-            return str(path)
-        except Exception as e:  # noqa: BLE001
-            errors.append(f"browser:{e}")
-            log.warning("Lay cookie tu browser that bai: %s", e)
+    # 1) Chrome/Edge dang cai tren may (Windows desktop)
+    if method in ("browser", "auto"):
+        for browser in _browser_candidates(from_browser):
+            try:
+                refresh_from_browser(browser, path)
+                return str(path)
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"{browser}:{e}")
+                log.warning("Lay cookie tu %s that bai: %s", browser, e)
 
     # 2) playwright
     if method in ("playwright", "auto"):
@@ -239,11 +278,16 @@ def force_refresh(cfg: dict) -> Path:
     if cookies_file.exists():
         cookies_file.unlink(missing_ok=True)
 
-    if method in ("browser", "auto") and from_browser:
-        try:
-            return refresh_from_browser(from_browser, cookies_file)
-        except Exception as e:  # noqa: BLE001
-            log.warning("force refresh browser fail: %s", e)
+    if method in ("browser", "auto"):
+        last_err: Exception | None = None
+        for browser in _browser_candidates(from_browser):
+            try:
+                return refresh_from_browser(browser, cookies_file)
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+                log.warning("force refresh %s fail: %s", browser, e)
+        if last_err:
+            log.warning("force refresh browser fail: %s", last_err)
 
     # Tren server uu tien headed + profile (Xvfb) — guest headless thuong bi Douyin chan
     use_headless = bool(cfg.get("playwright_headless", True))

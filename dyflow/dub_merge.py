@@ -4,6 +4,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .dub_constants import (
+    DUB_GROUP_MAX_CHARS,
+    DUB_GROUP_MAX_DUR_SEC,
+    DUB_GROUP_MAX_GAP_SEC,
+    DUB_GROUP_TINY_SLOT_SEC,
+    DUB_OVERFLOW_MAX_MERGES,
+)
 from .translate_llm import (
     retranslate_segment_faithful,
     segment_slot,
@@ -11,6 +18,8 @@ from .translate_llm import (
     translate_segments_budgeted,
 )
 from .utils import log
+
+_SENT_END = ".!?。！？…"
 
 
 def merge_adjacent_pairs(
@@ -27,6 +36,7 @@ def merge_adjacent_pairs(
             raise ValueError(f"Chi so vuot ngoai: ({left}, {right}) / {len(segs)} doan")
         a, b = segs[left], segs[right]
         combined: dict = {
+            **a,
             "start": float(a["start"]),
             "end": float(b["end"]),
             "source_text": " ".join(
@@ -110,6 +120,150 @@ def find_segment_near_start(segments: list[dict], start: float, tol: float = 0.2
         if abs(float(seg.get("start", 0)) - start) <= tol:
             return i
     return None
+
+
+def _incomplete_utterance(text: str) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return True
+    if t[-1] in _SENT_END:
+        return False
+    return len(t) < 24
+
+
+def same_speaker(a: dict, b: dict) -> bool:
+    sid = str(a.get("speaker_id") or a.get("voice_id") or "")
+    nid = str(b.get("speaker_id") or b.get("voice_id") or "")
+    if sid and nid and sid != nid:
+        return False
+    return True
+
+
+def _same_speaker(a: dict, b: dict) -> bool:
+    return same_speaker(a, b)
+
+
+def next_live_index(n: int, i: int, skip_idx: set[int]) -> int | None:
+    j = i + 1
+    while j < n and j in skip_idx:
+        j += 1
+    return j if j < n else None
+
+
+def overflow_merge_plan(
+    segments: list[dict],
+    i: int,
+    *,
+    skip_idx: set[int] | None = None,
+    overflow_merges: int = 0,
+    max_merges: int = DUB_OVERFLOW_MAX_MERGES,
+) -> tuple[int | None, str]:
+    """Chon cau sau de gop khi overflow. Tra (index, ly_do).
+
+    ly_do: gop | cuoi_clip | khac_nhan_vat | max_gop
+    """
+    skip = skip_idx or set()
+    nxt = next_live_index(len(segments), i, skip)
+    if nxt is None:
+        return None, "cuoi_clip"
+    if int(overflow_merges) >= int(max_merges):
+        return None, "max_gop"
+    if not same_speaker(segments[i], segments[nxt]):
+        return None, "khac_nhan_vat"
+    return nxt, "gop"
+
+
+def plan_tiny_slot_merges(
+    segments: list[dict],
+    *,
+    video_dur: float | None = None,
+    min_slot: float = 0.95,
+    max_gap: float = 0.45,
+) -> list[tuple[int, int]]:
+    """Gop shot qua ngan khi gap toi doan sau rat nho (neu khong cau Viet se bi cat nat)."""
+    n = len(segments)
+    pairs: list[tuple[int, int]] = []
+    used: set[int] = set()
+    for i, seg in enumerate(segments):
+        if i in used or i + 1 >= n:
+            continue
+        start = float(seg.get("start") or 0)
+        end = float(seg.get("end") or start)
+        orig = max(0.0, end - start)
+        if orig >= float(min_slot):
+            continue
+        nxt = segments[i + 1]
+        nstart = float(nxt.get("start") or end)
+        gap = max(0.0, nstart - end)
+        if gap > float(max_gap):
+            continue
+        if not _same_speaker(seg, nxt):
+            continue
+        pairs.append((i, i + 1))
+        used.update((i, i + 1))
+    return pairs
+
+
+def plan_utterance_groups(
+    segments: list[dict],
+    *,
+    max_gap: float = DUB_GROUP_MAX_GAP_SEC,
+    max_dur: float = DUB_GROUP_MAX_DUR_SEC,
+    max_chars: int = DUB_GROUP_MAX_CHARS,
+    tiny_slot: float = DUB_GROUP_TINY_SLOT_SEC,
+) -> list[tuple[int, int]]:
+    """Gop manh Whisper/dich thanh cau hoan chinh cung nhan vat."""
+    n = len(segments)
+    pairs: list[tuple[int, int]] = []
+    used: set[int] = set()
+    for i, seg in enumerate(segments):
+        if i in used or i + 1 >= n:
+            continue
+        nxt = segments[i + 1]
+        end = float(seg.get("end") or 0)
+        nstart = float(nxt.get("start") or end)
+        gap = nstart - end
+        if gap > float(max_gap) or gap < -0.35:
+            continue
+        if not _same_speaker(seg, nxt):
+            continue
+        start = float(seg.get("start") or 0)
+        nend = float(nxt.get("end") or nstart)
+        span = nend - start
+        a_txt = str(seg.get("text") or "")
+        b_txt = str(nxt.get("text") or "")
+        chars = len(a_txt) + len(b_txt) + 1
+        orig = max(0.0, end - start)
+        should = orig < float(tiny_slot) or _incomplete_utterance(a_txt)
+        if should and span <= float(max_dur) and chars <= int(max_chars):
+            pairs.append((i, i + 1))
+            used.update((i, i + 1))
+    return pairs
+
+
+def group_utterances(
+    segments: list[dict],
+    *,
+    max_gap: float = DUB_GROUP_MAX_GAP_SEC,
+    max_dur: float = DUB_GROUP_MAX_DUR_SEC,
+    max_chars: int = DUB_GROUP_MAX_CHARS,
+    tiny_slot: float = DUB_GROUP_TINY_SLOT_SEC,
+    rounds: int = 12,
+) -> list[dict]:
+    """Lap gop cap lien ke den khi het manh vo cau."""
+    segs = [dict(s) for s in segments]
+    for _ in range(max(1, int(rounds))):
+        pairs = plan_utterance_groups(
+            segs,
+            max_gap=max_gap,
+            max_dur=max_dur,
+            max_chars=max_chars,
+            tiny_slot=tiny_slot,
+        )
+        if not pairs:
+            break
+        segs, _ = merge_adjacent_pairs(segs, pairs)
+    return segs
 
 
 def merge_qua_dai_plan(
