@@ -183,7 +183,12 @@
         <span>{{ t('voice_label') }}</span>
         <p class="hint left voice-hint" id="voice-hint"></p>
         <div class="voices" id="voice-options"></div>
+      </div>
+      <div class="field tts-field" id="tts-field">
+        <span>{{ t('tts_label') }}</span>
+        <p class="hint left">{{ t('tts_hint') }}</p>
         <div class="voices voices-tts" id="tts-options"></div>
+        <p class="error field-msg" id="tts-error" hidden></p>
       </div>
     </section>
   </aside>

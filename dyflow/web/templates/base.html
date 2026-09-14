@@ -32,7 +32,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=vc42" />
+  <link rel="stylesheet" href="/static/app.css?v=vc44" />
   {% block head_extra %}{% endblock %}
   <script type="application/ld+json">
   {
@@ -88,7 +88,7 @@
       >
         <span class="nav-toggle-bars" aria-hidden="true"></span>
       </button>
-      {% if not user %}
+      {% if not user and not desktop %}
       <nav class="nav" id="site-nav">
         <a class="nav-link-a" href="/login">{{ t('login_title') }}</a>
         <a class="nav-link-a" href="/register">{{ t('register_free') }}</a>
@@ -113,7 +113,7 @@
     window.DYFLOW_UI_LANG = {{ ui_lang | default('en') | tojson }};
     window.DYFLOW_DESKTOP = {{ desktop | default(false) | tojson }};
   </script>
-  <script src="/static/app.js?v=vc41"></script>
+  <script src="/static/app.js?v=vc43"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -26,7 +26,12 @@
   </nav>
 
   <div class="studio-rail-end">
-    {% if not desktop %}
+    {% if desktop and license and license.required %}
+    <a class="studio-credits" href="/license" title="{{ t('license_until', date=license.until_label) if license.ok else t('license_needed') }}">
+      <span>{{ t('license_needed') if not license.ok else t('license_until', date=license.until_label) }}</span>
+      <strong>{{ t('license_days_left', n=license.days_left) if license.ok else '—' }}</strong>
+    </a>
+    {% elif not desktop %}
     <a class="studio-credits" href="/billing" title="{{ t('credits_title') }}">
       <span>{{ t('credits_title') }}</span>
       <strong>{{ user.credits }}</strong>

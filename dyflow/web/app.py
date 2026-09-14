@@ -189,6 +189,12 @@ def _startup() -> None:
     log.info("dyflow web san sang tai http://localhost:8080")
 
 
+def _license_free_path(path: str) -> bool:
+    if path.startswith("/static") or path.startswith("/api/license"):
+        return True
+    return path in ("/license", "/favicon.ico", "/api/ui-lang", "/robots.txt")
+
+
 @app.middleware("http")
 async def _kick_worker(request: Request, call_next):
     """Windows: uvicorn trong thread co the bo qua startup -> worker khong chay."""
@@ -196,7 +202,14 @@ async def _kick_worker(request: Request, call_next):
         worker.ensure_started()
     except Exception:  # noqa: BLE001
         pass
-    return await call_next(request)
+    from ..license_key import block_message, gate_ok
+
+    if gate_ok() or _license_free_path(request.url.path):
+        return await call_next(request)
+    if request.url.path.startswith("/api/"):
+        lang = i18n.get_ui_lang(request)
+        return JSONResponse({"detail": block_message(lang)}, status_code=403)
+    return RedirectResponse("/license", status_code=302)
 
 
 def _require_admin(request: Request) -> dict:
@@ -216,6 +229,45 @@ def _require_super_admin(request: Request) -> dict:
     if not models.is_super_admin_user(user):
         raise HTTPException(403, "Can quyen super admin")
     return user
+
+
+@app.get("/license", response_class=HTMLResponse)
+def license_page(request: Request):
+    from ..desktop_mode import enabled as desktop_on
+    from ..license_key import is_required, public_status
+
+    if not desktop_on() and not is_required():
+        return RedirectResponse("/", status_code=302)
+    return _page(
+        request,
+        "license.html",
+        user=None,
+        license=public_status(),
+    )
+
+
+@app.get("/api/license")
+def api_license_status():
+    from ..license_key import public_status
+
+    return public_status()
+
+
+@app.post("/api/license")
+def api_license_activate(request: Request, key: str = Form("")):
+    from ..license_key import LicenseError, activate, public_status
+
+    lang = i18n.get_ui_lang(request)
+    try:
+        activate(key)
+    except LicenseError as e:
+        msg_key = {
+            "empty": "license_empty",
+            "expired": "license_expired",
+            "invalid": "license_invalid",
+        }.get(e.code, "license_invalid")
+        raise HTTPException(400, i18n.t(lang, msg_key)) from e
+    return {"ok": True, **public_status()}
 
 
 # ----------------------------- pages -----------------------------

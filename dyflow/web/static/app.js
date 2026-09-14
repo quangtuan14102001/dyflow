@@ -44,6 +44,32 @@ const DyflowTime = {
   },
 };
 
+const DyflowLicense = {
+  init() {
+    const form = document.getElementById("license-form");
+    if (!form) return;
+    const btn = document.getElementById("license-btn");
+    const err = document.getElementById("license-error");
+    const input = document.getElementById("license-key");
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (err) err.textContent = "";
+      if (btn) btn.disabled = true;
+      try {
+        const data = new FormData();
+        data.set("key", (input && input.value) || "");
+        const res = await fetch("/api/license", { method: "POST", body: data });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.detail || _("license_invalid"));
+        window.location.href = "/";
+      } catch (ex) {
+        if (err) err.textContent = ex.message || _("generic_error");
+        if (btn) btn.disabled = false;
+      }
+    });
+  },
+};
+
 // Nut dang xuat + menu mobile (co o moi trang khi da dang nhap)
 document.addEventListener("DOMContentLoaded", () => {
   DyflowTime.init();
@@ -516,9 +542,10 @@ const DyflowHome = {
       }
       const ttsVal = (document.querySelector('input[name="tts"]:checked') || {}).value;
       if (!ttsVal) {
-        err.textContent = _("home_tts_needed");
+        this._showTtsError(_("home_tts_needed"));
         return;
       }
+      this._showTtsError("");
       btn.disabled = true;
       btn.textContent = _("sending");
       const ac = typeof AbortController !== "undefined" ? new AbortController() : null;
@@ -1022,6 +1049,19 @@ const DyflowHome = {
     });
   },
 
+  _showTtsError(msg) {
+    const box = document.getElementById("tts-error");
+    const field = document.getElementById("tts-field");
+    if (box) {
+      box.hidden = !msg;
+      box.textContent = msg || "";
+    }
+    if (field) field.classList.toggle("is-invalid", !!msg);
+    if (msg && field) {
+      field.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  },
+
   _selectedTts() {
     return (document.querySelector('input[name="tts"]:checked') || {}).value || "edge";
   },
@@ -1043,6 +1083,9 @@ const DyflowHome = {
           <button type="button" class="voice-play" data-tts="${t.id}" title="${_("preview")}" aria-label="${_("preview")}">▶</button>
         </span>`;
       wrap.appendChild(el);
+    });
+    wrap.querySelectorAll('input[name="tts"]').forEach((inp) => {
+      inp.addEventListener("change", () => this._showTtsError(""));
     });
     wrap.querySelectorAll(".voice-play").forEach((b) => {
       b.addEventListener("click", (ev) => {

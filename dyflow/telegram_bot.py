@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -280,6 +281,7 @@ async def _post_init(app: Application) -> None:
         BotCommand("admin_add", "Them admin (email)"),
         BotCommand("admin_remove", "Bo admin (email)"),
         BotCommand("credit", "Cong/tru credit"),
+        BotCommand("license", "Mint license desktop"),
         BotCommand("webadmin", "Link web admin"),
     ]
     try:
@@ -464,6 +466,36 @@ async def cmd_credit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     email = args[0].strip().lower()
     raw = args[1].strip().replace(",", "")
     await _do_credit(update, email, raw)
+
+
+async def cmd_license(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _require_super(update):
+        return
+    args = context.args or []
+    if not args:
+        await update.message.reply_text(
+            "Mint key desktop (khach dan vao app, khong can email):\n"
+            "/license 30\n"
+            "/license 12m\n"
+            "/license 1y"
+        )
+        return
+    try:
+        from .license_key import mint, parse_duration
+
+        days = parse_duration(args[0])
+        key, info = mint(days)
+    except ValueError as e:
+        await update.message.reply_text(f"Loi: {e}")
+        return
+    except Exception as e:  # noqa: BLE001
+        await update.message.reply_text(f"Mint fail: {e}")
+        return
+    exp = time.strftime("%d/%m/%Y", time.localtime(float(info["expires_at"])))
+    await update.message.reply_text(
+        f"Key {days} ngay — han {exp}\n\n{key}\n\n"
+        "Gui dung dong nay cho khach. Het han thi mint key moi."
+    )
 
 
 async def _do_credit(update: Update, email: str, raw: str) -> None:
@@ -778,6 +810,7 @@ def main() -> None:
     app.add_handler(CommandHandler("admin_add", cmd_admin_add))
     app.add_handler(CommandHandler("admin_remove", cmd_admin_remove))
     app.add_handler(CommandHandler("credit", cmd_credit))
+    app.add_handler(CommandHandler("license", cmd_license))
     app.add_handler(CallbackQueryHandler(on_payment_callback, pattern=r"^pay_(ok|no):"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
 

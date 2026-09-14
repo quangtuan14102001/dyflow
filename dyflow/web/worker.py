@@ -132,6 +132,11 @@ def _worker_loop(
             except Exception as e:  # noqa: BLE001
                 log.warning("Retention cleanup loi: %s", e)
         try:
+            from ..license_key import gate_ok
+
+            if not gate_ok():
+                time.sleep(_POLL_SEC)
+                continue
             job = models.claim_next_job(max_concurrent_per_user=max_per_user)
         except Exception as e:  # noqa: BLE001
             log.warning("[W%d] claim_next_job loi: %s", worker_no, e)

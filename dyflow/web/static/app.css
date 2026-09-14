@@ -97,6 +97,16 @@ body.auth-page {
   text-decoration: none;
 }
 .link-muted:hover { color: var(--accent-2); }
+.license-input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  resize: vertical;
+  min-height: 88px;
+}
+.license-ok {
+  margin: 0 0 16px;
+}
 .auth-submit {
   margin-top: 6px;
   padding: 16px 22px;
@@ -714,10 +724,30 @@ h2 { font-size: 18px; margin: 0 0 16px; }
   background: linear-gradient(135deg, rgba(254,44,85,0.16), rgba(255,106,61,0.1));
 }
 .voices-tts {
-  margin-top: 10px;
+  margin-top: 0;
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 10px;
+}
+.tts-field {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.tts-field > span {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text);
+}
+.tts-field.is-invalid .voices-tts {
+  outline: 2px solid var(--fail);
+  outline-offset: 4px;
+  border-radius: 10px;
+}
+.field-msg {
+  margin: 8px 0 0;
+  min-height: 0;
+  font-size: 13px;
 }
 @media (max-width: 640px) {
   .voices-tts { grid-template-columns: 1fr; }
@@ -2941,7 +2971,12 @@ body.studio #url {
   pointer-events: none;
 }
 .studio-inspector .field { margin-bottom: 10px; position: relative; }
-.studio-inspector .field > span { font-size: 12px; margin-bottom: 5px; }
+.studio-inspector .tts-field > span {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text);
+  letter-spacing: 0.01em;
+}
 .studio-inspector .select { padding: 8px 10px; font-size: 13px; border-radius: 8px; }
 .studio-inspector .voices { gap: 6px; }
 .studio-inspector .voice-opt input:checked + .voice-card {

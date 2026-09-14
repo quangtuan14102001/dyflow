@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}{{ brand }} — {{ t('license_title') }}{% endblock %}
+{% block robots %}noindex, nofollow{% endblock %}
+{% block body_class %}auth-page{% endblock %}
+{% block container_class %}container-auth{% endblock %}
+
+{% block content %}
+<div class="auth-shell">
+  <div class="auth-hero">
+    <a class="brand auth-brand" href="/"><span class="logo">Videos</span>Creator</a>
+    <h2 class="auth-tag">{{ t('license_title') }}</h2>
+    <p class="auth-lead">{{ t('license_lead') }}</p>
+  </div>
+
+  <section class="auth-panel">
+    <h1>{{ t('license_title') }}</h1>
+    <p class="sub">{{ t('license_sub') }}</p>
+    {% if license and license.ok %}
+    <p class="ok-banner license-ok">{{ t('license_ok', date=license.until_label, n=license.days_left) }}</p>
+    {% elif license and license.reason == 'expired' %}
+    <p class="error" id="license-expired-msg">{{ t('license_expired') }}</p>
+    {% endif %}
+
+    <form id="license-form" class="auth-form">
+      <label class="field">
+        <span>License key</span>
+        <textarea class="input license-input" name="key" id="license-key" rows="3" required placeholder="{{ t('license_ph') }}" autocomplete="off" spellcheck="false"></textarea>
+      </label>
+      <button type="submit" class="btn primary auth-submit" id="license-btn">
+        {{ t('license_btn') if not (license and license.ok) else t('license_change') }}
+      </button>
+      <p class="error" id="license-error"></p>
+    </form>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>DyflowLicense.init();</script>
+{% endblock %}
