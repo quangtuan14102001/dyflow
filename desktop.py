@@ -100,7 +100,15 @@ def main() -> int:
     def _serve() -> None:
         try:
             _log_startup(f"uvicorn bind {host}:{port}")
-            uvicorn.run(app, host=host, port=port, log_level="info", access_log=False)
+            # PyInstaller: dictConfig uvicorn (formatter 'default') crash.
+            uvicorn.run(
+                app,
+                host=host,
+                port=port,
+                log_level="warning",
+                access_log=False,
+                log_config=None,
+            )
         except Exception as e:  # noqa: BLE001
             serve_err.append(e)
             _log_startup(f"uvicorn crash: {e!r}")
@@ -207,9 +215,25 @@ def _mac_title_icon(window, icon_path: str) -> None:
         pass
 
 
+def _win_alert(msg: str) -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(0, msg[:1500], "VideosCreator", 0x10)
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
     import multiprocessing
 
     multiprocessing.freeze_support()
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except Exception as e:
+        _log_startup(f"fatal: {e}")
+        _win_alert(f"{e}\n\nLog: {_startup_log()}")
+        raise
 
