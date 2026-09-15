@@ -5,6 +5,16 @@ function _(key, fallback) {
   return bag[key] || fallback || key;
 }
 
+function _apiDetail(body, fallback) {
+  const d = body && body.detail;
+  if (Array.isArray(d)) {
+    const msg = d.map((x) => (x && x.msg) || x).filter(Boolean).join(" ");
+    return msg || fallback;
+  }
+  if (typeof d === "string" && d.trim()) return d;
+  return fallback;
+}
+
 const DyflowTime = {
   _localeMap: {
     vi: "vi-VN",
@@ -488,6 +498,9 @@ const DyflowHome = {
     this._cancelling = false;
     this._lastQuoteUrl = "";
     this._lastQuoteItems = [];
+    this._lastQuoteStatus = "";
+    this._lastQuoteTotal = "";
+    this._quoteError = "";
     this._quoteBusy = false;
     this._quoteBusyMsg = "";
     this._quoteClock = null;
@@ -576,8 +589,8 @@ const DyflowHome = {
           btn.textContent = _("start");
           return;
         }
-        const body = await res.json();
-        if (!res.ok) throw new Error(body.detail || _("job_create_fail"));
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(_apiDetail(body, _("job_create_fail")));
         const ids = body.ids || (body.id ? [body.id] : []);
         if (ids.length > 1) {
           // nhieu job: ve trang chu de xem hang doi (2 luong chay song song)
@@ -622,6 +635,8 @@ const DyflowHome = {
     const pickFolder = document.getElementById("pick-folder-btn");
     const fileInput = document.getElementById("local-files");
     const folderInput = document.getElementById("local-folder");
+    const localList = document.getElementById("local-file-list");
+    const localClear = document.getElementById("local-clear-btn");
     if (pickFiles && fileInput) {
       pickFiles.addEventListener("click", () => fileInput.click());
       fileInput.addEventListener("change", () => {
@@ -634,6 +649,26 @@ const DyflowHome = {
       folderInput.addEventListener("change", () => {
         this._folderPicks = this._videoFiles(folderInput.files);
         this._syncLocalCount();
+      });
+    }
+    if (localList) {
+      localList.addEventListener("click", (ev) => {
+        const btn = ev.target.closest("[data-local-key]");
+        if (!btn) return;
+        ev.preventDefault();
+        this._removeLocalFile(btn.getAttribute("data-local-key"));
+      });
+    }
+    if (localClear) {
+      localClear.addEventListener("click", () => this._clearLocalFiles());
+    }
+    const quoteList = document.getElementById("quote-list");
+    if (quoteList) {
+      quoteList.addEventListener("click", (ev) => {
+        const btn = ev.target.closest("[data-local-key]");
+        if (!btn) return;
+        ev.preventDefault();
+        this._removeLocalFile(btn.getAttribute("data-local-key"));
       });
     }
     this._bindChannelOpts();
@@ -751,11 +786,34 @@ const DyflowHome = {
     );
   },
 
+  _fileKey(f) {
+    return `${f.name}:${f.size}:${f.lastModified}`;
+  },
+
+  _fileLabel(f) {
+    return (f.webkitRelativePath || f.name || "").trim() || f.name;
+  },
+
+  _fileSizeLabel(f) {
+    const n = Number(f.size) || 0;
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  },
+
+  _escHtml(s) {
+    return String(s || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  },
+
   _localFiles() {
     const seen = new Set();
     const out = [];
     (this._filePicks || []).concat(this._folderPicks || []).forEach((f) => {
-      const key = `${f.name}:${f.size}:${f.lastModified}`;
+      const key = this._fileKey(f);
       if (seen.has(key)) return;
       seen.add(key);
       out.push(f);
@@ -763,11 +821,131 @@ const DyflowHome = {
     return out;
   },
 
+  _removeLocalFile(key) {
+    if (!key) return;
+    this._filePicks = (this._filePicks || []).filter((f) => this._fileKey(f) !== key);
+    this._folderPicks = (this._folderPicks || []).filter((f) => this._fileKey(f) !== key);
+    if (!this._localFiles().length) this._resetLocalInputs();
+    this._syncLocalCount();
+  },
+
+  _clearLocalFiles() {
+    this._filePicks = [];
+    this._folderPicks = [];
+    this._resetLocalInputs();
+    this._syncLocalCount();
+  },
+
+  _resetLocalInputs() {
+    const fileInput = document.getElementById("local-files");
+    const folderInput = document.getElementById("local-folder");
+    if (fileInput) fileInput.value = "";
+    if (folderInput) folderInput.value = "";
+  },
+
+  _localFileRowHtml(f, idx) {
+    const name = this._escHtml(this._fileLabel(f));
+    const size = this._escHtml(this._fileSizeLabel(f));
+    const key = this._escHtml(this._fileKey(f));
+    const n = idx + 1;
+    return (
+      `<li>` +
+      `<span class="quote-idx">${n}</span>` +
+      `<span class="quote-url" title="${name}">${name}</span>` +
+      `<span class="quote-meta"><em>${size}</em>` +
+      `<button type="button" class="local-file-x" data-local-key="${key}" title="${_("studio_local_remove")}" aria-label="${_("studio_local_remove")}">×</button>` +
+      `</span>` +
+      `</li>`
+    );
+  },
+
   _syncLocalCount() {
     const el = document.getElementById("local-count");
-    if (!el) return;
-    const n = this._localFiles().length;
-    el.textContent = n ? _("studio_local_n").replace("{n}", String(n)) : "";
+    const list = document.getElementById("local-file-list");
+    const clearBtn = document.getElementById("local-clear-btn");
+    const files = this._localFiles();
+    const n = files.length;
+    if (el) el.textContent = n ? _("studio_local_n").replace("{n}", String(n)) : "";
+    if (clearBtn) clearBtn.hidden = !n;
+    if (list) {
+      list.hidden = !n;
+      list.innerHTML = n
+        ? files
+            .map((f) => {
+              const name = this._escHtml(this._fileLabel(f));
+              const size = this._escHtml(this._fileSizeLabel(f));
+              const key = this._escHtml(this._fileKey(f));
+              return (
+                `<li>` +
+                `<span class="local-file-name" title="${name}">${name}</span>` +
+                `<span class="local-file-size">${size}</span>` +
+                `<button type="button" class="local-file-x" data-local-key="${key}" title="${_("studio_local_remove")}" aria-label="${_("studio_local_remove")}">×</button>` +
+                `</li>`
+              );
+            })
+            .join("")
+        : "";
+    }
+    if (!this._quoteBusy) this._fillQuoteBox();
+  },
+
+  _fillQuoteBox() {
+    const box = document.getElementById("quote-box");
+    const list = document.getElementById("quote-list");
+    const statusEl = document.getElementById("quote-status");
+    const totalEl = document.getElementById("quote-total");
+    if (!box || !list) return;
+    const files = this._localFiles();
+    const urls = this._lastQuoteItems || [];
+    if (this._quoteBusy) return;
+    if (!urls.length && !files.length) {
+      if (this._quoteError) {
+        box.hidden = false;
+        list.innerHTML = "";
+        if (statusEl) statusEl.textContent = this._quoteError;
+        if (totalEl) totalEl.textContent = "";
+      } else {
+        box.hidden = true;
+        list.innerHTML = "";
+        if (totalEl) totalEl.textContent = "";
+      }
+      return;
+    }
+    box.hidden = false;
+    const urlHtml = urls
+      .map((it, idx) => {
+        const dur = it.unknown
+          ? _("quote_unknown_dur")
+          : it.duration_label || "—";
+        const cred = _("quote_line_credits").replace("{n}", String(it.credits));
+        const short = this._escHtml((it.url || "").replace(/^https?:\/\//, ""));
+        const tip = it.unknown ? ` title="${_("quote_unknown_tip")}"` : "";
+        return (
+          `<li${tip}>` +
+          `<span class="quote-idx">${idx + 1}</span>` +
+          `<span class="quote-url">${short}</span>` +
+          `<span class="quote-meta"><em>${dur}</em> · <strong>${cred}</strong></span>` +
+          `</li>`
+        );
+      })
+      .join("");
+    const localHtml = files
+      .map((f, i) => this._localFileRowHtml(f, urls.length + i))
+      .join("");
+    list.innerHTML = urlHtml + localHtml;
+    if (statusEl) {
+      if (this._quoteError) statusEl.textContent = this._quoteError;
+      else if (files.length && !urls.length) {
+        statusEl.textContent = _("studio_local_files").replace("{n}", String(files.length));
+      } else {
+        statusEl.textContent = this._lastQuoteStatus || _("quote_title");
+      }
+    }
+    if (totalEl) {
+      if (urls.length && this._lastQuoteTotal) totalEl.textContent = this._lastQuoteTotal;
+      else if (files.length) totalEl.textContent = _("studio_local_n").replace("{n}", String(files.length));
+      else totalEl.textContent = "";
+    }
   },
 
   _shortSrc(url) {
@@ -897,15 +1075,17 @@ const DyflowHome = {
     if (!text) {
       this._lastQuoteUrl = "";
       this._lastQuoteItems = [];
+      this._lastQuoteStatus = "";
+      this._lastQuoteTotal = "";
+      this._quoteError = "";
       this._setQuoteLoading(false);
-      box.hidden = true;
-      list.innerHTML = "";
-      if (totalEl) totalEl.textContent = "";
+      this._fillQuoteBox();
       return;
     }
 
     const seq = ++this._quoteSeq;
     box.hidden = false;
+    this._quoteError = "";
     const waitMsg = this._isChannelText(text)
       ? _("quote_channel")
       : _("quote_checking");
@@ -922,62 +1102,34 @@ const DyflowHome = {
       const body = await res.json().catch(() => ({}));
       if (seq !== this._quoteSeq) return;
       this._setQuoteLoading(false);
-      if (!res.ok) {
-        const d = body.detail;
-        const msg = Array.isArray(d)
-          ? d.map((x) => (x && x.msg) || x).join(" ")
-          : (typeof d === "string" ? d : _("quote_fail"));
-        throw new Error(msg || _("quote_fail"));
-      }
+      if (!res.ok) throw new Error(_apiDetail(body, _("quote_fail")));
 
       const items = body.items || [];
-      this._lastQuoteUrl = text;
+      this._lastQuoteUrl = items.length ? text : "";
       this._lastQuoteItems = items;
-      if (!items.length) {
-        this._lastQuoteUrl = "";
-        box.hidden = true;
-        list.innerHTML = "";
-        if (totalEl) totalEl.textContent = "";
-        if (statusEl) statusEl.textContent = _("quote_title");
-        return;
+      this._quoteError = "";
+      if (body.channel_incomplete) {
+        this._lastQuoteStatus = _("quote_channel_one");
+      } else if (ch.channel_mode === "full" && items.length) {
+        this._lastQuoteStatus = _("quote_channel_n").replace("{n}", String(items.length));
+      } else {
+        this._lastQuoteStatus = _("quote_title");
       }
-
-      if (statusEl) {
-        statusEl.textContent = body.channel_incomplete
-          ? _("quote_channel_one")
-          : _("quote_title");
-      }
-      list.innerHTML = items
-        .map((it, idx) => {
-          const dur = it.unknown
-            ? _("quote_unknown_dur")
-            : it.duration_label || "—";
-          const cred = _("quote_line_credits").replace("{n}", String(it.credits));
-          const short = (it.url || "").replace(/^https?:\/\//, "");
-          const tip = it.unknown ? ` title="${_("quote_unknown_tip")}"` : "";
-          return (
-            `<li${tip}>` +
-            `<span class="quote-idx">${idx + 1}</span>` +
-            `<span class="quote-url">${short}</span>` +
-            `<span class="quote-meta"><em>${dur}</em> · <strong>${cred}</strong></span>` +
-            `</li>`
-          );
-        })
-        .join("");
-
-      if (totalEl) {
-        totalEl.textContent = _("quote_total")
-          .replace("{n}", String(body.total_credits || 0))
-          .replace("{m}", String(body.count || items.length));
-      }
+      this._lastQuoteTotal = items.length
+        ? _("quote_total")
+            .replace("{n}", String(body.total_credits || 0))
+            .replace("{m}", String(body.count || items.length))
+        : "";
+      this._fillQuoteBox();
     } catch (ex) {
       if (seq !== this._quoteSeq) return;
       this._setQuoteLoading(false);
       this._lastQuoteUrl = "";
       this._lastQuoteItems = [];
-      if (statusEl) statusEl.textContent = ex.message || _("quote_fail");
-      list.innerHTML = "";
-      if (totalEl) totalEl.textContent = "";
+      this._lastQuoteStatus = "";
+      this._lastQuoteTotal = "";
+      this._quoteError = ex.message || _("quote_fail");
+      this._fillQuoteBox();
     }
   },
 

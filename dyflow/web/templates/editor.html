@@ -35,6 +35,8 @@
       <div class="ed-video-frame" id="ed-frame">
         <video id="ed-video" playsinline></video>
         <div class="ed-overlay" id="ed-overlay"></div>
+        <img id="ed-logo-prev" class="ed-logo-prev" alt="" hidden />
+        <div id="ed-mq-prev" class="ed-mq-prev" hidden><span id="ed-mq-txt"></span></div>
       </div>
       <div class="ed-transport">
         <button type="button" class="btn ghost ed-icon" id="ed-back1" title="-1s">−1s</button>
@@ -122,10 +124,11 @@
       </label>
       <label class="ed-check"><input type="checkbox" id="ed-logo-on" /> {{ t('editor_logo_on') }}</label>
       <label class="ed-check"><input type="checkbox" id="ed-logo-bounce" /> {{ t('editor_logo_bounce') }}</label>
+      <p class="hint left">{{ t('editor_logo_bounce_hint') }}</p>
       <label class="ed-check"><input type="checkbox" id="ed-marquee-on" /> {{ t('editor_marquee_on') }}</label>
       <label class="field">
         <span>{{ t('editor_marquee') }}</span>
-        <input class="select" id="ed-marquee" type="text" maxlength="80" />
+        <input class="select" id="ed-marquee" type="text" maxlength="80" placeholder="{{ t('editor_marquee_hint') }}" />
       </label>
     </section>
   </div>
@@ -133,6 +136,6 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/editor.js?v=vc1"></script>
+<script src="/static/editor.js?v=vc2"></script>
 <script>DyflowEditor.init("{{ job_id }}");</script>
 {% endblock %}

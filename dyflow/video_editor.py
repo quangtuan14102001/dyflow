@@ -247,6 +247,38 @@ def _even(n: int) -> int:
     return n if n % 2 == 0 else n - 1
 
 
+def _even0(n: int) -> int:
+    n = max(0, int(n))
+    return n if n % 2 == 0 else n - 1
+
+
+def _crop_box(xf: float, yf: float, wf: float, hf: float, aw: int, ah: int) -> tuple[int, int, int, int] | None:
+    """Crop chan (yuv420) nam gon trong khung. None neu vung qua nho."""
+    aw, ah = max(2, int(aw)), max(2, int(ah))
+    x = _even0(_px(xf, aw))
+    y = _even0(_px(yf, ah))
+    w = _even(max(8, int(round(wf * aw))))
+    h = _even(max(8, int(round(hf * ah))))
+    if x + w > aw:
+        w = _even(max(8, aw - x))
+    if y + h > ah:
+        h = _even(max(8, ah - y))
+    if x + w > aw:
+        x = _even0(max(0, aw - w))
+    if y + h > ah:
+        y = _even0(max(0, ah - h))
+    if w < 8 or h < 8 or x + w > aw or y + h > ah:
+        return None
+    return x, y, w, h
+
+
+def _blur_filter(w: int, h: int, sigma: int) -> str:
+    """gblur khong vo chroma nhu boxblur tren vung chu thap."""
+    cap = max(1.0, min(w, h) / 5.0)
+    sig = max(1.0, min(float(sigma), cap))
+    return f"gblur=sigma={sig:.2f}"
+
+
 def _enable(t0: float, t1: float | None, duration: float) -> str:
     end = duration if t1 is None else min(t1, duration)
     return f"between(t,{t0:.3f},{max(t0 + 0.04, end):.3f})"
@@ -263,7 +295,42 @@ def _esc_drawtext(text: str) -> str:
 
 
 def _ffmpeg_filter_path(p: str | Path) -> str:
-    return Path(p).resolve().as_posix().replace(":", r"\:")
+    s = Path(p).resolve().as_posix()
+    return (
+        s.replace("\\", "\\\\")
+        .replace(":", r"\:")
+        .replace("'", r"\'")
+        .replace(" ", r"\ ")
+        .replace("[", r"\[")
+        .replace("]", r"\]")
+    )
+
+
+def _resolve_font(font_path: str = "") -> str:
+    cands = [font_path]
+    try:
+        from .desktop_mode import default_font
+
+        cands.append(default_font())
+    except Exception:  # noqa: BLE001
+        pass
+    cands += [
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/Library/Fonts/Arial.ttf",
+        "C:/Windows/Fonts/arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
+    seen: set[str] = set()
+    for raw in cands:
+        p = Path(str(raw or "").strip())
+        key = str(p)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        if p.is_file():
+            return str(p.resolve())
+    return ""
 
 
 def _geom_filter(tf: dict, vw: int, vh: int) -> str | None:
@@ -320,16 +387,14 @@ def build_filter_complex(
     mask_regions = [
         r for r in (layout.get("regions") or [])
         if r.get("kind") in ("blur", "overlay")
+        or (r.get("kind") == "sub" and str(r.get("text") or "").strip())
     ]
     for i, reg in enumerate(mask_regions):
-        x = _px(reg["x"], aw)
-        y = _px(reg["y"], ah)
-        w = _even(max(8, _px(reg["w"], aw)))
-        h = _even(max(8, _px(reg["h"], ah)))
-        if x + w > aw:
-            w = _even(max(8, aw - x))
-        if y + h > ah:
-            h = _even(max(8, ah - y))
+        box = _crop_box(reg["x"], reg["y"], reg["w"], reg["h"], aw, ah)
+        if box is None:
+            log.warning("Editor skip region %s: crop ngoai khung", reg.get("id"))
+            continue
+        x, y, w, h = box
         sigma = _blur_sigma(str(reg.get("blur") or "medium"))
         src = f"s{i}"
         blur = f"b{i}"
@@ -337,15 +402,16 @@ def build_filter_complex(
         enable = _enable(float(reg.get("t0") or 0), reg.get("t1"), duration)
         chains.append(f"{last}split[base{i}][{src}]")
         chains.append(
-            f"[{src}]crop={w}:{h}:{x}:{y},boxblur={sigma}:1[{blur}]"
+            f"[{src}]crop={w}:{h}:{x}:{y},{_blur_filter(w, h, sigma)}[{blur}]"
         )
         chains.append(
             f"[base{i}][{blur}]overlay={x}:{y}:enable='{enable}'[{nxt}]"
         )
         last = f"[{nxt}]"
 
+    font_path = _resolve_font(font_path)
     font = ""
-    if font_path and Path(font_path).is_file():
+    if font_path:
         font = f":fontfile={_ffmpeg_filter_path(font_path)}"
 
     draw_i = 0
@@ -353,9 +419,13 @@ def build_filter_complex(
         text = str(reg.get("text") or "").strip()
         if not text:
             continue
-        x = _px(reg["x"], aw)
-        y = _px(reg["y"], ah)
-        box_h = max(8, _px(reg["h"], ah))
+        if not font:
+            log.warning("Editor skip drawtext (khong tim thay font): %s", text[:40])
+            continue
+        box = _crop_box(reg["x"], reg["y"], reg["w"], reg["h"], aw, ah)
+        if box is None:
+            continue
+        x, y, _w, box_h = box
         fs = max(14, min(72, int(box_h * 0.45)))
         enable = _enable(float(reg.get("t0") or 0), reg.get("t1"), duration)
         nxt = f"t{draw_i}"
@@ -419,7 +489,30 @@ def _is_noop(layout: dict[str, Any], has_logo: bool) -> bool:
     mq = layout.get("marquee") or {}
     if mq.get("enabled") and str(mq.get("text") or "").strip():
         return False
-    return not any(r.get("kind") in ("blur", "overlay") for r in (layout.get("regions") or []))
+    for r in layout.get("regions") or []:
+        kind = r.get("kind")
+        if kind in ("blur", "overlay"):
+            return False
+        if kind == "sub" and str(r.get("text") or "").strip():
+            return False
+    return True
+
+
+def _run_editor_ffmpeg(cmd: list[str]) -> None:
+    import subprocess
+
+    proc = subprocess.run([str(c) for c in cmd], capture_output=True, text=True)
+    if proc.returncode == 0:
+        return
+    err = proc.stderr or ""
+    log.error("Editor ffmpeg fail (%s):\n%s", proc.returncode, err[-2000:])
+    useful: list[str] = []
+    for line in err.splitlines():
+        low = line.lower()
+        if any(k in low for k in ("error", "invalid", "failed", "nothing was written", "cannot find")):
+            useful.append(line.strip())
+    hint = " | ".join(useful[-4:])[:420] if useful else (err.strip()[-280:] or "unknown")
+    raise RuntimeError(f"ffmpeg that bai (code {proc.returncode}): {hint}")
 
 
 def apply_layout(
@@ -438,8 +531,13 @@ def apply_layout(
     has_logo = bool(
         logo_path
         and Path(logo_path).is_file()
-        and (layout.get("logo") or {}).get("enabled")
+        and (
+            (layout.get("logo") or {}).get("enabled")
+            or (layout.get("logo") or {}).get("bounce")
+        )
     )
+    if has_logo:
+        layout.setdefault("logo", {})["enabled"] = True
     if _is_noop(layout, has_logo):
         if src.resolve() != dst.resolve():
             shutil.copy2(src, dst)
@@ -452,9 +550,9 @@ def apply_layout(
     cmd = ["ffmpeg", "-y", "-i", str(src)]
     if has_logo:
         cmd += ["-i", str(logo_path)]
-    cmd += ["-filter_complex", fc, "-map", "[vout]"]
+    cmd += ["-filter_complex", fc, "-map", "[vout]", "-pix_fmt", "yuv420p"]
     if probe_has_audio(src):
-        cmd += ["-map", "0:a:0?", "-c:a", "aac", "-b:a", "192k"]
+        cmd += ["-map", "0:a:0", "-c:a", "aac", "-b:a", "192k", "-shortest"]
     else:
         cmd += ["-an"]
     cmd += [
@@ -463,7 +561,7 @@ def apply_layout(
         str(tmp),
     ]
     log.info("Editor apply ffmpeg: %s -> %s", src.name, dst.name)
-    run(cmd)
+    _run_editor_ffmpeg(cmd)
     if dst.exists():
         dst.unlink()
     shutil.move(str(tmp), str(dst))

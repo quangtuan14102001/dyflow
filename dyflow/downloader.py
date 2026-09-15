@@ -76,11 +76,9 @@ def probe_remote_duration(url: str, cfg: dict | None = None) -> float | None:
     cookies_path: str | None = None
     from_browser = (cfg.get("cookies_from_browser") or "").strip() or None
     try:
-        if cfg.get("auto_refresh_cookies", True) or cfg.get("cookies_file") or from_browser:
-            cookies_path = cookie_util.ensure_cookies(cfg)
+        cookies_path, from_browser = _ytdlp_cookies(cfg)
     except Exception as e:  # noqa: BLE001
         log.debug("probe cookies: %s", e)
-        cookies_path = (cfg.get("cookies_file") or "").strip() or None
 
     cmd = [
         *ytdlp_argv(),
@@ -128,16 +126,44 @@ def probe_remote_duration(url: str, cfg: dict | None = None) -> float | None:
 
 
 def _ytdlp_cookies(cfg: dict) -> tuple[str | None, str | None]:
-    """(cookies_file, cookies_from_browser) — giong probe/download."""
-    cookies_path: str | None = None
+    """Cookie tuy chon. Khong tu mo Chrome/Edge de lay cookie."""
+    cookies_path = (cfg.get("cookies_file") or "").strip() or None
     from_browser = (cfg.get("cookies_from_browser") or "").strip() or None
-    try:
-        if cfg.get("auto_refresh_cookies", True) or cfg.get("cookies_file") or from_browser:
-            cookies_path = cookie_util.ensure_cookies(cfg)
-    except Exception as e:  # noqa: BLE001
-        log.debug("ytdlp cookies: %s", e)
-        cookies_path = (cfg.get("cookies_file") or "").strip() or None
-    return cookies_path, None if cookies_path else from_browser
+    if cookies_path:
+        p = Path(cookies_path)
+        if p.is_file() and p.stat().st_size > 50:
+            return str(p), None
+        cookies_path = None
+    if from_browser:
+        try:
+            got = cookie_util.ensure_cookies(cfg)
+            if got:
+                return got, None
+        except Exception as e:  # noqa: BLE001
+            log.debug("ytdlp cookies: %s", e)
+        return None, from_browser
+    return None, None
+
+
+def public_watch_url(url: str, *, prefer_user: bool = False) -> str:
+    """Link share iesdouyin — xem/tai khach, khong can dang nhap.
+
+    prefer_user=True: link kenh kem ?vid= van ra trang user (liet ke full kenh).
+    """
+    raw = extract_url(url)
+    resolved = resolve_share_url(raw)
+    from .chrome_dl import sec_uid_from_user_url
+
+    sec = sec_uid_from_user_url(resolved) or sec_uid_from_user_url(raw)
+    if prefer_user and sec:
+        return f"https://www.iesdouyin.com/share/user/{sec}"
+    for text in (resolved, raw):
+        m = _AWEME_ID_RE.search(text or "")
+        if m:
+            return f"https://www.iesdouyin.com/share/video/{m.group(1)}"
+    if sec:
+        return f"https://www.iesdouyin.com/share/user/{sec}"
+    return resolved or raw
 
 
 _AWEME_ID_RE = re.compile(
@@ -472,6 +498,7 @@ def list_channel_videos(
     Chrome (allow_chrome) chi khi yt-dlp + scrape chua du, va co timeout.
     """
     url = resolve_share_url(extract_url(url))
+    url = public_watch_url(url, prefer_user=True)
     cfg = cfg or {}
     limit = max(1, min(int(limit or 40), 200))
     errors: list[str] = []
@@ -519,13 +546,14 @@ def list_channel_videos(
             errors.append(f"scrape: {e}")
             log.warning("list_channel scrape: %s", e)
 
-    # Chrome chi khi yt-dlp + scrape chua du. Timeout 40s, khong giu UI vo tan.
+    # Chrome khi yt-dlp + scrape chua du. Full kênh: timeout dai de cuon het.
     if allow_chrome and len(merged) < limit:
         try:
             from .chrome_dl import list_user_videos_with_chrome
 
+            chrome_timeout = 120 if limit > 40 else 70
             got = list_user_videos_with_chrome(
-                url, cfg, limit=limit, timeout_sec=70, headed_fallback=True,
+                url, cfg, limit=limit, timeout_sec=chrome_timeout, headed_fallback=True,
             )
             if got:
                 _absorb(got)
@@ -622,6 +650,7 @@ def download_one(url: str, out_dir: str | Path, cfg: dict) -> Path:
     url = extract_url(url)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    public_url = public_watch_url(url)
 
     video_id = dl_cache.video_id_from_text(url) or dl_cache.resolve_from_short(url)
 
@@ -646,20 +675,16 @@ def download_one(url: str, out_dir: str | Path, cfg: dict) -> Path:
         if not check_tool("yt-dlp"):
             return None
         out_tmpl = str(out_dir / "%(id)s.%(ext)s")
-        cookies_path: str | None = None
-        from_browser = (cfg.get("cookies_from_browser") or "").strip() or None
+        cookies_path, from_browser = _ytdlp_cookies(cfg)
         chrome_ck = out_dir / "_chrome_cookies.txt"
-        if chrome_ck.exists():
+        if chrome_ck.exists() and chrome_ck.stat().st_size > 50:
             cookies_path = str(chrome_ck)
-        elif cfg.get("auto_refresh_cookies", True) or cfg.get("cookies_file") or from_browser:
-            try:
-                cookies_path = cookie_util.ensure_cookies(cfg)
-            except Exception as e:  # noqa: BLE001
-                log.warning("ensure_cookies: %s", e)
-                cookies_path = (cfg.get("cookies_file") or "").strip() or None
+        if not cookies_path and not from_browser:
+            # Douyin extractor bat cookie — khong doi yt-dlp fail.
+            return None
 
         cmd = _build_ytdlp_cmd(
-            url, out_tmpl, cfg,
+            public_url, out_tmpl, cfg,
             cookies_file=cookies_path,
             cookies_from_browser=None if cookies_path else from_browser,
         )
@@ -699,7 +724,7 @@ def download_one(url: str, out_dir: str | Path, cfg: dict) -> Path:
         from .chrome_dl import download_with_chrome
 
         try:
-            got = download_with_chrome(url, out_dir, cfg)
+            got = download_with_chrome(public_url, out_dir, cfg)
             vid = dl_cache.video_id_from_text(got.name, url) or video_id
             m = re.search(r"(\d{10,})", got.name)
             if m:

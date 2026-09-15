@@ -61,6 +61,66 @@ def embedded_video_urls(text: str) -> list[str]:
     return out
 
 
+_LOCAL_VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
+
+
+def _looks_like_local_path(text: str) -> bool:
+    raw = (text or "").strip().strip('"')
+    if not raw:
+        return False
+    low = raw.lower()
+    if low.startswith(("http://", "https://")):
+        return False
+    if low.startswith("file://"):
+        return True
+    if raw.startswith("/") or raw.startswith("\\\\"):
+        return True
+    if re.match(r"^[A-Za-z]:[\\/]", raw):
+        return True
+    return Path(raw).suffix.lower() in _LOCAL_VIDEO_EXTS
+
+
+def is_local_source(text: str) -> bool:
+    """File video tren may (khong phai link Douyin)."""
+    raw = _local_path_from_text(text)
+    if not raw:
+        return False
+    try:
+        return Path(raw).expanduser().is_file()
+    except OSError:
+        return False
+
+
+def _local_path_from_text(text: str) -> str:
+    raw = (text or "").strip().strip('"')
+    if not raw or not _looks_like_local_path(raw):
+        return ""
+    low = raw.lower()
+    if low.startswith("file://"):
+        from urllib.parse import unquote, urlparse
+
+        parsed = urlparse(raw)
+        raw = unquote(parsed.path or "")
+        if re.match(r"^/[A-Za-z]:/", raw):
+            raw = raw[1:]
+    return raw
+
+
+def resolve_job_source(text: str) -> str:
+    """URL Douyin da chuan hoa, hoac duong dan file local."""
+    raw = (text or "").strip()
+    local = _local_path_from_text(raw)
+    if local:
+        path = Path(local).expanduser()
+        if not path.is_file():
+            raise ValueError(f"Khong tim thay file video: {path}")
+        try:
+            return str(path.resolve())
+        except OSError:
+            return str(path)
+    return normalize_douyin_url(raw)
+
+
 def normalize_douyin_url(text: str) -> str:
     """Chuan hoa link Douyin (ca link search co modal_id, ca user/kênh)."""
     text = text.strip()
@@ -127,7 +187,7 @@ def build_job(
     jid = job_id or f"tg_{int(time.time())}_{uuid.uuid4().hex[:8]}"
     return {
         "id": jid,
-        "source": normalize_douyin_url(url),
+        "source": resolve_job_source(url),
         "script": "AUTO",
         # Bot: clip dai tu dong cat ~2 phut dau de xu ly + gui Telegram
         "max_duration_sec": 120,

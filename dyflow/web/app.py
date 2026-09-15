@@ -71,6 +71,11 @@ def _channel_full_cap() -> int:
         return _MAX_CHANNEL_FULL
 
 
+def _use_chrome_for_channel(mode: str) -> bool:
+    """Full kênh: mo Chrome de cuon het API aweme/post. Quote nhanh (N moi nhat) thi khong."""
+    return (mode or "").strip().lower() == "full"
+
+
 def _channel_fetch_limit(mode: str, count: str) -> int:
     """So video lay tu kenh: N moi nhat, hoac full (cap an toan)."""
     cap = _channel_full_cap()
@@ -1083,6 +1088,7 @@ def api_quote(
     try:
         result = quote.quote_urls(
             url, dl_cfg, limit=_batch_limit(), channel_limit=ch_lim,
+            allow_chrome=_use_chrome_for_channel(channel_mode),
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
@@ -1122,7 +1128,10 @@ def _save_local_videos(uploads: list[UploadFile], *, limit: int) -> list[str]:
         ext = Path(name).suffix.lower()
         if ext not in _VIDEO_EXTS:
             raise HTTPException(400, f"Dinh dang khong ho tro: {name}")
-        dest = up / f"local_{uuid.uuid4().hex}{ext}"
+        stem = Path(name).stem
+        safe = "".join(ch if ch.isalnum() or ch in "-._" else "_" for ch in stem)
+        safe = (safe.strip("._") or "video")[:48]
+        dest = up / f"local_{uuid.uuid4().hex[:8]}_{safe}{ext}"
         size = 0
         try:
             with dest.open("wb") as fh:
@@ -1214,14 +1223,16 @@ def api_create_job(
     dl_cfg = dict(cfg.get("download") or {})
     quoted_items: list[dict] = []
     room = max(limit, ch_lim) - len(local_paths)
-    reused = _items_from_quoted_json(quoted_json, limit=room)
+    full_channel = _use_chrome_for_channel(channel_mode)
+    # Full kênh: khong dung bang gia 32 clip (HTML/yt-dlp thieu trang).
+    reused = [] if full_channel else _items_from_quoted_json(quoted_json, limit=room)
     if reused:
         quoted_items = reused
     elif (url or "").strip() and room > 0:
         try:
             quoted = quote.quote_urls(
                 url, dl_cfg, limit=room, channel_limit=min(ch_lim, room),
-                allow_chrome=False,
+                allow_chrome=full_channel,
             )
         except ValueError as e:
             raise HTTPException(400, str(e)) from e

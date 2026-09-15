@@ -40,7 +40,10 @@ const DyflowEditor = {
     v.addEventListener("pause", () => {
       document.getElementById("ed-play").textContent = "▶";
     });
-    window.addEventListener("resize", () => this.renderBoxes());
+    window.addEventListener("resize", () => {
+      this.renderBoxes();
+      this.renderFx();
+    });
 
     document.getElementById("ed-add-sub").addEventListener("click", () => this.addRegion("sub"));
     document.getElementById("ed-add-overlay").addEventListener("click", () => this.addRegion("overlay"));
@@ -108,6 +111,7 @@ const DyflowEditor = {
     this.timeEl.textContent = `${t.toFixed(1)}s / ${d.toFixed(1)}s`;
     document.getElementById("ed-play").textContent = this.video.paused ? "▶" : "❚❚";
     this.renderBoxes();
+    this.renderFx();
   },
 
   fmtRange(r) {
@@ -255,16 +259,23 @@ const DyflowEditor = {
 
   readLook() {
     if (!this.layout) return;
+    const bounceEl = document.getElementById("ed-logo-bounce");
+    const logoOn = document.getElementById("ed-logo-on");
+    if (bounceEl && bounceEl.checked && logoOn) logoOn.checked = true;
+    const mqText = (document.getElementById("ed-marquee") || {}).value || "";
+    const mqOn = document.getElementById("ed-marquee-on");
+    if (mqOn && mqText.trim()) mqOn.checked = true;
     this.layout.transform = this.layout.transform || {};
     this.layout.transform.hflip = document.getElementById("ed-hflip").checked;
     this.layout.transform.rotate = Number(document.getElementById("ed-rotate").value) || 0;
     this.layout.transform.zoom = Number(document.getElementById("ed-zoom").value) || 1;
     this.layout.logo = this.layout.logo || {};
-    this.layout.logo.enabled = document.getElementById("ed-logo-on").checked;
-    this.layout.logo.bounce = document.getElementById("ed-logo-bounce").checked;
+    this.layout.logo.enabled = logoOn ? logoOn.checked : false;
+    this.layout.logo.bounce = bounceEl ? bounceEl.checked : false;
     this.layout.marquee = this.layout.marquee || {};
-    this.layout.marquee.enabled = document.getElementById("ed-marquee-on").checked;
-    this.layout.marquee.text = document.getElementById("ed-marquee").value;
+    this.layout.marquee.enabled = mqOn ? mqOn.checked : false;
+    this.layout.marquee.text = mqText;
+    this.renderFx();
   },
 
   syncLook() {
@@ -278,6 +289,7 @@ const DyflowEditor = {
     document.getElementById("ed-logo-bounce").checked = !!logo.bounce;
     document.getElementById("ed-marquee-on").checked = !!mq.enabled;
     document.getElementById("ed-marquee").value = mq.text || "";
+    this.renderFx();
   },
 
   addRegion(kind) {
@@ -374,14 +386,70 @@ const DyflowEditor = {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || _("editor_logo_fail"));
       document.getElementById("ed-logo-on").checked = true;
-      this.readLook();
       this.setMsg(_("editor_logo_ok"), false);
+      this.readLook();
     } catch (e) {
       this.setMsg(e.message || _("editor_logo_fail"), true);
     }
   },
 
+  renderFx() {
+    const img = document.getElementById("ed-logo-prev");
+    const mq = document.getElementById("ed-mq-prev");
+    if (!img || !mq || !this.layout) return;
+    const t = this.video.currentTime || 0;
+    const rect = this.displayRect();
+    const logo = this.layout.logo || {};
+    const wantLogo = !!(logo.enabled || logo.bounce);
+    if (wantLogo) {
+      img.hidden = false;
+      if (img.dataset.job !== this.jobId) {
+        img.src = `/api/jobs/${this.jobId}/editor/logo?t=${Date.now()}`;
+        img.dataset.job = this.jobId;
+        img.onerror = () => {
+          img.hidden = true;
+        };
+      }
+      const lw = Math.max(28, rect.width * 0.14);
+      img.style.width = `${lw}px`;
+      const slot = logo.bounce ? Math.floor((t % 8) / 2) : 0;
+      const left = slot === 1 || slot === 3 ? rect.width - lw - 12 : 12;
+      const top = slot === 2 || slot === 3 ? rect.height - lw - 12 : 12;
+      img.style.left = `${rect.left + left}px`;
+      img.style.top = `${rect.top + top}px`;
+    } else {
+      img.hidden = true;
+    }
+
+    const marquee = this.layout.marquee || {};
+    const mqText = String(marquee.text || "").trim();
+    const mqSpan = document.getElementById("ed-mq-txt");
+    if (marquee.enabled && mqText && mqSpan) {
+      mq.hidden = false;
+      mqSpan.textContent = mqText;
+      mq.style.left = `${rect.left}px`;
+      mq.style.top = `${rect.top + rect.height * 0.06}px`;
+      mq.style.width = `${rect.width}px`;
+      const tw = mqSpan.offsetWidth || 200;
+      const span = rect.width + tw + 80;
+      const x = rect.width - ((t * 140) % span);
+      mqSpan.style.display = "inline-block";
+      mqSpan.style.transform = `translateX(${x}px)`;
+    } else {
+      mq.hidden = true;
+      if (mqSpan) mqSpan.textContent = "";
+    }
+  },
+
   async apply() {
+    this.readLook();
+    const mq = (this.layout && this.layout.marquee) || {};
+    if (mq.enabled && !String(mq.text || "").trim()) {
+      this.setMsg(_("editor_marquee_need"), true);
+      const inp = document.getElementById("ed-marquee");
+      if (inp) inp.focus();
+      return;
+    }
     const ok = await this.save(true);
     if (!ok) return;
     const btn = document.getElementById("ed-apply");

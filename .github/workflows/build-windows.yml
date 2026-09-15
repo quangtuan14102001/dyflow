@@ -44,6 +44,7 @@ jobs:
           $fp = (Get-Command ffprobe -ErrorAction SilentlyContinue)
           if ($fp) { Copy-Item $fp.Source dist\VideosCreator\ffprobe.exe -Force }
           Copy-Item scripts\WINDOWS_README.txt dist\VideosCreator\README.txt -Force
+          Copy-Item scripts\CHAY.bat dist\VideosCreator\CHAY.bat -Force
           Get-Item dist\VideosCreator\VideosCreator.exe
 
       - name: Bundle OPENAI_API_KEY into dist .env

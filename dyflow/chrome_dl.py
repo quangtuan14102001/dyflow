@@ -507,7 +507,14 @@ def _chrome_session_download(
                 pass
 
         page.on("response", on_response)
-        page.goto(url, wait_until="domcontentloaded", timeout=120_000)
+        try:
+            from .downloader import public_watch_url
+
+            goto = public_watch_url(url)
+        except Exception:  # noqa: BLE001
+            goto = url
+        log.info("Chrome goto (khach, khong can cookie): %s", goto[:90])
+        page.goto(goto, wait_until="domcontentloaded", timeout=120_000)
 
         for _ in range(20):
             final_url = page.url
@@ -888,6 +895,13 @@ def list_user_videos_with_chrome(
         CHROME_LOCK = None
 
     sec_uid = sec_uid_from_user_url(url)
+    try:
+        from .downloader import public_watch_url
+
+        url = public_watch_url(url, prefer_user=True)
+        sec_uid = sec_uid_from_user_url(url) or sec_uid
+    except Exception:  # noqa: BLE001
+        pass
     clean_url = (url or "").split("#")[0].split("?")[0]
     ids: list[str] = []
     seen: set[str] = set()
@@ -1024,7 +1038,7 @@ def list_user_videos_with_chrome(
                 except Exception:  # noqa: BLE001
                     continue
             stale = 0
-            for _ in range(24):
+            for _ in range(40):
                 if time.monotonic() >= deadline:
                     break
                 if len(ids) >= limit:
@@ -1048,7 +1062,7 @@ def list_user_videos_with_chrome(
                     stale += 1
                 else:
                     stale = 0
-                if stale >= 3:
+                if stale >= 5:
                     break
             try:
                 dom_ids = page.evaluate(

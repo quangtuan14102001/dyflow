@@ -43,9 +43,13 @@
       </label>
     </div>
     <div class="studio-local">
-      <button type="button" class="btn ghost" id="pick-files-btn">{{ t('studio_pick_files') }}</button>
-      <button type="button" class="btn ghost" id="pick-folder-btn">{{ t('studio_pick_folder') }}</button>
-      <span class="studio-local-count" id="local-count"></span>
+      <div class="studio-local-btns">
+        <button type="button" class="btn ghost" id="pick-files-btn">{{ t('studio_pick_files') }}</button>
+        <button type="button" class="btn ghost" id="pick-folder-btn">{{ t('studio_pick_folder') }}</button>
+        <span class="studio-local-count" id="local-count"></span>
+        <button type="button" class="btn ghost btn-sm" id="local-clear-btn" hidden>{{ t('studio_local_clear') }}</button>
+      </div>
+      <ul class="local-file-list" id="local-file-list" hidden></ul>
       <input type="file" id="local-files" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.mkv,.webm,.avi" multiple hidden />
       <input type="file" id="local-folder" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.mkv,.webm,.avi" multiple webkitdirectory hidden />
     </div>

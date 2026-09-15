@@ -67,20 +67,11 @@ def write_netscape_cookies(cookies: list[dict], out_path: Path) -> Path:
 
 
 def _browser_candidates(configured: str) -> list[str]:
-    """Chrome/Edge tren Windows; khong can dang nhap Douyin, chi can mo trang 1 lan."""
-    ordered: list[str] = []
+    """Chi khi user bat cookies_from_browser. Khong tu doan Edge/Chrome."""
     raw = (configured or "").strip().lower()
-    if raw:
-        ordered.append(raw.split(":")[0])
-    if sys.platform == "win32":
-        for name in ("edge", "chrome"):
-            if name not in ordered:
-                ordered.append(name)
-    elif sys.platform == "darwin":
-        for name in ("chrome", "edge", "safari"):
-            if name not in ordered:
-                ordered.append(name)
-    return ordered
+    if not raw:
+        return []
+    return [raw.split(":")[0]]
 
 
 def refresh_from_browser(browser: str, out_path: str | Path) -> Path:
@@ -212,7 +203,13 @@ def ensure_cookies(cfg: dict) -> str | None:
     method = str(cfg.get("cookie_refresh_method", "auto")).lower()
     max_age = float(cfg.get("cookie_max_age_hours", 12)) * 3600
 
-    if not cookies_file and not from_browser and method not in ("playwright", "auto"):
+    # Khach khong bat buoc cookie. Chi dung file co san; khong lay trom Edge/Chrome.
+    if not from_browser:
+        if not cookies_file:
+            return None
+        path = Path(cookies_file)
+        if path.is_file() and path.stat().st_size > 50:
+            return str(path)
         return None
 
     if not cookies_file:
@@ -220,10 +217,8 @@ def ensure_cookies(cfg: dict) -> str | None:
 
     path = Path(cookies_file)
     need_refresh = auto and cookies_stale(path, max_age_sec=max_age)
-    if sys.platform == "win32":
-        need_refresh = True
 
-    if not need_refresh:
+    if not need_refresh and path.is_file() and path.stat().st_size > 50:
         return str(path)
 
     log.warning("Cookie het han / chua co -> tu dong lay lai...")

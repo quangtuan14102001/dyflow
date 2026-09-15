@@ -879,6 +879,9 @@ h2 { font-size: 18px; margin: 0 0 16px; }
   color: var(--muted);
   white-space: nowrap;
   text-align: right;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 .quote-meta em { font-style: normal; color: var(--text); }
 .quote-meta strong { color: var(--accent-2); font-weight: 700; }
@@ -2470,6 +2473,26 @@ body.editor-page { min-height: 100vh; }
   width: auto; height: auto;
 }
 .ed-overlay { position: absolute; pointer-events: auto; z-index: 2; }
+.ed-logo-prev {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  height: auto;
+  filter: drop-shadow(0 1px 3px rgba(0,0,0,0.45));
+}
+.ed-mq-prev {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  overflow: hidden;
+  height: 32px;
+  line-height: 32px;
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 0 4px #000, 1px 1px 2px #000;
+  white-space: nowrap;
+}
 .ed-box {
   position: absolute; box-sizing: border-box;
   border: 2px solid #f5d76e; background: rgba(245, 215, 110, 0.12);
@@ -2890,13 +2913,60 @@ body.studio #url {
 }
 .studio-local {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   gap: 8px;
   margin-top: -4px;
 }
+.studio-local-btns {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
 .studio-local .btn { width: auto; flex: none; padding: 8px 12px; font-size: 13px; }
 .studio-local-count { font-size: 12px; color: var(--muted); }
+.local-file-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.03);
+}
+.local-file-list li {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+  font-size: 13px;
+  line-height: 1.35;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+}
+.local-file-list li:last-child { border-bottom: 0; }
+.local-file-name {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.local-file-size {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.local-file-x {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.local-file-x:hover { color: var(--fail); }
 .studio-src-hint { margin: 4px 0 0; font-size: 12px; text-align: left; }
 .studio-src.is-batch textarea {
   min-height: 200px;

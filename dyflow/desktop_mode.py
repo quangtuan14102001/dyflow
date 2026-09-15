@@ -206,8 +206,10 @@ def _rewrite_paths(
             line = f'  font_path: "{_yaml_path(font)}"\n'
         elif line.startswith("  cookies_file:") and cookies_file is not None:
             line = f'  cookies_file: "{_yaml_path(cookies_file)}"\n'
-        elif line.startswith("  cookies_from_browser:") and sys.platform == "win32":
-            line = '  cookies_from_browser: "edge"\n'
+        elif line.startswith("  cookies_from_browser:"):
+            line = '  cookies_from_browser: ""\n'
+        elif line.startswith("  auto_refresh_cookies:"):
+            line = "  auto_refresh_cookies: false\n"
         elif line.startswith("  ytdlp_first:") and sys.platform == "win32":
             line = "  ytdlp_first: false\n"
         elif line.startswith("  dub_qa_fail_closed:"):
