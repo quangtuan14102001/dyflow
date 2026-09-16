@@ -704,6 +704,10 @@ const DyflowHome = {
         return;
       }
       const langVal = ((document.getElementById("lang") || {}).value || "").trim();
+      if (this._quoteBusy) {
+        err.textContent = _("quote_channel");
+        return;
+      }
       if (!langVal) {
         err.textContent = _("home_lang_needed");
         const l = document.getElementById("lang");
@@ -733,11 +737,7 @@ const DyflowHome = {
         locals.forEach((f) => data.append("videos", f, f.name));
         const logoOn = document.getElementById("logo-enable");
         if (logoOn && !logoOn.checked) data.delete("logo");
-        if (
-          this._lastQuoteItems &&
-          this._lastQuoteItems.length &&
-          this._lastQuoteUrl === urlVal
-        ) {
+        if (this._lastQuoteItems && this._lastQuoteItems.length) {
           data.set("quoted_json", JSON.stringify(this._lastQuoteItems));
         }
         const res = await fetch("/api/jobs", {

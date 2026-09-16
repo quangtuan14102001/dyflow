@@ -131,44 +131,26 @@ def refresh_with_playwright(
     profile = Path(profile_dir or "./work/_chrome_dy_profile")
     profile.mkdir(parents=True, exist_ok=True)
     log.info("Dang lay cookie bang Playwright (headless=%s)...", headless)
-    channels = ("msedge", "chrome") if sys.platform == "win32" else ("chrome",)
     with sync_playwright() as p:
         browser = None
         context = None
-        for ch in channels:
-            try:
-                context = p.chromium.launch_persistent_context(
-                    user_data_dir=str(profile),
-                    channel=ch,
-                    headless=headless,
-                    locale="zh-CN",
-                    args=["--disable-blink-features=AutomationControlled"],
-                    viewport={"width": 1280, "height": 900},
-                )
-                log.info("Playwright cookie: channel=%s", ch)
-                break
-            except Exception as e:  # noqa: BLE001
-                log.warning("Playwright %s fail: %s", ch, e)
-                context = None
-        if context is None:
-            try:
-                context = p.chromium.launch_persistent_context(
-                    user_data_dir=str(profile),
-                    headless=headless,
-                    locale="zh-CN",
-                    args=["--disable-blink-features=AutomationControlled"],
-                    viewport={"width": 1280, "height": 900},
-                )
-            except Exception:
-                browser = p.chromium.launch(headless=headless)
-                context = browser.new_context(
-                    locale="zh-CN",
-                    user_agent=(
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/122.0.0.0 Safari/537.36"
-                    ),
-                )
+        from .browser_launch import launch_headless_browser
+
+        if headless:
+            browser = launch_headless_browser(p)
+            context = browser.new_context(
+                locale="zh-CN",
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/122.0.0.0 Safari/537.36"
+                ),
+            )
+        else:
+            from .browser_launch import launch_playwright_chromium
+
+            browser = launch_playwright_chromium(p, headless=False)
+            context = browser.new_context(locale="zh-CN")
         page = context.pages[0] if context.pages else context.new_page()
         page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(5000)

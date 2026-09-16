@@ -73,6 +73,8 @@ pyz = PYZ(a.pure)
 
 _icon = ROOT / "dyflow" / "web" / "static" / "favicon.ico"
 
+_ver = ROOT / "packaging" / "win_version_info.txt"
+
 exe = EXE(
     pyz,
     a.scripts,
@@ -86,6 +88,7 @@ exe = EXE(
     console=False,
     disable_windowed_traceback=True,
     icon=str(_icon) if _icon.exists() else None,
+    version=str(_ver) if _ver.is_file() else None,
 )
 
 coll = COLLECT(

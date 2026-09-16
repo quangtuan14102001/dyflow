@@ -52,7 +52,15 @@ def strip_vocals_demucs(
     try:
         # Chay qua wrapper de patch stdlib truoc khi import torch/demucs.
         wrapper = Path(__file__).resolve().parents[1] / "scripts" / "run_demucs.py"
-        if wrapper.exists():
+        if getattr(sys, "frozen", False):
+            cmd = [
+                sys.executable, "--demucs",
+                "-n", model,
+                "--two-stems", "vocals",
+                "-o", str(out_dir),
+                str(audio_wav),
+            ]
+        elif wrapper.exists():
             cmd = [
                 sys.executable, str(wrapper),
                 "-n", model,

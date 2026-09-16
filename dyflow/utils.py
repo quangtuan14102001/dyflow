@@ -43,7 +43,11 @@ def deep_merge(base: dict, override: dict) -> dict:
 
 def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
     """Chay 1 command, raise neu loi, log gon."""
+    import sys
+
     log.debug("RUN: %s", " ".join(str(c) for c in cmd))
+    if sys.platform == "win32" and "creationflags" not in kw:
+        kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
     proc = subprocess.run(
         [str(c) for c in cmd],
         capture_output=True,
@@ -124,11 +128,18 @@ def probe_video_size(path: str | Path) -> tuple[int, int]:
 
 
 def ytdlp_argv() -> list[str]:
-    """Goi yt-dlp qua wrapper (patch stdlib + dung python venv hien tai)."""
+    """Goi yt-dlp. Frozen exe dung --ytdlp (khong mo cua so app moi)."""
     import sys
 
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--ytdlp"]
     wrapper = Path(__file__).resolve().parents[1] / "scripts" / "run_ytdlp.py"
-    return [sys.executable, str(wrapper)]
+    if wrapper.is_file():
+        return [sys.executable, str(wrapper)]
+    found = shutil.which("yt-dlp")
+    if found:
+        return [found]
+    return [sys.executable, "-m", "yt_dlp"]
 
 
 def check_tool(name: str) -> bool:

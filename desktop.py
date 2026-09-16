@@ -64,7 +64,25 @@ def _log_startup(msg: str) -> None:
     print(msg, flush=True)
 
 
+def _win_claim_gui() -> bool:
+    """True = instance dau (duoc mo UI). Instance 2 thoat — tranh 3 cua so app."""
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        kernel32.CreateMutexW(None, True, "Global\\VideosCreatorDesktopSingleton")
+        return int(kernel32.GetLastError()) != 183  # ERROR_ALREADY_EXISTS
+    except Exception:
+        return True
+
+
 def main() -> int:
+    if sys.platform == "win32" and getattr(sys, "frozen", False):
+        if not _win_claim_gui():
+            _log_startup("already running — skip extra window")
+            return 0
     from dyflow.desktop_mode import prepare
 
     prepare()
@@ -296,6 +314,27 @@ if __name__ == "__main__":
     import multiprocessing
 
     multiprocessing.freeze_support()
+    # Frozen helper: yt-dlp / demucs — KHONG mo cua so, KHONG bind port.
+    if getattr(sys, "frozen", False) and len(sys.argv) > 1:
+        argv1 = sys.argv[1]
+        # Playwright launched VideosCreator.exe as a fake Chromium.
+        if argv1.startswith("--type=") or argv1 in {
+            "--headless",
+            "--headless=new",
+            "--gpu-process",
+            "--utility-sub-type=network.mojom.NetworkService",
+        } or any(a.startswith("--type=") for a in sys.argv[1:]):
+            raise SystemExit(0)
+        if argv1 == "--ytdlp":
+            from yt_dlp import main as ytdlp_main
+
+            sys.argv = ["yt-dlp", *sys.argv[2:]]
+            raise SystemExit(ytdlp_main())
+        if argv1 == "--demucs":
+            from demucs.separate import main as demucs_main
+
+            sys.argv = ["demucs", *sys.argv[2:]]
+            raise SystemExit(demucs_main())
     try:
         raise SystemExit(main())
     except Exception as e:

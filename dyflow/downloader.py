@@ -12,6 +12,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -271,6 +272,7 @@ def _ytdlp_flat_channel(url: str, cfg: dict, limit: int) -> list[str]:
     try:
         proc = subprocess.run(
             cmd, capture_output=True, text=True, timeout=40,
+            **({"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)} if sys.platform == "win32" else {}),
         )
     except subprocess.TimeoutExpired as e:
         raise RuntimeError("Het thoi gian khi lay danh sach kenh Douyin.") from e
@@ -646,12 +648,27 @@ def list_channel_videos(
 
     cookies_path, _from_browser = _ytdlp_cookies(cfg)
     try:
-        got = _http_scrape_channel(pc, cookies_path, limit)
-        if got:
-            log.info("Kenh %s: HTTP liet ke %d video", pc[:70], len(got))
-            _absorb(got)
+        if sec:
+            for vid in _http_ies_aweme_post(sec, limit):
+                href = f"https://www.douyin.com/video/{vid}"
+                _absorb([href])
+        if len(merged) < limit and cookies_path and sec:
+            from http.cookiejar import MozillaCookieJar
+            import urllib.request
+
+            jar = MozillaCookieJar()
+            try:
+                jar.load(cookies_path, ignore_discard=True, ignore_expires=True)
+            except Exception:  # noqa: BLE001
+                jar = MozillaCookieJar()
+            opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+            for vid in _http_aweme_post(opener, sec, limit):
+                href = f"https://www.douyin.com/video/{vid}"
+                _absorb([href])
+        if merged:
+            log.info("Kenh %s: HTTP liet ke %d video", pc[:70], len(merged))
         else:
-            errors.append("trang kenh khong co danh sach video")
+            errors.append("API kenh khong tra video")
     except Exception as e:  # noqa: BLE001
         errors.append(f"scrape: {e}")
         log.warning("list_channel scrape: %s", e)
@@ -659,7 +676,9 @@ def list_channel_videos(
     if not merged and _stale():
         raise RuntimeError("cancelled")
 
-    if not merged:
+    # 1 video / 0 video: can Edge headless (khong mo cua so, khong mo lai .exe).
+    need_browser = (not merged) or (expected and len(merged) < min(limit, expected) and len(merged) <= 1)
+    if need_browser and not _stale():
         try:
             from .chrome_dl import list_user_videos_with_chrome
 
@@ -667,44 +686,21 @@ def list_channel_videos(
                 pc,
                 cfg,
                 limit=limit,
-                timeout_sec=30,
-                headed_fallback=False,
+                timeout_sec=25,
+                headed_fallback=True,
                 expected=expected,
             )
             if got:
-                log.info("Kenh %s: Chromium headless liet ke %d video", pc[:70], len(got))
+                log.info("Kenh %s: Edge headless liet ke %d video", pc[:70], len(got))
                 _absorb(got)
             else:
                 errors.append("headless khong thay video")
         except Exception as e:  # noqa: BLE001
-            errors.append(f"headless: {e}")
-            log.warning("list_channel headless: %s", e)
-
-    if not merged and _stale():
-        raise RuntimeError("cancelled")
-
-    # yt-dlp chi khi van chua co clip — khong cho 2 phut de doi Chrome.
-    if not merged and check_tool("yt-dlp"):
-        ytdlp_urls = [pc]
-        if sec:
-            ytdlp_urls.append(f"https://www.iesdouyin.com/share/user/{sec}")
-        last_err = ""
-        for href in ytdlp_urls:
-            if merged:
-                break
-            try:
-                got = _ytdlp_flat_channel(href, cfg, limit)
-                if got:
-                    log.info("Kenh %s: yt-dlp liet ke %d video", href[:70], len(got))
-                    _absorb(got)
-            except Exception as e:  # noqa: BLE001
-                last_err = str(e)
-                log.warning("list_channel yt-dlp: %s", e)
-        if not merged:
-            errors.append(f"yt-dlp: {last_err or 'khong thay video'}")
+            errors.append(f"browser: {e}")
+            log.warning("list_channel browser: %s", e)
 
     if allow_chrome:
-        log.debug("list_channel: bo qua Chrome (khong mo cua so trinh duyet)")
+        log.debug("list_channel: khong mo cua so Chrome headed")
 
     if not merged:
         raise RuntimeError(" | ".join(errors) or "Khong liet ke duoc kenh")

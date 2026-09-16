@@ -429,10 +429,9 @@ def _chrome_session_download(
         def _ephemeral(channel: str | None) -> bool:
             nonlocal browser, context
             try:
-                kwargs = {"headless": headless, "args": launch_args}
-                if channel:
-                    kwargs["channel"] = channel
-                browser = p.chromium.launch(**kwargs)
+                from .browser_launch import launch_playwright_chromium
+
+                browser = launch_playwright_chromium(p, headless=headless)
                 context = browser.new_context(
                     locale="zh-CN",
                     user_agent=_DEFAULT_UA,
@@ -443,11 +442,11 @@ def _chrome_session_download(
                         context.add_cookies([c])
                     except Exception:  # noqa: BLE001
                         pass
-                log.info("Browser ephemeral OK (channel=%s)", channel or "chromium")
+                log.info("Browser ephemeral OK (system Edge/Chrome)")
                 return True
             except Exception as e:  # noqa: BLE001
                 launch_errs.append(f"ephemeral-{channel or 'chromium'}: {e}")
-                log.warning("ephemeral %s fail: %s", channel or "chromium", e)
+                log.warning("ephemeral fail: %s", e)
                 if browser:
                     try:
                         browser.close()
@@ -458,41 +457,50 @@ def _chrome_session_download(
                 return False
 
         if headless:
-            # Desktop: khong persistent Edge/Chrome — persistent mo cua so app.
-            for ch in ([None, "msedge"] if sys.platform == "win32" else [None]):
-                if _ephemeral(ch):
-                    break
+            from .browser_launch import launch_headless_browser
+
+            try:
+                browser = launch_headless_browser(p)
+                context = browser.new_context(
+                    locale="zh-CN",
+                    user_agent=_DEFAULT_UA,
+                    viewport={"width": 1280, "height": 900},
+                )
+                for c in _load_netscape_cookies(cookies_file):
+                    try:
+                        context.add_cookies([c])
+                    except Exception:  # noqa: BLE001
+                        pass
+                log.info("Browser ephemeral OK (system Edge/Chrome headless)")
+            except Exception as e:  # noqa: BLE001
+                launch_errs.append(f"headless: {e}")
+                log.warning("headless download launch: %s", e)
+                browser = None
+                context = None
         else:
-            channels = ("msedge",) if sys.platform == "win32" else ("chrome",)
-            for ch in channels:
-                try:
-                    context = p.chromium.launch_persistent_context(
-                        user_data_dir=str(profile),
-                        channel=ch,
-                        headless=False,
-                        **common_kwargs,
-                    )
-                    log.info("Browser persistent (channel=%s) OK", ch)
-                    break
-                except Exception as e:  # noqa: BLE001
-                    launch_errs.append(f"{ch}-persistent: {e}")
-                    log.warning("%s persistent fail: %s", ch, e)
-                    context = None
+            exe = None
+            try:
+                from .browser_launch import system_browser_exe
+
+                exe = system_browser_exe()
+            except Exception:  # noqa: BLE001
+                exe = None
+            persist_kwargs = dict(common_kwargs)
+            if exe:
+                persist_kwargs["executable_path"] = exe
+            try:
+                context = p.chromium.launch_persistent_context(
+                    user_data_dir=str(profile),
+                    headless=False,
+                    **persist_kwargs,
+                )
+                log.info("Browser persistent OK exe=%s", exe or "bundled")
+            except Exception as e:  # noqa: BLE001
+                launch_errs.append(f"persistent: {e}")
+                log.warning("persistent fail: %s", e)
+                context = None
             if context is None:
-                try:
-                    context = p.chromium.launch_persistent_context(
-                        user_data_dir=str(profile),
-                        headless=False,
-                        **common_kwargs,
-                    )
-                    log.info("Chromium persistent OK")
-                except Exception as e:  # noqa: BLE001
-                    launch_errs.append(f"chromium-persistent: {e}")
-                    log.warning("Chromium persistent fail: %s", e)
-            if context is None:
-                for ch in list(channels) + [None]:
-                    if _ephemeral(ch):
-                        break
+                _ephemeral(None)
 
         if context is None:
             raise RuntimeError(
@@ -920,33 +928,49 @@ def _is_aweme_post_url(url: str, sec_uid: str = "") -> bool:
     return True
 
 
+def unsigned_aweme_post_path(sec_uid: str, cursor: int = 0, count: int = 18) -> str:
+    """URL tuong doi — KHONG kem a_bogus. Fetch trong trang (cookie + fingerprint).
+
+    URL da ky (intercept) fetch lai ra HTML; URL nay tra JSON aweme_list.
+    """
+    from urllib.parse import urlencode
+
+    qs = urlencode({
+        "device_platform": "webapp",
+        "aid": "6383",
+        "channel": "channel_pc_web",
+        "sec_user_id": sec_uid,
+        "max_cursor": str(int(cursor or 0)),
+        "count": str(max(1, min(int(count or 18), 40))),
+        "publish_video_strategy_type": "2",
+        "from_user_page": "1",
+    })
+    return f"/aweme/v1/web/aweme/post/?{qs}"
+
+
 _PAGINATE_AWEME_JS = """
-async ({ startUrl, startCursor, limit, known }) => {
+async ({ secUid, limit, known }) => {
   const out = [];
   const seen = new Set(known || []);
-  let cursor = Number(startCursor || 0);
-  if (!startUrl) return out;
-  const dropSig = (u) => {
-    for (const k of ['a_bogus', 'X-Bogus', 'x-bogus', 'msToken', 'verifyFp', 'fp']) {
-      u.searchParams.delete(k);
-    }
-  };
-  for (let i = 0; i < 40; i++) {
+  let cursor = 0;
+  if (!secUid) return out;
+  const pathOf = (cur) => (
+    '/aweme/v1/web/aweme/post/?device_platform=webapp&aid=6383'
+    + '&channel=channel_pc_web&sec_user_id=' + encodeURIComponent(secUid)
+    + '&max_cursor=' + String(cur)
+    + '&count=18&publish_video_strategy_type=2&from_user_page=1'
+  );
+  for (let i = 0; i < 12; i++) {
     if (seen.size >= limit) break;
-    let u;
-    try { u = new URL(startUrl, location.origin); }
-    catch (e) { break; }
-    u.searchParams.set('max_cursor', String(cursor));
-    u.searchParams.set('count', u.searchParams.get('count') || '18');
-    dropSig(u);
     let j;
     try {
-      const r = await fetch(u.toString(), {
+      const r = await fetch(pathOf(cursor), {
         credentials: 'include',
         headers: { accept: 'application/json,text/plain,*/*' },
       });
       if (!r.ok) break;
-      j = await r.json();
+      const t = await r.text();
+      j = JSON.parse(t);
     } catch (e) { break; }
     const list = (j && j.aweme_list)
       || (j && j.data && j.data.aweme_list)
@@ -965,8 +989,10 @@ async ({ startUrl, startCursor, limit, known }) => {
       || (j && j.data && j.data.max_cursor)
       || 0
     );
+    const more = (j && j.has_more);
     if (added === 0) break;
-    if (nxt <= cursor) break;
+    if (more === 0 || more === false) break;
+    if (!(nxt > cursor)) break;
     cursor = nxt;
   }
   return out;
@@ -1068,8 +1094,7 @@ def list_user_videos_with_chrome(
     headed_fallback: bool = False,
     expected: int = 0,
 ) -> list[str]:
-    """Bat API aweme/post bang Chromium headless — khong mo cua so Edge/Chrome."""
-    _ = headed_fallback
+    """Bat danh sach kenh: fetch unsigned trong Chrome/Edge (headless truoc)."""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as e:
@@ -1078,11 +1103,6 @@ def list_user_videos_with_chrome(
     cfg = cfg or {}
     limit = max(1, min(int(limit or 40), 200))
     cookies_file = Path(cfg.get("cookies_file") or "./cookies_douyin.txt")
-    launch_args = [
-        "--disable-blink-features=AutomationControlled",
-        "--no-sandbox",
-        "--headless=new",
-    ]
 
     try:
         from .web.locks import CHROME_LOCK
@@ -1143,34 +1163,15 @@ def list_user_videos_with_chrome(
         with sync_playwright() as p:
             browser = None
             context = None
-            # Ephemeral headless only — persistent + channel=msedge/chrome mo app that.
-            launch_order: list[str | None] = [None]
-            if sys.platform == "win32":
-                launch_order.append("msedge")
-            for channel in launch_order:
-                try:
-                    kwargs = {"headless": True, "args": launch_args}
-                    if channel:
-                        kwargs["channel"] = channel
-                    browser = p.chromium.launch(**kwargs)
-                    context = browser.new_context(
-                        locale="zh-CN",
-                        user_agent=_DEFAULT_UA,
-                        viewport={"width": 1280, "height": 900},
-                    )
-                    log.info("list-channel headless OK (channel=%s)", channel or "chromium")
-                    break
-                except Exception as e:  # noqa: BLE001
-                    log.debug("list-channel ephemeral %s: %s", channel, e)
-                    if browser:
-                        try:
-                            browser.close()
-                        except Exception:  # noqa: BLE001
-                            pass
-                    browser = None
-                    context = None
-            if context is None:
-                raise RuntimeError("Khong mo duoc Chromium headless de liet ke kenh.")
+            from .browser_launch import launch_playwright_chromium
+
+            browser = launch_playwright_chromium(p, headless=headless)
+            context = browser.new_context(
+                locale="zh-CN",
+                user_agent=_DEFAULT_UA,
+                viewport={"width": 1280, "height": 900},
+            )
+            log.info("list-channel browser OK headless=%s", headless)
 
             for c in _load_netscape_cookies(cookies_file):
                 try:
@@ -1181,64 +1182,31 @@ def list_user_videos_with_chrome(
             page = context.pages[0] if context.pages else context.new_page()
 
             def on_response(resp) -> None:
-                if resp.status != 200:
-                    return
                 raw_url = resp.url or ""
-                if not _is_aweme_post_url(raw_url, sec_uid):
+                if "aweme/v1/web/aweme/post" not in (raw_url or "").lower():
                     return
+                nonlocal last_post_url
+                last_post_url = raw_url
+                raw_txt = ""
                 try:
-                    data = resp.json()
-                except Exception:  # noqa: BLE001
-                    return
-                _add_post_payload(data, raw_url)
-
-            def on_route(route) -> None:
-                req = route.request
-                if not _is_aweme_post_url(req.url or "", sec_uid):
-                    route.continue_()
-                    return
-                try:
-                    resp = route.fetch()
                     raw = resp.body()
-                    data = json.loads(raw.decode("utf-8", errors="ignore") or "{}")
-                except Exception:  # noqa: BLE001
+                    raw_txt = raw.decode("utf-8", errors="ignore") if raw else ""
+                except Exception:
                     try:
-                        route.continue_()
-                    except Exception:  # noqa: BLE001
-                        pass
-                    return
-                _add_post_payload(data, req.url or "")
-                # Douyin hay gan has_more=0 sau 2 trang (~36). Ep frontend ky request trang sau.
-                if (
-                    isinstance(data, dict)
-                    and _still_short()
-                    and empty_streak < 2
-                ):
-                    data["has_more"] = 1
-                    inner = data.get("data")
-                    if isinstance(inner, dict) and "has_more" in inner:
-                        inner["has_more"] = 1
-                    headers = {
-                        k: v for k, v in (resp.headers or {}).items()
-                        if k.lower() not in ("content-encoding", "content-length")
-                    }
-                    headers["content-type"] = "application/json; charset=utf-8"
-                    route.fulfill(
-                        status=resp.status,
-                        headers=headers,
-                        body=json.dumps(data, ensure_ascii=False),
-                    )
+                        raw_txt = resp.text() or ""
+                    except Exception:
+                        raw_txt = ""
+                if not raw_txt:
                     return
                 try:
-                    route.fulfill(response=resp)
-                except Exception:  # noqa: BLE001
-                    route.continue_()
+                    data = json.loads(raw_txt)
+                except Exception:
+                    return
+                n = _add_post_payload(data, raw_url)
+                if n:
+                    log.info("aweme/post +%d tong=%d", n, len(ids))
 
             page.on("response", on_response)
-            try:
-                page.route("**/*aweme*", on_route)
-            except Exception as e:  # noqa: BLE001
-                log.debug("list-channel route: %s", e)
             goto_ms = _remaining_ms(2000)
             if goto_ms <= 0:
                 return
@@ -1247,68 +1215,14 @@ def list_user_videos_with_chrome(
                 wait_until="domcontentloaded",
                 timeout=min(45000, goto_ms),
             )
-            page.wait_for_timeout(min(2200, max(200, _remaining_ms(200))))
-            for sel in (
-                '[data-e2e="user-tab-item"]:has-text("作品")',
-                '[data-e2e="user-post"]',
-                'span:has-text("作品")',
-                'div:has-text("作品")',
-            ):
-                if time.monotonic() >= deadline:
-                    break
-                try:
-                    page.locator(sel).first.click(timeout=1500)
-                    page.wait_for_timeout(min(1500, max(200, _remaining_ms(200))))
-                    break
-                except Exception:  # noqa: BLE001
-                    continue
-            try:
-                dom_n = int(page.evaluate(_DOM_POST_COUNT_JS) or 0)
-                if dom_n > expected:
-                    expected = dom_n
-                    log.info("Kenh Chrome DOM 作品=%d", expected)
-            except Exception:  # noqa: BLE001
-                pass
-            stale = 0
-            for _ in range(100):
-                if time.monotonic() >= deadline:
-                    break
-                if not _still_short():
-                    break
-                if empty_streak >= 3 and stale >= 4:
-                    break
-                before = len(ids)
-                try:
-                    with page.expect_response(
-                        lambda r: _is_aweme_post_url(r.url or "", sec_uid),
-                        timeout=min(4500, max(800, _remaining_ms(800))),
-                    ):
-                        try:
-                            page.evaluate(_SCROLL_ALL_JS)
-                        except Exception:  # noqa: BLE001
-                            page.mouse.wheel(0, 3600)
-                except Exception:  # noqa: BLE001
-                    try:
-                        page.evaluate(_SCROLL_ALL_JS)
-                    except Exception:  # noqa: BLE001
-                        try:
-                            page.mouse.wheel(0, 3600)
-                        except Exception:  # noqa: BLE001
-                            break
-                    page.wait_for_timeout(min(900, max(250, _remaining_ms(250))))
-                if len(ids) == before:
-                    stale += 1
-                else:
-                    stale = 0
-                if stale >= 14:
-                    break
-            if last_post_url and _still_short() and _remaining_ms(500) > 800:
+            # Cho cookie/SDK; khong doi intercept (body aweme/post thuong rong).
+            page.wait_for_timeout(min(2500, max(800, _remaining_ms(800))))
+            if sec_uid and _still_short() and _remaining_ms(500) > 800:
                 try:
                     extra = page.evaluate(
                         _PAGINATE_AWEME_JS,
                         {
-                            "startUrl": last_post_url,
-                            "startCursor": last_cursor,
+                            "secUid": sec_uid,
                             "limit": limit,
                             "known": list(seen),
                         },
@@ -1319,25 +1233,23 @@ def list_user_videos_with_chrome(
                             continue
                         seen.add(s)
                         ids.append(s)
-                    log.info(
-                        "Kenh Chrome paginate them %d (tong %d)",
-                        len(extra or []),
-                        len(ids),
-                    )
+                    log.info("Kenh Chrome fetch ngay %d (tong %d)", len(extra or []), len(ids))
                 except Exception as e:  # noqa: BLE001
-                    log.debug("list-channel paginate: %s", e)
+                    log.warning("list-channel fetch ngay: %s", e)
             try:
                 dom_ids = page.evaluate(
                     """() => {
                       const seen = new Set();
                       const out = [];
-                      const root =
-                        document.querySelector('[data-e2e="user-post-list"]')
-                        || document.querySelector('[data-e2e="scroll-list"]')
-                        || document.body;
                       const re = /\\/video\\/(\\d{15,})/;
-                      for (const a of root.querySelectorAll('a[href*="/video/"]')) {
-                        const m = (a.getAttribute('href') || a.href || '').match(re);
+                      const reModal = /[?&](?:modal_id|aweme_id)=(\\d{15,})/i;
+                      const nodes = document.querySelectorAll(
+                        'a[href*="/video/"], a[href*="modal_id"], [src*="/video/"]'
+                      );
+                      for (const a of nodes) {
+                        const h = (a.getAttribute('href') || a.href || a.getAttribute('src') || '');
+                        if (/baiduspider/i.test(h)) continue;
+                        const m = h.match(re) || h.match(reModal);
                         if (m && !seen.has(m[1])) { seen.add(m[1]); out.push(m[1]); }
                       }
                       return out;
@@ -1348,6 +1260,8 @@ def list_user_videos_with_chrome(
                         continue
                     seen.add(vid)
                     ids.append(vid)
+                if dom_ids:
+                    log.info("Kenh Chrome DOM links=%d tong=%d", len(dom_ids), len(ids))
             except Exception as e:  # noqa: BLE001
                 log.debug("list-channel DOM: %s", e)
             try:
@@ -1363,16 +1277,22 @@ def list_user_videos_with_chrome(
     if CHROME_LOCK is not None:
         CHROME_LOCK.acquire()
     try:
+        # Fetch unsigned trong trang: headless duoc (~8s). Headed chi khi 0 clip.
         try:
             _run(True)
         except Exception as e:  # noqa: BLE001
             log.warning("list-channel headless fail: %s", e)
+        if not ids and headed_fallback:
+            try:
+                _run(False)
+            except Exception as e:  # noqa: BLE001
+                log.warning("list-channel headed fail: %s", e)
     finally:
         if CHROME_LOCK is not None:
             CHROME_LOCK.release()
 
     if not ids:
-        raise RuntimeError("Khong bat duoc video cua kenh (HTTP/headless).")
+        raise RuntimeError("Khong bat duoc video cua kenh.")
     # aweme id lon = moi hon
     uniq = sorted(set(ids), key=lambda x: int(x), reverse=True)
     out = [f"https://www.douyin.com/video/{v}" for v in uniq[:limit]]
