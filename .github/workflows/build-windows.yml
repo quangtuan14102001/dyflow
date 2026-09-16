@@ -33,19 +33,26 @@ jobs:
           python -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
           python -m pip install -r requirements.txt -r requirements-desktop.txt
 
+      - name: Build WebView2 host DLL
+        shell: pwsh
+        run: ./packaging/build_win_webview.ps1
+
       - name: PyInstaller
         run: python -m PyInstaller --noconfirm --clean VideosCreator.spec
 
-      - name: Copy ffmpeg + readme next to exe
+      - name: Copy ffmpeg + native window + readme next to exe
         shell: pwsh
         run: |
           $ff = (Get-Command ffmpeg).Source
           Copy-Item $ff dist\VideosCreator\ffmpeg.exe -Force
           $fp = (Get-Command ffprobe -ErrorAction SilentlyContinue)
           if ($fp) { Copy-Item $fp.Source dist\VideosCreator\ffprobe.exe -Force }
+          $dll = "dist\native\VideosCreatorWebView.dll"
+          if (-not (Test-Path $dll)) { throw "Thieu $dll" }
+          Copy-Item $dll dist\VideosCreator\VideosCreatorWebView.dll -Force
           Copy-Item scripts\WINDOWS_README.txt dist\VideosCreator\README.txt -Force
           Copy-Item scripts\CHAY.bat dist\VideosCreator\CHAY.bat -Force
-          Get-Item dist\VideosCreator\VideosCreator.exe
+          Get-Item dist\VideosCreator\VideosCreator.exe, dist\VideosCreator\VideosCreatorWebView.dll
 
       - name: Bundle OPENAI_API_KEY into dist .env
         env:

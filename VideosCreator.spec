@@ -28,7 +28,6 @@ hidden += [
     "uvicorn.lifespan",
     "uvicorn.lifespan.on",
     "anyio._backends._asyncio",
-    "webview.platforms.edgechromium",
     "dotenv",
 ]
 
@@ -41,7 +40,6 @@ for pkg in (
     "starlette",
     "jinja2",
     "yaml",
-    "webview",
     "torch",
     "torchaudio",
     "demucs",
@@ -68,7 +66,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["tkinter", "matplotlib", "pytest"],
+    excludes=["tkinter", "matplotlib", "pytest", "webview", "pythonnet", "clr", "clr_loader"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

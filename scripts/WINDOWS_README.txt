@@ -5,12 +5,14 @@ VideosCreator (Windows)
    Khong can copy sang o C:.
    Neu Windows chan file tai tu internet: click phai zip -> Properties -> Unblock,
    roi giai nen (hoac chay CHAY.bat — file nay tu Unblock).
-2. Double-click CHAY.bat (hoac VideosCreator.exe).
+2. Double-click CHAY.bat (hoac VideosCreator.exe). Mo cua so desktop
+   (khong dung trinh duyet).
 3. Lan dau Windows SmartScreen: More info -> Run anyway.
-   App mo tren trinh duyet mac dinh (Edge / Chrome). Giu cua so VideosCreator
-   de app chay; dong cua so do de thoat.
    Doi 1-3 phut lan dau. Neu bao timeout 127.0.0.1: Settings -> Network -> Proxy
    -> tat proxy cho localhost.
+   Neu bao thieu WebView2: cai Evergreen Runtime
+   https://go.microsoft.com/fwlink/p/?LinkId=2124703
+   (Windows 11 thuong da co san).
 4. Dan license key (VC1-...) vao o kich hoat. Het han thi dan key moi.
 5. Can Google Chrome hoac Microsoft Edge de tai video Douyin.
 6. Video xuat nam o: %LOCALAPPDATA%\VideosCreator\output
