@@ -10,7 +10,7 @@ VideosCreator (Windows)
    https://go.microsoft.com/fwlink/p/?LinkId=2124703
    (Windows 11 thuong da co san).
 4. Dan license key (VC1-...) vao o kich hoat. Het han thi dan key moi.
-5. Can Google Chrome hoac Microsoft Edge de tai video Douyin.
+5. Lay danh sach kenh Douyin khong mo cua so Chrome/Edge.
 6. Video xuat nam o: %LOCALAPPDATA%\VideosCreator\output
 7. OPENAI_API_KEY da kem trong file .env (cung thu muc .exe). Khong can dien.
    Muon doi key: sua .env canh exe, hoac %LOCALAPPDATA%\VideosCreator\.env

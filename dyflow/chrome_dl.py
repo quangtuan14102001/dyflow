@@ -350,7 +350,14 @@ def download_with_chrome(
 
     profile = Path(cfg.get("chrome_profile_dir") or "./work/_chrome_dy_profile")
     profile.mkdir(parents=True, exist_ok=True)
-    headless = bool(cfg.get("chrome_headless", False))
+    headless = bool(cfg.get("chrome_headless", True))
+    try:
+        from .desktop_mode import enabled as desktop_on
+
+        if desktop_on():
+            headless = True
+    except Exception:  # noqa: BLE001
+        pass
     cookies_file = Path(cfg.get("cookies_file") or "./cookies_douyin.txt")
 
     # VPS thuong khong co man hinh — can Xvfb cho Chrome headed (bo qua tren Windows)
@@ -406,77 +413,90 @@ def _chrome_session_download(
     req_hdrs: dict[str, dict[str, str]] = {}
 
     launch_args = ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
+    if headless:
+        launch_args.append("--headless=new")
     common_kwargs = {
         "locale": "zh-CN",
         "args": launch_args,
         "viewport": {"width": 1280, "height": 900},
     }
-    # Win ARM VM: Edge co san. Chrome/Chromium Playwright thuong chua cai.
-    channels = ("msedge", "chrome") if sys.platform == "win32" else ("chrome",)
 
     with sync_playwright() as p:
         browser = None
         context = None
         launch_errs: list[str] = []
 
-        for ch in channels:
+        def _ephemeral(channel: str | None) -> bool:
+            nonlocal browser, context
             try:
-                context = p.chromium.launch_persistent_context(
-                    user_data_dir=str(profile),
-                    channel=ch,
-                    headless=headless,
-                    **common_kwargs,
+                kwargs = {"headless": headless, "args": launch_args}
+                if channel:
+                    kwargs["channel"] = channel
+                browser = p.chromium.launch(**kwargs)
+                context = browser.new_context(
+                    locale="zh-CN",
+                    user_agent=_DEFAULT_UA,
+                    viewport={"width": 1280, "height": 900},
                 )
-                log.info("Browser persistent (channel=%s) OK", ch)
-                break
+                for c in _load_netscape_cookies(cookies_file):
+                    try:
+                        context.add_cookies([c])
+                    except Exception:  # noqa: BLE001
+                        pass
+                log.info("Browser ephemeral OK (channel=%s)", channel or "chromium")
+                return True
             except Exception as e:  # noqa: BLE001
-                launch_errs.append(f"{ch}-persistent: {e}")
-                log.warning("%s persistent fail: %s", ch, e)
+                launch_errs.append(f"ephemeral-{channel or 'chromium'}: {e}")
+                log.warning("ephemeral %s fail: %s", channel or "chromium", e)
+                if browser:
+                    try:
+                        browser.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+                browser = None
                 context = None
+                return False
 
-        # Chromium Playwright + profile
-        if context is None:
-            try:
-                context = p.chromium.launch_persistent_context(
-                    user_data_dir=str(profile),
-                    headless=headless,
-                    **common_kwargs,
-                )
-                log.info("Chromium persistent OK")
-            except Exception as e:  # noqa: BLE001
-                launch_errs.append(f"chromium-persistent: {e}")
-                log.warning("Chromium persistent fail: %s", e)
-
-        # Ephemeral Edge / Chrome / Chromium + nap cookie file
-        if context is None:
-            eph_channels: list = list(channels) + [None]
-            for channel in eph_channels:
+        if headless:
+            # Desktop: khong persistent Edge/Chrome — persistent mo cua so app.
+            for ch in ([None, "msedge"] if sys.platform == "win32" else [None]):
+                if _ephemeral(ch):
+                    break
+        else:
+            channels = ("msedge",) if sys.platform == "win32" else ("chrome",)
+            for ch in channels:
                 try:
-                    kwargs = {"headless": headless, "args": launch_args}
-                    if channel:
-                        kwargs["channel"] = channel
-                    browser = p.chromium.launch(**kwargs)
-                    context = browser.new_context(
-                        locale="zh-CN",
-                        user_agent=_DEFAULT_UA,
-                        viewport={"width": 1280, "height": 900},
+                    context = p.chromium.launch_persistent_context(
+                        user_data_dir=str(profile),
+                        channel=ch,
+                        headless=False,
+                        **common_kwargs,
                     )
-                    for c in _load_netscape_cookies(cookies_file):
-                        try:
-                            context.add_cookies([c])
-                        except Exception:  # noqa: BLE001
-                            pass
-                    log.info("Browser ephemeral OK (channel=%s)", channel or "chromium")
+                    log.info("Browser persistent (channel=%s) OK", ch)
                     break
                 except Exception as e:  # noqa: BLE001
-                    launch_errs.append(f"ephemeral-{channel or 'chromium'}: {e}")
-                    browser = None
+                    launch_errs.append(f"{ch}-persistent: {e}")
+                    log.warning("%s persistent fail: %s", ch, e)
                     context = None
+            if context is None:
+                try:
+                    context = p.chromium.launch_persistent_context(
+                        user_data_dir=str(profile),
+                        headless=False,
+                        **common_kwargs,
+                    )
+                    log.info("Chromium persistent OK")
+                except Exception as e:  # noqa: BLE001
+                    launch_errs.append(f"chromium-persistent: {e}")
+                    log.warning("Chromium persistent fail: %s", e)
+            if context is None:
+                for ch in list(channels) + [None]:
+                    if _ephemeral(ch):
+                        break
 
         if context is None:
             raise RuntimeError(
-                "Khong mo duoc Edge/Chrome de tai Douyin. "
-                "Cai Microsoft Edge, roi: pip install playwright\n"
+                "Khong mo duoc Chromium/Edge de tai Douyin (headless).\n"
                 + "\n".join(launch_errs[-4:])
             )
 
@@ -1045,10 +1065,11 @@ def list_user_videos_with_chrome(
     *,
     limit: int = 40,
     timeout_sec: int = 40,
-    headed_fallback: bool = True,
+    headed_fallback: bool = False,
     expected: int = 0,
 ) -> list[str]:
-    """Mo Edge/Chrome, bat API aweme/post cua trang user, lay video moi nhat."""
+    """Bat API aweme/post bang Chromium headless — khong mo cua so Edge/Chrome."""
+    _ = headed_fallback
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as e:
@@ -1056,16 +1077,12 @@ def list_user_videos_with_chrome(
 
     cfg = cfg or {}
     limit = max(1, min(int(limit or 40), 200))
-    profile = Path(cfg.get("chrome_profile_dir") or "./work/_chrome_dy_profile")
-    profile.mkdir(parents=True, exist_ok=True)
     cookies_file = Path(cfg.get("cookies_file") or "./cookies_douyin.txt")
-    launch_args = ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
-    channels = ("msedge", "chrome") if sys.platform == "win32" else ("chrome",)
-    common_kwargs = {
-        "locale": "zh-CN",
-        "args": launch_args,
-        "viewport": {"width": 1280, "height": 900},
-    }
+    launch_args = [
+        "--disable-blink-features=AutomationControlled",
+        "--no-sandbox",
+        "--headless=new",
+    ]
 
     try:
         from .web.locks import CHROME_LOCK
@@ -1091,14 +1108,6 @@ def list_user_videos_with_chrome(
 
     def _still_short() -> bool:
         return len(ids) < limit
-
-    def _looks_truncated() -> bool:
-        n = len(ids)
-        if n >= limit:
-            return False
-        if expected and n < expected:
-            return True
-        return n in (18, 20, 36, 40)
 
     def _add_post_payload(blob, src_url: str = "") -> int:
         nonlocal has_more, last_post_url, last_cursor, empty_streak
@@ -1131,55 +1140,37 @@ def list_user_videos_with_chrome(
         nonlocal ids, has_more, expected, empty_streak
         has_more = True
         empty_streak = 0
-        has_more = True
         with sync_playwright() as p:
             browser = None
             context = None
-            for ch in channels:
+            # Ephemeral headless only — persistent + channel=msedge/chrome mo app that.
+            launch_order: list[str | None] = [None]
+            if sys.platform == "win32":
+                launch_order.append("msedge")
+            for channel in launch_order:
                 try:
-                    context = p.chromium.launch_persistent_context(
-                        user_data_dir=str(profile),
-                        channel=ch,
-                        headless=headless,
-                        **common_kwargs,
+                    kwargs = {"headless": True, "args": launch_args}
+                    if channel:
+                        kwargs["channel"] = channel
+                    browser = p.chromium.launch(**kwargs)
+                    context = browser.new_context(
+                        locale="zh-CN",
+                        user_agent=_DEFAULT_UA,
+                        viewport={"width": 1280, "height": 900},
                     )
+                    log.info("list-channel headless OK (channel=%s)", channel or "chromium")
                     break
                 except Exception as e:  # noqa: BLE001
-                    log.debug("list-channel %s persistent: %s", ch, e)
+                    log.debug("list-channel ephemeral %s: %s", channel, e)
+                    if browser:
+                        try:
+                            browser.close()
+                        except Exception:  # noqa: BLE001
+                            pass
+                    browser = None
                     context = None
             if context is None:
-                try:
-                    context = p.chromium.launch_persistent_context(
-                        user_data_dir=str(profile),
-                        headless=headless,
-                        **common_kwargs,
-                    )
-                except Exception as e:  # noqa: BLE001
-                    log.debug("list-channel chromium persistent: %s", e)
-            if context is None:
-                for channel in list(channels) + [None]:
-                    try:
-                        kwargs = {"headless": headless, "args": launch_args}
-                        if channel:
-                            kwargs["channel"] = channel
-                        browser = p.chromium.launch(**kwargs)
-                        context = browser.new_context(
-                            locale="zh-CN",
-                            user_agent=_DEFAULT_UA,
-                            viewport={"width": 1280, "height": 900},
-                        )
-                        for c in _load_netscape_cookies(cookies_file):
-                            try:
-                                context.add_cookies([c])
-                            except Exception:  # noqa: BLE001
-                                pass
-                        break
-                    except Exception as e:  # noqa: BLE001
-                        log.debug("list-channel ephemeral %s: %s", channel, e)
-                        browser = None
-                        context = None
-            if context is None:
-                raise RuntimeError("Khong mo duoc Edge/Chrome de liet ke kenh.")
+                raise RuntimeError("Khong mo duoc Chromium headless de liet ke kenh.")
 
             for c in _load_netscape_cookies(cookies_file):
                 try:
@@ -1376,22 +1367,12 @@ def list_user_videos_with_chrome(
             _run(True)
         except Exception as e:  # noqa: BLE001
             log.warning("list-channel headless fail: %s", e)
-        if (
-            _looks_truncated()
-            and headed_fallback
-            and time.monotonic() < deadline - 8
-        ):
-            log.info("Kenh Chrome %d/%d (doi %d) — thu headed de lay het", len(ids), limit, expected)
-            try:
-                _run(False)
-            except Exception as e:  # noqa: BLE001
-                log.warning("list-channel headed fail: %s", e)
     finally:
         if CHROME_LOCK is not None:
             CHROME_LOCK.release()
 
     if not ids:
-        raise RuntimeError("Chrome mo kenh nhung khong bat duoc video.")
+        raise RuntimeError("Khong bat duoc video cua kenh (HTTP/headless).")
     # aweme id lon = moi hon
     uniq = sorted(set(ids), key=lambda x: int(x), reverse=True)
     out = [f"https://www.douyin.com/video/{v}" for v in uniq[:limit]]

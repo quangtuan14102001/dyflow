@@ -71,15 +71,9 @@ def _channel_full_cap() -> int:
         return _MAX_CHANNEL_FULL
 
 
-def _use_chrome_for_channel(mode: str, count: str = "10") -> bool:
-    """Chrome khi can full kenh hoac nhieu hon 1-2 trang API (~18 clip)."""
-    if (mode or "").strip().lower() == "full":
-        return True
-    try:
-        n = int(str(count or "10").strip())
-    except ValueError:
-        n = 10
-    return n > 20
+def _use_chrome_for_channel(_mode: str, _count: str = "10") -> bool:
+    """Khong mo Chrome/Edge de liet ke kenh — HTTP + headless sau."""
+    return False
 
 
 def _channel_fetch_limit(mode: str, count: str) -> int:
@@ -1355,16 +1349,16 @@ def api_create_job(
     dl_cfg = dict(cfg.get("download") or {})
     quoted_items: list[dict] = []
     room = max(limit, ch_lim) - len(local_paths)
-    full_channel = _use_chrome_for_channel(channel_mode, channel_count)
-    # Full kênh: khong dung bang gia 32 clip (HTML/yt-dlp thieu trang).
-    reused = [] if full_channel else _items_from_quoted_json(quoted_json, limit=room)
+    # Luon dung bang gia UI — Start khong liet ke kenh / mo Chrome lan 2.
+    reused = _items_from_quoted_json(quoted_json, limit=room)
     if reused:
         quoted_items = reused
+        log.info("Tao job: tai su dung %d clip da bao gia", len(reused))
     elif (url or "").strip() and room > 0:
         try:
             quoted = quote.quote_urls(
                 url, dl_cfg, limit=room, channel_limit=min(ch_lim, room),
-                allow_chrome=full_channel,
+                allow_chrome=False,
             )
         except ValueError as e:
             raise HTTPException(400, str(e)) from e

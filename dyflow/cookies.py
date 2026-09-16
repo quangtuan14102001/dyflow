@@ -237,9 +237,8 @@ def ensure_cookies(cfg: dict) -> str | None:
     # 2) playwright
     if method in ("playwright", "auto"):
         try:
-            use_headless = bool(cfg.get("playwright_headless", True))
-            if not bool(cfg.get("chrome_headless", False)):
-                use_headless = False
+            # Khong bao gio mo cua so Chrome/Edge de lay cookie.
+            use_headless = True
             refresh_with_playwright(
                 path,
                 headless=use_headless,
@@ -284,12 +283,9 @@ def force_refresh(cfg: dict) -> Path:
         if last_err:
             log.warning("force refresh browser fail: %s", last_err)
 
-    # Tren server uu tien headed + profile (Xvfb) — guest headless thuong bi Douyin chan
-    use_headless = bool(cfg.get("playwright_headless", True))
-    if not bool(cfg.get("chrome_headless", False)):
-        use_headless = False
+    # Khong mo cua so trinh duyet — cookie refresh luon headless.
     return refresh_with_playwright(
         cookies_file,
-        headless=use_headless,
+        headless=True,
         profile_dir=cfg.get("chrome_profile_dir"),
     )

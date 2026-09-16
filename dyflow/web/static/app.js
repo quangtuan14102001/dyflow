@@ -652,6 +652,7 @@ const DyflowHome = {
     this._audio = null;
     this._quoteTimer = null;
     this._quoteSeq = 0;
+    this._quoteAbort = null;
     this._filePicks = [];
     this._folderPicks = [];
     this._liveTimer = null;
@@ -725,7 +726,7 @@ const DyflowHome = {
       const ac = typeof AbortController !== "undefined" ? new AbortController() : null;
       const hangTimer = setTimeout(() => {
         if (ac) ac.abort();
-        }, 60000);
+        }, 120000);
       try {
         const data = new FormData(form);
         data.delete("videos");
@@ -760,7 +761,10 @@ const DyflowHome = {
         }
         window.location.href = `/jobs/${ids[0] || body.id}`;
       } catch (ex) {
-        const aborted = ex && (ex.name === "AbortError" || /aborted/i.test(ex.message || ""));
+        const aborted = ex && (
+          ex.name === "AbortError"
+          || /aborted|abort|Failed to fetch|networkerror/i.test(ex.message || "")
+        );
         err.textContent = aborted
           ? _("job_create_timeout")
           : (ex.message || _("job_create_fail"));
@@ -1245,6 +1249,11 @@ const DyflowHome = {
     }
 
     const seq = ++this._quoteSeq;
+    if (this._quoteAbort) {
+      try { this._quoteAbort.abort(); } catch (_) { /* ignore */ }
+    }
+    this._quoteAbort = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const quoteSignal = this._quoteAbort ? this._quoteAbort.signal : undefined;
     box.hidden = false;
     this._quoteError = "";
     const waitMsg = this._isChannelText(text)
@@ -1259,7 +1268,11 @@ const DyflowHome = {
       const ch = this._channelFields();
       data.set("channel_mode", ch.channel_mode);
       data.set("channel_count", ch.channel_count);
-      const res = await fetch("/api/quote", { method: "POST", body: data });
+      const res = await fetch("/api/quote", {
+        method: "POST",
+        body: data,
+        signal: quoteSignal,
+      });
       const body = await res.json().catch(() => ({}));
       if (seq !== this._quoteSeq) return;
       this._setQuoteLoading(false);

@@ -12,6 +12,7 @@ import json
 import re
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -22,6 +23,8 @@ from .utils import log, run, check_tool, probe_has_audio, probe_duration, ytdlp_
 # Cache do dai remote (tranh probe lai khi user goi quote nhieu lan)
 _DURATION_CACHE: dict[str, tuple[float, float]] = {}  # key -> (expires, seconds)
 _DURATION_CACHE_TTL = 1800.0
+_CHANNEL_LIST_GEN = 0
+_CHANNEL_LIST_LOCK = threading.Lock()
 
 
 def extract_url(text: str) -> str:
@@ -267,7 +270,7 @@ def _ytdlp_flat_channel(url: str, cfg: dict, limit: int) -> list[str]:
     cmd.append(url)
     try:
         proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=90 + min(120, limit),
+            cmd, capture_output=True, text=True, timeout=40,
         )
     except subprocess.TimeoutExpired as e:
         raise RuntimeError("Het thoi gian khi lay danh sach kenh Douyin.") from e
@@ -316,7 +319,7 @@ def _http_fetch(opener, url: str, *, accept: str = "text/html,application/xhtml+
             "Referer": "https://www.douyin.com/",
         },
     )
-    with opener.open(req, timeout=20) as resp:
+    with opener.open(req, timeout=12) as resp:
         return resp.read().decode("utf-8", errors="ignore")
 
 
@@ -418,6 +421,75 @@ def _http_user_aweme_count(sec_uid: str) -> int:
         return 0
 
 
+def _http_ies_aweme_post(sec_uid: str, limit: int) -> list[str]:
+    """API public iesdouyin — khong cookie, khong mo Chrome/Edge."""
+    if not sec_uid:
+        return []
+    import urllib.parse
+    import urllib.request
+
+    ids: list[str] = []
+    seen: set[str] = set()
+    cursor = 0
+    ua = (
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 "
+        "Mobile/15E148 Safari/604.1"
+    )
+    for _ in range(30):
+        if len(ids) >= limit:
+            break
+        qs = urllib.parse.urlencode({
+            "sec_uid": sec_uid,
+            "count": "21",
+            "max_cursor": str(cursor),
+            "aid": "1128",
+        })
+        href = f"https://www.iesdouyin.com/web/api/v2/aweme/post/?{qs}"
+        try:
+            req = urllib.request.Request(
+                href,
+                headers={
+                    "User-Agent": ua,
+                    "Accept": "application/json,text/plain,*/*",
+                    "Referer": "https://www.iesdouyin.com/",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8", errors="ignore") or "{}")
+        except Exception as e:  # noqa: BLE001
+            log.debug("ies aweme/post: %s", e)
+            break
+        if not isinstance(data, dict):
+            break
+        chunk: list[str] = []
+        for item in data.get("aweme_list") or []:
+            if not isinstance(item, dict):
+                continue
+            aid = str(item.get("aweme_id") or item.get("awemeId") or "").strip()
+            if not aid.isdigit() or aid in seen:
+                continue
+            seen.add(aid)
+            chunk.append(aid)
+        if not chunk:
+            break
+        ids.extend(chunk)
+        try:
+            nxt = int(data.get("max_cursor") or data.get("maxCursor") or 0)
+        except (TypeError, ValueError):
+            nxt = 0
+        if nxt <= cursor:
+            break
+        cursor = nxt
+        more = data.get("has_more")
+        # Douyin hay gan has_more=0 sau ~2 trang. Chi dung khi trang thuc su ngan.
+        if more in (0, False, "0", "false") and len(chunk) < 10:
+            break
+    if ids:
+        log.info("Kenh ies API liet ke %d video", len(ids))
+    return ids
+
+
 def _http_aweme_post(opener, sec_uid: str, limit: int) -> list[str]:
     """Goi API 作品 bang cookie — khong mo Chrome."""
     import urllib.parse
@@ -429,7 +501,7 @@ def _http_aweme_post(opener, sec_uid: str, limit: int) -> list[str]:
     ids: list[str] = []
     seen: set[str] = set()
     cursor = 0
-    for _ in range(40):
+    for _ in range(25):
         if len(ids) >= limit:
             break
         qs = urllib.parse.urlencode({
@@ -491,38 +563,41 @@ def _http_scrape_channel(url: str, cookies_path: str | None, limit: int) -> list
 
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
     sec_uid = sec_uid_from_user_url(url)
-    pages = [url]
-    if sec_uid:
-        pages.extend((
-            f"https://www.douyin.com/user/{sec_uid}",
-            f"https://www.iesdouyin.com/share/user/{sec_uid}",
-        ))
-    seen_page: set[str] = set()
     ids: list[str] = []
     seen_id: set[str] = set()
-    for page in pages:
-        key = page.split("?")[0]
-        if key in seen_page:
-            continue
-        seen_page.add(key)
-        try:
-            html = _http_fetch(opener, page)
-        except Exception as e:  # noqa: BLE001
-            log.debug("scrape page %s: %s", page[:70], e)
-            continue
-        for vid in _ids_from_channel_html(html, sec_uid):
+
+    def _take(chunk: list[str]) -> None:
+        for vid in chunk or []:
             if vid in seen_id:
                 continue
             seen_id.add(vid)
             ids.append(vid)
-        if len(ids) >= limit:
-            break
+
+    if sec_uid:
+        _take(_http_ies_aweme_post(sec_uid, limit))
     if len(ids) < limit and sec_uid:
-        for vid in _http_aweme_post(opener, sec_uid, limit):
-            if vid in seen_id:
+        _take(_http_aweme_post(opener, sec_uid, limit))
+    if len(ids) < limit:
+        pages = [url]
+        if sec_uid:
+            pages.extend((
+                f"https://www.douyin.com/user/{sec_uid}",
+                f"https://www.iesdouyin.com/share/user/{sec_uid}",
+            ))
+        seen_page: set[str] = set()
+        for page in pages:
+            if len(ids) >= limit:
+                break
+            key = page.split("?")[0]
+            if key in seen_page:
                 continue
-            seen_id.add(vid)
-            ids.append(vid)
+            seen_page.add(key)
+            try:
+                html = _http_fetch(opener, page)
+            except Exception as e:  # noqa: BLE001
+                log.debug("scrape page %s: %s", page[:70], e)
+                continue
+            _take(_ids_from_channel_html(html, sec_uid))
     if not ids:
         return []
     rows = [(int(v), f"https://www.douyin.com/video/{v}") for v in ids if v.isdigit()]
@@ -536,12 +611,19 @@ def list_channel_videos(
     limit: int = 40,
     allow_chrome: bool = False,
 ) -> list[str]:
-    """Liet ke video cua user/kênh Douyin, khong tai file.
+    """Liet ke video kenh Douyin: HTTP truoc, Chromium headless neu can.
 
-    Full kênh: mo trang PC www.douyin.com/user/SEC (Chrome), khong dung
-    iesdouyin share — share chi tra ~2 trang API (36 clip).
+    Khong mo cua so Chrome/Edge. allow_chrome giu chu ky cu (bo qua headed).
     """
     from .chrome_dl import pc_user_url, sec_uid_from_user_url
+
+    global _CHANNEL_LIST_GEN
+    with _CHANNEL_LIST_LOCK:
+        _CHANNEL_LIST_GEN += 1
+        my_gen = _CHANNEL_LIST_GEN
+
+    def _stale() -> bool:
+        return my_gen != _CHANNEL_LIST_GEN
 
     raw = resolve_share_url(extract_url(url))
     pc = pc_user_url(raw) or raw
@@ -562,42 +644,53 @@ def list_channel_videos(
             seen.add(href)
             merged.append(href)
 
-    def _need_more() -> bool:
-        n = len(merged)
-        if n >= limit:
-            return False
-        if expected and n < expected:
-            return True
-        return n in (0, 18, 20, 36)
+    cookies_path, _from_browser = _ytdlp_cookies(cfg)
+    try:
+        got = _http_scrape_channel(pc, cookies_path, limit)
+        if got:
+            log.info("Kenh %s: HTTP liet ke %d video", pc[:70], len(got))
+            _absorb(got)
+        else:
+            errors.append("trang kenh khong co danh sach video")
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"scrape: {e}")
+        log.warning("list_channel scrape: %s", e)
 
-    if allow_chrome:
+    if not merged and _stale():
+        raise RuntimeError("cancelled")
+
+    if not merged:
         try:
             from .chrome_dl import list_user_videos_with_chrome
 
-            chrome_timeout = 240 if limit > 20 else 80
             got = list_user_videos_with_chrome(
                 pc,
                 cfg,
                 limit=limit,
-                timeout_sec=chrome_timeout,
-                headed_fallback=True,
+                timeout_sec=30,
+                headed_fallback=False,
                 expected=expected,
             )
             if got:
+                log.info("Kenh %s: Chromium headless liet ke %d video", pc[:70], len(got))
                 _absorb(got)
             else:
-                errors.append("Chrome khong thay video")
+                errors.append("headless khong thay video")
         except Exception as e:  # noqa: BLE001
-            errors.append(f"Chrome: {e}")
-            log.warning("list_channel Chrome: %s", e)
+            errors.append(f"headless: {e}")
+            log.warning("list_channel headless: %s", e)
 
-    if _need_more() and check_tool("yt-dlp"):
+    if not merged and _stale():
+        raise RuntimeError("cancelled")
+
+    # yt-dlp chi khi van chua co clip — khong cho 2 phut de doi Chrome.
+    if not merged and check_tool("yt-dlp"):
         ytdlp_urls = [pc]
         if sec:
             ytdlp_urls.append(f"https://www.iesdouyin.com/share/user/{sec}")
         last_err = ""
         for href in ytdlp_urls:
-            if not _need_more():
+            if merged:
                 break
             try:
                 got = _ytdlp_flat_channel(href, cfg, limit)
@@ -610,25 +703,15 @@ def list_channel_videos(
         if not merged:
             errors.append(f"yt-dlp: {last_err or 'khong thay video'}")
 
-    if _need_more():
-        cookies_path, _from_browser = _ytdlp_cookies(cfg)
-        try:
-            got = _http_scrape_channel(pc, cookies_path, limit)
-            if got:
-                log.info("Kenh %s: scrape HTML %d video", pc[:70], len(got))
-                _absorb(got)
-            else:
-                errors.append("trang kenh khong co danh sach video")
-        except Exception as e:  # noqa: BLE001
-            errors.append(f"scrape: {e}")
-            log.warning("list_channel scrape: %s", e)
+    if allow_chrome:
+        log.debug("list_channel: bo qua Chrome (khong mo cua so trinh duyet)")
 
     if not merged:
         raise RuntimeError(" | ".join(errors) or "Khong liet ke duoc kenh")
     rows = [(_aweme_id_from_url(h) or i, h) for i, h in enumerate(merged)]
     out = _newest_urls(rows, limit=limit)
     log.info(
-        "Kenh %s: tong %d video (gop nguon, 作品=%s)",
+        "Kenh %s: tong %d video (HTTP, 作品=%s)",
         pc[:70],
         len(out),
         expected or "?",

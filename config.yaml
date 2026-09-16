@@ -21,7 +21,7 @@ download:
   cookie_refresh_method: "auto"
   cookie_max_age_hours: 12
   chrome_fallback: true
-  chrome_headless: false           # false = mo Chrome that (vuot captcha)
+  chrome_headless: true            # true = khong mo cua so Chrome/Edge (desktop)
   chrome_profile_dir: "./work/_chrome_dy_profile"
   playwright_headless: true
   remove_watermark: true

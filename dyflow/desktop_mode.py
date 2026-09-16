@@ -210,8 +210,10 @@ def _rewrite_paths(
             line = '  cookies_from_browser: ""\n'
         elif line.startswith("  auto_refresh_cookies:"):
             line = "  auto_refresh_cookies: false\n"
-        elif line.startswith("  ytdlp_first:") and sys.platform == "win32":
-            line = "  ytdlp_first: false\n"
+        elif line.startswith("  chrome_headless:"):
+            line = "  chrome_headless: true\n"
+        elif line.startswith("  ytdlp_first:"):
+            line = "  ytdlp_first: true\n"
         elif line.startswith("  dub_qa_fail_closed:"):
             line = "  dub_qa_fail_closed: true\n"
         elif line.startswith("  workers:"):

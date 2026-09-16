@@ -627,9 +627,12 @@ def sync_super_admin_telegram(telegram_id: str | int | None) -> None:
 
 
 def is_owner_user(user: dict | None) -> bool:
-    """Admin/owner: tao video khong tru credit."""
+    """Admin/owner/desktop: tao video khong tru credit."""
     if not user:
         return False
+    email = (user.get("email") or "").strip().lower()
+    if email == DESKTOP_EMAIL:
+        return True
     return bool(int(user.get("is_admin") or 0) == 1 or int(user.get("is_super_admin") or 0) == 1)
 
 
