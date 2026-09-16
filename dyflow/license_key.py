@@ -8,6 +8,9 @@ Role nằm trong body đã ký (không chỉ prefix):
   VCA-…  admin  (tạo được key user)
   VCS-…  super  (tạo được key user + admin; super chỉ mint CLI/Telegram)
 Key VC1 cũ (ver 1, chưa có role) vẫn là user.
+
+1 key = 1 máy tại một thời điểm: dán key trên máy mới thì chuyển ghế
+sang máy đó (không gắn chết máy đầu).
 """
 from __future__ import annotations
 
@@ -45,6 +48,8 @@ _BYTE_ROLE = {v: k for k, v in _ROLE_BYTE.items()}
 _MAC_LEN = 10
 _MAX_DAYS = 3650
 _ADMIN_MINT_MAX_DAYS = 365
+# uint32 max — exe hien tai doc timestamp; super khong bao gio het han.
+_PERPETUAL_EXP = 0xFFFFFFFF
 _VER_V1 = 1
 _VER_V2 = 2
 _VER_V3 = 3
@@ -107,6 +112,8 @@ def parse_duration(raw: str, *, max_days: int | None = None) -> int:
         "6m": 180,
         "1y": 365,
         "12m": 360,
+        "forever": _MAX_DAYS,
+        "permanent": _MAX_DAYS,
     }
     if s in aliases:
         days = aliases[s]
@@ -232,6 +239,15 @@ def _mint_fields(role: str | None) -> dict[str, Any]:
     }
 
 
+def _is_perpetual(role: str | None, exp: float | int | None) -> bool:
+    if role == ROLE_SUPER:
+        return True
+    try:
+        return int(exp or 0) >= _PERPETUAL_EXP
+    except (TypeError, ValueError):
+        return False
+
+
 def mint(
     days: int,
     role: str = ROLE_USER,
@@ -243,15 +259,19 @@ def mint(
     issued_at: float | None = None,
 ) -> tuple[str, dict[str, Any]]:
     role = normalize_role(role)
-    days = int(days)
-    if days < 1 or days > _MAX_DAYS:
-        raise ValueError(f"thoi han 1..{_MAX_DAYS} ngay")
     iat = int(issued_at if issued_at is not None else (now if now is not None else time.time()))
-    if expires_at is not None:
-        exp = int(expires_at)
-        days = max(1, int(round((exp - iat) / 86400)))
+    if role == ROLE_SUPER:
+        exp = _PERPETUAL_EXP
+        days = 0
     else:
-        exp = iat + days * 86400
+        days = int(days)
+        if days < 1 or days > _MAX_DAYS:
+            raise ValueError(f"thoi han 1..{_MAX_DAYS} ngay")
+        if expires_at is not None:
+            exp = int(expires_at)
+            days = max(1, int(round((exp - iat) / 86400)))
+        else:
+            exp = iat + days * 86400
     role_b = _ROLE_BYTE[role]
     kid_b = kid if kid and len(kid) == _KID_LEN else os.urandom(_KID_LEN)
     if isinstance(machine, str):
@@ -264,14 +284,16 @@ def mint(
     mac = hmac.new(_secret(), body, hashlib.sha256).digest()[:_MAC_LEN]
     token = base64.b32encode(body + mac).decode("ascii").rstrip("=")
     key = _group(PREFIXES[role], token)
+    perpetual = _is_perpetual(role, exp)
     return key, {
-        "expires_at": float(exp),
+        "expires_at": None if perpetual else float(exp),
         "issued_at": float(iat),
         "days": days,
         "role": role,
         "kid": _kid_label(kid_b),
         "machine_code": format_machine_code(mach),
         "bound": mach != _UNBOUND,
+        "perpetual": perpetual,
     }
 
 
@@ -363,18 +385,20 @@ def decode(
     if check_machine and mach != _UNBOUND and mach != machine_raw():
         raise LicenseError("machine")
     ts = float(now if now is not None else time.time())
+    perpetual = _is_perpetual(role, exp)
     info = {
-        "expires_at": float(exp),
+        "expires_at": None if perpetual else float(exp),
         "issued_at": float(iat),
-        "days": max(1, int(round((exp - iat) / 86400))),
+        "days": 0 if perpetual else max(1, int(round((float(exp) - iat) / 86400))),
         "role": role,
         "kid": _kid_label(kid),
         "kid_raw": kid,
         "machine_raw": mach,
         "machine_code": format_machine_code(mach),
         "bound": mach != _UNBOUND,
+        "perpetual": perpetual,
     }
-    if ts >= float(exp) and not allow_expired:
+    if (not perpetual) and ts >= float(exp) and not allow_expired:
         raise LicenseError("expired")
     return info
 
@@ -451,32 +475,31 @@ def activate(key: str, now: float | None = None) -> dict[str, Any]:
     text = (key or "").strip()
     if not text:
         raise LicenseError("empty")
-    info = decode(text, now=now, check_machine=True)
-    bound_key, info = _bind_to_this_machine(text, info, now=now)
+    info = decode(text, now=now, check_machine=False)
+    bound_key, info = _take_seat(text, info, now=now)
     save_key(bound_key)
     return info
 
 
-def _bind_to_this_machine(
+def _take_seat(
     key: str,
     info: dict[str, Any],
     now: float | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    """Key chua gan may -> ky lai dung ma may hien tai (1 key = 1 may)."""
-    mach = info.get("machine_raw") or _UNBOUND
+    """Gan key vao may nay. Dang gan may khac -> chuyen ghe (may moi nhan)."""
     here = machine_raw()
-    if mach != _UNBOUND:
-        if mach != here:
-            raise LicenseError("machine")
+    mach = info.get("machine_raw") or _UNBOUND
+    if mach == here:
         return key, info
     kid = info.get("kid_raw") or os.urandom(_KID_LEN)
+    exp = info.get("expires_at")
     bound, bound_info = mint(
         int(info.get("days") or 1),
         role=str(info.get("role") or ROLE_USER),
         kid=kid,
         machine=here,
         issued_at=info.get("issued_at"),
-        expires_at=info.get("expires_at"),
+        expires_at=None if info.get("perpetual") else exp,
         now=now,
     )
     return bound, bound_info
@@ -565,6 +588,7 @@ def public_status(now: float | None = None, user: dict | None = None) -> dict[st
         "kid": "",
         "bound": False,
         "has_openai_tts_key": has_oa,
+        "perpetual": False,
     }
     empty = {
         "required": req,
@@ -576,40 +600,30 @@ def public_status(now: float | None = None, user: dict | None = None) -> dict[st
         **caps,
         **extra,
     }
-    if not req:
-        info = current(now=ts)
-        if info:
-            left = max(0, int((info["expires_at"] - ts) // 86400))
-            return {
-                "required": req,
-                "ok": True,
-                "reason": "ok",
-                "expires_at": info["expires_at"],
-                "days_left": left,
-                "until_label": _date_label(info["expires_at"]),
-                **_mint_fields(str(info.get("role") or ROLE_USER)),
-                **extra,
-                "key_machine_code": str(info.get("machine_code") or ""),
-                "kid": str(info.get("kid") or ""),
-                "bound": bool(info.get("bound")),
-            }
-        return empty
-    info = current(now=ts)
-    if info:
-        left = max(0, int((info["expires_at"] - ts) // 86400))
+
+    def _ok(info: dict[str, Any]) -> dict[str, Any]:
+        view = _view_expiry(info, ts)
         return {
             "required": req,
             "ok": True,
             "reason": "ok",
-            "expires_at": info["expires_at"],
-            "days_left": left,
-            "until_label": _date_label(info["expires_at"]),
+            **view,
             **_mint_fields(str(info.get("role") or ROLE_USER)),
             **extra,
             "key_machine_code": str(info.get("machine_code") or ""),
             "kid": str(info.get("kid") or ""),
             "bound": bool(info.get("bound")),
+            "perpetual": bool(view["perpetual"]),
         }
+
+    if not req:
+        info = current(now=ts)
+        if info:
+            return _ok(info)
+        return empty
+    info = current(now=ts)
+    if info:
+        return _ok(info)
     key = load_saved_key()
     reason = "missing"
     exp = None
@@ -627,6 +641,7 @@ def public_status(now: float | None = None, user: dict | None = None) -> dict[st
         "expires_at": exp,
         "days_left": 0 if reason == "expired" else None,
         "until_label": _date_label(exp) if exp else "",
+        "perpetual": False,
         **_mint_fields(None),
         **extra,
     }
@@ -648,6 +663,24 @@ def block_message(lang: str = "vi") -> str:
     return "Dan license key de dung VideosCreator."
 
 
+def _view_expiry(info: dict[str, Any], ts: float) -> dict[str, Any]:
+    if info.get("perpetual"):
+        return {
+            "expires_at": None,
+            "days_left": None,
+            "until_label": "",
+            "perpetual": True,
+        }
+    exp = info.get("expires_at")
+    left = max(0, int((float(exp) - ts) // 86400)) if exp else None
+    return {
+        "expires_at": exp,
+        "days_left": left,
+        "until_label": _date_label(exp) if exp else "",
+        "perpetual": False,
+    }
+
+
 def _date_label(ts: float | None) -> str:
     if not ts:
         return ""
@@ -655,6 +688,12 @@ def _date_label(ts: float | None) -> str:
         return time.strftime("%d/%m/%Y", time.localtime(float(ts)))
     except (OverflowError, OSError, ValueError):
         return ""
+
+
+def _cli_han(info: dict[str, Any]) -> str:
+    if info.get("perpetual"):
+        return "Han: vinh vien"
+    return f"Han: {_date_label(info.get('expires_at'))} ({info.get('days')} ngay)"
 
 
 def _cli(argv: list[str]) -> int:
@@ -665,7 +704,7 @@ def _cli(argv: list[str]) -> int:
             "  python -m dyflow.license_key 5d user MA-MAY\n"
             "  python -m dyflow.license_key 1m user MA-MAY\n"
             "  python -m dyflow.license_key 3m admin MA-MAY\n"
-            "  python -m dyflow.license_key 1y super MA-MAY\n"
+            "  python -m dyflow.license_key forever super MA-MAY\n"
             "  python -m dyflow.license_key renew VC1-.... 1m\n"
             "  python -m dyflow.license_key verify VC1-....\n"
             "Goi: 5d (lan 1 free) | 1m | 3m | 6m | 1y\n"
@@ -684,7 +723,7 @@ def _cli(argv: list[str]) -> int:
         print(
             f"OK role={info['role']} kid={info.get('kid') or '-'} "
             f"may={info.get('machine_code') or 'chua gan'} "
-            f"het han {_date_label(info['expires_at'])} ({info['days']} ngay)"
+            f"{_cli_han(info)}"
         )
         return 0
     if argv[1] == "renew":
@@ -702,7 +741,7 @@ def _cli(argv: list[str]) -> int:
         print(
             f"Gia han role={info['role']} kid={info.get('kid')} "
             f"may={info.get('machine_code') or '-'} "
-            f"Han: {_date_label(info['expires_at'])} ({info['days']} ngay)"
+            f"{_cli_han(info)}"
         )
         return 0
     try:
@@ -723,9 +762,12 @@ def _cli(argv: list[str]) -> int:
     print(
         f"Role: {info['role']}  kid={info.get('kid')}  "
         f"may={info.get('machine_code') or 'CHUA GAN — nen nhap ma may'}  "
-        f"Han: {_date_label(info['expires_at'])} ({info['days']} ngay)"
+        f"{_cli_han(info)}"
     )
-    print("Gui dung dong key cho khach. Het han: renew cung kid.")
+    if info.get("perpetual"):
+        print("Gui dung dong key cho khach. Super khong het han.")
+    else:
+        print("Gui dung dong key cho khach. Het han: renew cung kid.")
     return 0
 
 

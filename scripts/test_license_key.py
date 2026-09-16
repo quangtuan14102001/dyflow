@@ -26,6 +26,7 @@ from dyflow.license_key import (  # noqa: E402
     decode,
     format_machine_code,
     gate_ok,
+    load_saved_key,
     mint,
     mint_legacy_v1,
     parse_duration,
@@ -65,9 +66,11 @@ def main() -> int:
     _assert(admin_key.startswith("VCA-"), admin_key)
     _assert(decode(admin_key, now=frozen + 10)["role"] == "admin", "admin role")
 
-    super_key, _ = mint(30, role="super", now=frozen)
+    super_key, super_info = mint(30, role="super", now=frozen)
     _assert(super_key.startswith("VCS-"), super_key)
+    _assert(super_info["perpetual"], super_info)
     _assert(decode(super_key, now=frozen + 10)["role"] == "super", "super role")
+    _assert(decode(super_key, now=frozen + 80 * 365 * 86400)["perpetual"], "super never expires")
 
     spoof = "VCS-" + key.split("-", 1)[1]
     try:
@@ -110,6 +113,7 @@ def main() -> int:
     activate(live_super)
     st_super = public_status()
     _assert(st_super["role"] == "super" and st_super["can_mint_admin"], st_super)
+    _assert(st_super["perpetual"] and st_super["days_left"] is None, st_super)
     _assert(actor_role_for() == "super", "actor super")
 
     path.write_text('{"key": "%s"}' % key, encoding="utf-8")
@@ -131,6 +135,10 @@ def main() -> int:
         decode(alien, now=frozen + 10, check_machine=False)["bound"],
         "inspect other machine",
     )
+    moved = activate(alien, now=frozen + 10)
+    _assert(moved["machine_code"] == here, moved)
+    _assert(moved["kid"] == decode(alien, now=frozen + 10, check_machine=False)["kid"], "keep kid")
+    _assert(decode(load_saved_key(), now=frozen + 10)["bound"], "seat moved here")
 
     old, old_info = mint(1, machine=here, now=frozen)
     new, new_info = renew(old, 30, now=old_info["expires_at"] + 50)

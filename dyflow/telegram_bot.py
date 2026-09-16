@@ -515,11 +515,14 @@ async def cmd_license(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     except Exception as e:  # noqa: BLE001
         await update.message.reply_text(f"Mint fail: {e}")
         return
-    exp = time.strftime("%d/%m/%Y", time.localtime(float(info["expires_at"])))
+    if info.get("perpetual"):
+        han = "vinh vien"
+    else:
+        han = time.strftime("%d/%m/%Y", time.localtime(float(info["expires_at"])))
     await update.message.reply_text(
-        f"Key {info['role']} — {info['days']} ngay — han {exp}\n"
+        f"Key {info['role']} — {han}\n"
         f"May: {info.get('machine_code') or '-'}\n\n{key}\n\n"
-        "Gui dung dong nay cho khach. Het han thi /license renew KEY 1m"
+        "Gui dung dong nay cho khach."
     )
 
 

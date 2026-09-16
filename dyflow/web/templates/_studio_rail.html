@@ -34,14 +34,17 @@
   <div class="studio-rail-end">
     {% if desktop %}
     {% if license and (license.required or license.reason == 'ok') %}
-    <a class="studio-credits studio-lic" href="/license#license-key" title="{{ t('license_until', date=license.until_label) if license.ok else t('license_needed') }}">
+    <a class="studio-credits studio-lic" href="/license#license-key" title="{{ t('license_perpetual') if license.ok and license.perpetual else (t('license_until', date=license.until_label) if license.ok else t('license_needed')) }}">
       <span class="studio-lic-meta">
         <span>{{ t('license_badge') }}</span>
         {% if license.ok and license.role %}
         <span class="studio-lic-role role-{{ license.role }}">{{ t('license_role_' ~ license.role) }}</span>
         {% endif %}
       </span>
-      {% if license.ok and license.days_left is not none %}
+      {% if license.ok and license.perpetual %}
+      <strong>∞</strong>
+      <span class="studio-lic-sub">{{ t('license_perpetual') }}</span>
+      {% elif license.ok and license.days_left is not none %}
       <strong>{{ license.days_left }}</strong>
       <span class="studio-lic-sub">{{ t('license_days_unit') }} · {{ license.until_label }}</span>
       {% elif license.ok %}

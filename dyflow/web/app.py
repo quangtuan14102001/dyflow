@@ -311,7 +311,7 @@ def api_license_mint(
         raise HTTPException(403, i18n.t(lang, "license_mint_forbidden"))
     try:
         n = parse_duration(days, max_days=mint_max_days(actor))
-        mach = parse_machine_code(machine)
+        mach = parse_machine_code(machine) if (machine or "").strip() else None
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     key, info = mint(n, role=target, machine=mach)
@@ -322,8 +322,13 @@ def api_license_mint(
         "days": info["days"],
         "kid": info.get("kid") or "",
         "machine_code": info.get("machine_code") or "",
-        "expires_at": info["expires_at"],
-        "until_label": time.strftime("%d/%m/%Y", time.localtime(float(info["expires_at"]))),
+        "expires_at": info.get("expires_at"),
+        "until_label": (
+            ""
+            if info.get("perpetual")
+            else time.strftime("%d/%m/%Y", time.localtime(float(info["expires_at"])))
+        ),
+        "perpetual": bool(info.get("perpetual")),
         **public_status(user=user),
     }
 
@@ -372,8 +377,13 @@ def api_license_renew(
         "days": info["days"],
         "kid": info.get("kid") or "",
         "machine_code": info.get("machine_code") or "",
-        "expires_at": info["expires_at"],
-        "until_label": time.strftime("%d/%m/%Y", time.localtime(float(info["expires_at"]))),
+        "expires_at": info.get("expires_at"),
+        "until_label": (
+            ""
+            if info.get("perpetual")
+            else time.strftime("%d/%m/%Y", time.localtime(float(info["expires_at"])))
+        ),
+        "perpetual": bool(info.get("perpetual")),
         **public_status(user=user),
     }
 
