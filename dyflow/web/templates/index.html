@@ -33,12 +33,12 @@
     </label>
     <div class="studio-channel" id="channel-opts" hidden>
       <label class="studio-channel-opt">
-        <input type="radio" name="channel_mode" value="count" checked />
+        <input type="radio" name="channel_mode" value="count" />
         <span>{{ t('channel_newest') }}</span>
         <input type="number" name="channel_count" id="channel-count" min="1" max="{{ 200 if desktop else 40 }}" value="10" />
       </label>
       <label class="studio-channel-opt">
-        <input type="radio" name="channel_mode" value="full" />
+        <input type="radio" name="channel_mode" value="full" checked />
         <span>{{ t('channel_full') }}</span>
       </label>
     </div>
@@ -191,6 +191,12 @@
       <div class="field tts-field" id="tts-field">
         <span>{{ t('tts_label') }}</span>
         <p class="hint left">{{ t('tts_hint') }}</p>
+        <label class="field openai-tts-inline" id="openai-tts-box">
+          <span>{{ t('openai_tts_key_label') }}</span>
+          <input class="input" type="password" id="home-openai-tts-key" placeholder="sk-…" autocomplete="off" spellcheck="false" />
+          <button type="button" class="btn ghost btn-sm" id="home-openai-tts-save">{{ t('openai_tts_key_save') }}</button>
+          <p class="hint left" id="home-openai-tts-status">{% if license and license.has_openai_tts_key %}{{ t('openai_tts_key_ok') }}{% else %}{{ t('openai_tts_key_needed') }}{% endif %}</p>
+        </label>
         <div class="voices voices-tts" id="tts-options"></div>
         <p class="error field-msg" id="tts-error" hidden></p>
       </div>
@@ -203,6 +209,7 @@
 <script>
   window.DYFLOW_LANGUAGES = {{ languages | tojson }};
   window.DYFLOW_TTS = {{ tts_choices | tojson }};
+  window.DYFLOW_HAS_OPENAI_TTS = {{ (license.has_openai_tts_key if license else false) | tojson }};
   window.DYFLOW_CHANNEL_MAX = {{ 200 if desktop else 40 }};
   DyflowHome.init();
   DyflowTrial.init();

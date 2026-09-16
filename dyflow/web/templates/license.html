@@ -5,18 +5,36 @@
 {% block container_class %}container-auth{% endblock %}
 
 {% block content %}
-<div class="auth-shell">
+<div class="auth-shell{% if user %} auth-shell-studio{% endif %}">
+  {% if not user %}
   <div class="auth-hero">
     <a class="brand auth-brand" href="/"><span class="logo">Videos</span>Creator</a>
     <h2 class="auth-tag">{{ t('license_title') }}</h2>
     <p class="auth-lead">{{ t('license_lead') }}</p>
   </div>
-
+  {% endif %}
   <section class="auth-panel">
     <h1>{{ t('license_title') }}</h1>
     <p class="sub">{{ t('license_sub') }}</p>
+    <p class="hint left">{{ t('license_change_hint') }}</p>
+    {% if license and license.machine_code %}
+    <p class="license-machine">
+      {{ t('license_this_machine') }}
+      <code id="license-machine-code">{{ license.machine_code }}</code>
+      <button type="button" class="btn ghost btn-sm" id="license-machine-copy">{{ t('copy') }}</button>
+    </p>
+    <p class="hint left">{{ t('license_this_machine_hint') }}</p>
+    {% endif %}
+    {% if license and license.reason == 'machine' %}
+    <p class="error">{{ t('license_machine') }}</p>
+    {% endif %}
     {% if license and license.ok %}
-    <p class="ok-banner license-ok">{{ t('license_ok', date=license.until_label, n=license.days_left) }}</p>
+    <p class="ok-banner license-ok">
+      {{ t('license_ok') }}
+      {% if license.role %}
+      <span class="license-role-chip role-{{ license.role }}">{{ t('license_role_' ~ license.role) }}</span>
+      {% endif %}
+    </p>
     {% elif license and license.reason == 'expired' %}
     <p class="error" id="license-expired-msg">{{ t('license_expired') }}</p>
     {% endif %}
@@ -31,6 +49,21 @@
       </button>
       <p class="error" id="license-error"></p>
     </form>
+
+    <form id="openai-tts-form" class="auth-form openai-tts-form">
+      <label class="field">
+        <span>{{ t('openai_tts_key_label') }}</span>
+        <p class="hint left">{{ t('openai_tts_key_hint') }}</p>
+        <input class="input" type="password" name="key" id="openai-tts-key" placeholder="sk-…" autocomplete="off" spellcheck="false" />
+      </label>
+      <button type="submit" class="btn ghost" id="openai-tts-btn">{{ t('openai_tts_key_save') }}</button>
+      <p class="ok-banner license-ok" id="openai-tts-ok" hidden>
+        {% if license and license.has_openai_tts_key %}{{ t('openai_tts_key_ok') }}{% endif %}
+      </p>
+      <p class="error" id="openai-tts-error"></p>
+    </form>
+
+    {% include "_license_mint.html" %}
   </section>
 </div>
 {% endblock %}

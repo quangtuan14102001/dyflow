@@ -228,7 +228,7 @@ DESKTOP_EMAIL = "desktop@local"
 
 
 def ensure_desktop_owner() -> dict:
-    """User local cho app desktop: admin, khong tru credit."""
+    """User local cho app desktop: khong tru credit. Role theo license key."""
     from . import auth as _auth
 
     existing = get_user_by_email(DESKTOP_EMAIL)
@@ -238,16 +238,35 @@ def ensure_desktop_owner() -> dict:
             _auth.hash_password(secrets.token_urlsafe(24)),
             bonus=99999,
         )
-    with _connect() as conn:
-        conn.execute(
-            "UPDATE users SET is_admin=1, is_super_admin=1, credits=99999 WHERE id=?",
-            (existing["id"],),
-        )
-        conn.commit()
+    apply_desktop_license_role(existing["id"])
     user = get_user(existing["id"])
     if user is None:
         raise RuntimeError("Khong tao duoc user desktop")
     return user
+
+
+def apply_desktop_license_role(user_id: str | None = None) -> None:
+    """Gan is_admin / is_super_admin theo key (user / admin / super)."""
+    from ..desktop_mode import enabled as desktop_on
+    from ..license_key import license_role_or_dev
+
+    if not desktop_on():
+        return
+    uid = user_id
+    if not uid:
+        row = get_user_by_email(DESKTOP_EMAIL)
+        if row is None:
+            return
+        uid = row["id"]
+    role = license_role_or_dev()
+    is_admin = 1 if role in ("admin", "super") else 0
+    is_super = 1 if role == "super" else 0
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE users SET is_admin=?, is_super_admin=?, credits=99999 WHERE id=?",
+            (is_admin, is_super, uid),
+        )
+        conn.commit()
 
 
 def get_user_by_email(email: str) -> Optional[dict[str, Any]]:

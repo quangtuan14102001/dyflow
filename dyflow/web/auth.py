@@ -40,6 +40,10 @@ def current_user(request: Request) -> Optional[dict]:
     if token:
         user = models.get_session_user(token)
         if user:
+            from ..desktop_mode import enabled
+            if enabled():
+                models.apply_desktop_license_role(user["id"])
+                user = models.get_user(user["id"]) or user
             return user
     from ..desktop_mode import enabled
     if enabled():

@@ -805,6 +805,14 @@ def sec_uid_from_user_url(url: str) -> str:
     return unquote(m.group(1)).strip() if m else ""
 
 
+def pc_user_url(url: str) -> str:
+    """Trang PC /user/SEC — bo ?vid= (modal clip dang mo khong phai ca kenh)."""
+    sec = sec_uid_from_user_url(url)
+    if sec:
+        return f"https://www.douyin.com/user/{sec}"
+    return (url or "").split("#")[0].split("?")[0]
+
+
 def _author_sec_uid(item: dict) -> str:
     author = item.get("author") if isinstance(item.get("author"), dict) else {}
     if not author:
@@ -821,6 +829,175 @@ def post_has_more(data) -> bool | None:
             v = blob.get("has_more")
             return v in (1, True, "1", "true", "True")
     return None
+
+
+def post_max_cursor(data) -> int:
+    if not isinstance(data, dict):
+        return 0
+    for blob in (data, data.get("data") if isinstance(data.get("data"), dict) else {}):
+        if not isinstance(blob, dict):
+            continue
+        raw = blob.get("max_cursor")
+        if raw is None:
+            continue
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            continue
+    return 0
+
+
+def post_next_cursor(data, current: int = 0) -> int:
+    """Cursor trang sau. Douyin doi khi has_more=0 du van con clip — dung create_time."""
+    cur = post_max_cursor(data)
+    if cur > current:
+        return cur
+    lists: list = []
+    if not isinstance(data, dict):
+        return 0
+    for blob in (data, data.get("data") if isinstance(data.get("data"), dict) else {}):
+        if not isinstance(blob, dict):
+            continue
+        for key in ("aweme_list", "awemeList"):
+            v = blob.get(key)
+            if isinstance(v, list):
+                lists.append(v)
+    times: list[int] = []
+    for lst in lists:
+        for item in lst:
+            if not isinstance(item, dict):
+                continue
+            raw = item.get("create_time") or item.get("createTime")
+            try:
+                t = int(raw or 0)
+            except (TypeError, ValueError):
+                continue
+            if 0 < t < 10_000_000_000:
+                t *= 1000
+            if t:
+                times.append(t)
+    if not times:
+        return 0
+    oldest = min(times)
+    return oldest if oldest != current else 0
+
+
+_AWEME_POST_HINTS = (
+    "aweme/v1/web/aweme/post",
+    "/aweme/post",
+    "aweme/v1/web/aweme/list",
+    "web/api/v2/aweme/post",
+    "user/post",
+)
+
+
+def _is_aweme_post_url(url: str, sec_uid: str = "") -> bool:
+    u = unquote((url or "").lower())
+    if not any(x in u for x in _AWEME_POST_HINTS):
+        return False
+    if sec_uid and "sec_user_id=" in u and sec_uid.lower() not in u:
+        return False
+    return True
+
+
+_PAGINATE_AWEME_JS = """
+async ({ startUrl, startCursor, limit, known }) => {
+  const out = [];
+  const seen = new Set(known || []);
+  let cursor = Number(startCursor || 0);
+  if (!startUrl) return out;
+  const dropSig = (u) => {
+    for (const k of ['a_bogus', 'X-Bogus', 'x-bogus', 'msToken', 'verifyFp', 'fp']) {
+      u.searchParams.delete(k);
+    }
+  };
+  for (let i = 0; i < 40; i++) {
+    if (seen.size >= limit) break;
+    let u;
+    try { u = new URL(startUrl, location.origin); }
+    catch (e) { break; }
+    u.searchParams.set('max_cursor', String(cursor));
+    u.searchParams.set('count', u.searchParams.get('count') || '18');
+    dropSig(u);
+    let j;
+    try {
+      const r = await fetch(u.toString(), {
+        credentials: 'include',
+        headers: { accept: 'application/json,text/plain,*/*' },
+      });
+      if (!r.ok) break;
+      j = await r.json();
+    } catch (e) { break; }
+    const list = (j && j.aweme_list)
+      || (j && j.data && j.data.aweme_list)
+      || (j && j.awemeList)
+      || [];
+    let added = 0;
+    for (const it of list) {
+      const id = String((it && (it.aweme_id || it.awemeId)) || '');
+      if (!/^\\d{10,}$/.test(id) || seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+      added++;
+    }
+    const nxt = Number(
+      (j && j.max_cursor)
+      || (j && j.data && j.data.max_cursor)
+      || 0
+    );
+    if (added === 0) break;
+    if (nxt <= cursor) break;
+    cursor = nxt;
+  }
+  return out;
+}
+"""
+
+_SCROLL_ALL_JS = """
+() => {
+  const wantPost = (el) => /作品|post/i.test((el.innerText || el.textContent || '').slice(0, 24));
+  for (const sel of [
+    '[data-e2e="user-tab-item"]',
+    '[data-e2e="user-post"]',
+  ]) {
+    try {
+      const nodes = document.querySelectorAll(sel);
+      for (const n of nodes) {
+        if (wantPost(n)) { n.click(); break; }
+      }
+    } catch (e) {}
+  }
+  const nodes = [
+    document.scrollingElement,
+    document.querySelector('[data-e2e="user-post-list"]'),
+    document.querySelector('[data-e2e="scroll-list"]'),
+    document.querySelector('#user-page-main'),
+    ...document.querySelectorAll('[class*="Scroll"], [class*="scroll"]'),
+  ];
+  const seen = new Set();
+  let n = 0;
+  for (const el of nodes) {
+    if (!el || seen.has(el)) continue;
+    seen.add(el);
+    try {
+      el.scrollTop = el.scrollHeight;
+      if (typeof el.scrollBy === 'function') el.scrollBy(0, 2800);
+      n++;
+    } catch (e) {}
+  }
+  window.scrollTo(0, document.body.scrollHeight);
+  return n;
+}
+"""
+
+_DOM_POST_COUNT_JS = """
+() => {
+  const text = document.body.innerText || '';
+  const m = text.match(/作品[^\\d]{0,8}(\\d{1,4})/) || text.match(/(\\d{1,4})[^\\d]{0,6}作品/);
+  if (m) return Number(m[1]);
+  return 0;
+}
+"""
 
 
 def aweme_ids_from_user_post(
@@ -869,6 +1046,7 @@ def list_user_videos_with_chrome(
     limit: int = 40,
     timeout_sec: int = 40,
     headed_fallback: bool = True,
+    expected: int = 0,
 ) -> list[str]:
     """Mo Edge/Chrome, bat API aweme/post cua trang user, lay video moi nhat."""
     try:
@@ -895,38 +1073,64 @@ def list_user_videos_with_chrome(
         CHROME_LOCK = None
 
     sec_uid = sec_uid_from_user_url(url)
-    try:
-        from .downloader import public_watch_url
-
-        url = public_watch_url(url, prefer_user=True)
-        sec_uid = sec_uid_from_user_url(url) or sec_uid
-    except Exception:  # noqa: BLE001
-        pass
-    clean_url = (url or "").split("#")[0].split("?")[0]
+    # Phai mo trang PC www.douyin.com/user/SEC. Share iesdouyin chi ra ~2 trang API (36 clip).
+    clean_url = pc_user_url(url) or (url or "").split("#")[0].split("?")[0]
+    sec_uid = sec_uid_from_user_url(clean_url) or sec_uid
     ids: list[str] = []
     seen: set[str] = set()
     has_more = True
+    last_post_url = ""
+    last_cursor = 0
+    empty_streak = 0
+    expected = max(0, int(expected or 0))
     deadline = time.monotonic() + max(8, int(timeout_sec or 40))
 
     def _remaining_ms(floor: int = 1500) -> int:
         left = int((deadline - time.monotonic()) * 1000)
         return max(floor, left) if left > 0 else 0
 
-    def _add_post_payload(blob) -> None:
-        nonlocal has_more
+    def _still_short() -> bool:
+        return len(ids) < limit
+
+    def _looks_truncated() -> bool:
+        n = len(ids)
+        if n >= limit:
+            return False
+        if expected and n < expected:
+            return True
+        return n in (18, 20, 36, 40)
+
+    def _add_post_payload(blob, src_url: str = "") -> int:
+        nonlocal has_more, last_post_url, last_cursor, empty_streak
         if not isinstance(blob, dict):
-            return
+            return 0
         more = post_has_more(blob)
         if more is False:
             has_more = False
+        elif more is True:
+            has_more = True
+        nxt = post_next_cursor(blob, last_cursor)
+        if nxt > last_cursor:
+            last_cursor = nxt
+        if src_url:
+            last_post_url = src_url
+        before = len(ids)
         for vid in aweme_ids_from_user_post(blob, sec_uid, require_owner=False):
             if vid in seen:
                 continue
             seen.add(vid)
             ids.append(vid)
+        added = len(ids) - before
+        if added == 0:
+            empty_streak += 1
+        else:
+            empty_streak = 0
+        return added
 
     def _run(headless: bool) -> None:
-        nonlocal ids, has_more
+        nonlocal ids, has_more, expected, empty_streak
+        has_more = True
+        empty_streak = 0
         has_more = True
         with sync_playwright() as p:
             browser = None
@@ -986,45 +1190,75 @@ def list_user_videos_with_chrome(
             page = context.pages[0] if context.pages else context.new_page()
 
             def on_response(resp) -> None:
-                u = (resp.url or "").lower()
                 if resp.status != 200:
                     return
-                # API 作品 — mot so ban Douyin dung path ngan hon
-                if not any(
-                    x in u
-                    for x in (
-                        "aweme/v1/web/aweme/post",
-                        "/aweme/post",
-                        "aweme/v1/web/aweme/list",
-                        "user/post",
-                    )
-                ):
-                    return
-                if sec_uid and sec_uid.lower() not in u and "sec_user_id=" in u:
+                raw_url = resp.url or ""
+                if not _is_aweme_post_url(raw_url, sec_uid):
                     return
                 try:
                     data = resp.json()
                 except Exception:  # noqa: BLE001
                     return
-                _add_post_payload(data)
-                extra = aweme_ids_from_user_post(data, sec_uid, require_owner=False)
-                for vid in extra:
-                    if vid in seen:
-                        continue
-                    seen.add(vid)
-                    ids.append(vid)
+                _add_post_payload(data, raw_url)
+
+            def on_route(route) -> None:
+                req = route.request
+                if not _is_aweme_post_url(req.url or "", sec_uid):
+                    route.continue_()
+                    return
+                try:
+                    resp = route.fetch()
+                    raw = resp.body()
+                    data = json.loads(raw.decode("utf-8", errors="ignore") or "{}")
+                except Exception:  # noqa: BLE001
+                    try:
+                        route.continue_()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    return
+                _add_post_payload(data, req.url or "")
+                # Douyin hay gan has_more=0 sau 2 trang (~36). Ep frontend ky request trang sau.
+                if (
+                    isinstance(data, dict)
+                    and _still_short()
+                    and empty_streak < 2
+                ):
+                    data["has_more"] = 1
+                    inner = data.get("data")
+                    if isinstance(inner, dict) and "has_more" in inner:
+                        inner["has_more"] = 1
+                    headers = {
+                        k: v for k, v in (resp.headers or {}).items()
+                        if k.lower() not in ("content-encoding", "content-length")
+                    }
+                    headers["content-type"] = "application/json; charset=utf-8"
+                    route.fulfill(
+                        status=resp.status,
+                        headers=headers,
+                        body=json.dumps(data, ensure_ascii=False),
+                    )
+                    return
+                try:
+                    route.fulfill(response=resp)
+                except Exception:  # noqa: BLE001
+                    route.continue_()
 
             page.on("response", on_response)
+            try:
+                page.route("**/*aweme*", on_route)
+            except Exception as e:  # noqa: BLE001
+                log.debug("list-channel route: %s", e)
             goto_ms = _remaining_ms(2000)
             if goto_ms <= 0:
                 return
             page.goto(
-                clean_url or url,
+                clean_url,
                 wait_until="domcontentloaded",
                 timeout=min(45000, goto_ms),
             )
-            page.wait_for_timeout(min(2000, max(200, _remaining_ms(200))))
+            page.wait_for_timeout(min(2200, max(200, _remaining_ms(200))))
             for sel in (
+                '[data-e2e="user-tab-item"]:has-text("作品")',
                 '[data-e2e="user-post"]',
                 'span:has-text("作品")',
                 'div:has-text("作品")',
@@ -1037,33 +1271,70 @@ def list_user_videos_with_chrome(
                     break
                 except Exception:  # noqa: BLE001
                     continue
+            try:
+                dom_n = int(page.evaluate(_DOM_POST_COUNT_JS) or 0)
+                if dom_n > expected:
+                    expected = dom_n
+                    log.info("Kenh Chrome DOM 作品=%d", expected)
+            except Exception:  # noqa: BLE001
+                pass
             stale = 0
-            for _ in range(40):
+            for _ in range(100):
                 if time.monotonic() >= deadline:
                     break
-                if len(ids) >= limit:
+                if not _still_short():
                     break
-                if not has_more and stale >= 1:
+                if empty_streak >= 3 and stale >= 4:
                     break
                 before = len(ids)
                 try:
-                    page.evaluate(
-                        "window.scrollTo(0, document.body.scrollHeight);"
-                        "document.querySelector('[data-e2e=\"user-post-list\"]')"
-                        "?.scrollBy(0, 2000);"
-                    )
+                    with page.expect_response(
+                        lambda r: _is_aweme_post_url(r.url or "", sec_uid),
+                        timeout=min(4500, max(800, _remaining_ms(800))),
+                    ):
+                        try:
+                            page.evaluate(_SCROLL_ALL_JS)
+                        except Exception:  # noqa: BLE001
+                            page.mouse.wheel(0, 3600)
                 except Exception:  # noqa: BLE001
                     try:
-                        page.mouse.wheel(0, 2800)
+                        page.evaluate(_SCROLL_ALL_JS)
                     except Exception:  # noqa: BLE001
-                        break
-                page.wait_for_timeout(min(1400, max(200, _remaining_ms(200))))
+                        try:
+                            page.mouse.wheel(0, 3600)
+                        except Exception:  # noqa: BLE001
+                            break
+                    page.wait_for_timeout(min(900, max(250, _remaining_ms(250))))
                 if len(ids) == before:
                     stale += 1
                 else:
                     stale = 0
-                if stale >= 5:
+                if stale >= 14:
                     break
+            if last_post_url and _still_short() and _remaining_ms(500) > 800:
+                try:
+                    extra = page.evaluate(
+                        _PAGINATE_AWEME_JS,
+                        {
+                            "startUrl": last_post_url,
+                            "startCursor": last_cursor,
+                            "limit": limit,
+                            "known": list(seen),
+                        },
+                    )
+                    for vid in extra or []:
+                        s = str(vid or "").strip()
+                        if not re.fullmatch(r"\d{10,}", s) or s in seen:
+                            continue
+                        seen.add(s)
+                        ids.append(s)
+                    log.info(
+                        "Kenh Chrome paginate them %d (tong %d)",
+                        len(extra or []),
+                        len(ids),
+                    )
+                except Exception as e:  # noqa: BLE001
+                    log.debug("list-channel paginate: %s", e)
             try:
                 dom_ids = page.evaluate(
                     """() => {
@@ -1105,12 +1376,16 @@ def list_user_videos_with_chrome(
             _run(True)
         except Exception as e:  # noqa: BLE001
             log.warning("list-channel headless fail: %s", e)
-            if (
-                not ids
-                and headed_fallback
-                and time.monotonic() < deadline - 5
-            ):
+        if (
+            _looks_truncated()
+            and headed_fallback
+            and time.monotonic() < deadline - 8
+        ):
+            log.info("Kenh Chrome %d/%d (doi %d) — thu headed de lay het", len(ids), limit, expected)
+            try:
                 _run(False)
+            except Exception as e:  # noqa: BLE001
+                log.warning("list-channel headed fail: %s", e)
     finally:
         if CHROME_LOCK is not None:
             CHROME_LOCK.release()

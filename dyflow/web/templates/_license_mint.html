@@ -1,0 +1,79 @@
+{% if license and license.can_mint %}
+<section class="license-mint" id="license-mint">
+  <h2>{{ t('license_mint_title') }}</h2>
+  <p class="sub">{{ t('license_mint_lead') }}</p>
+  <p class="muted license-mint-hint">{% if license.can_mint_admin %}{{ t('license_mint_hint_super') }}{% else %}{{ t('license_mint_hint_admin') }}{% endif %}</p>
+  <ul class="license-powers">
+    <li>{{ t('license_power_mint_user') }}</li>
+    {% if license.can_mint_admin %}
+    <li>{{ t('license_power_mint_admin') }}</li>
+    {% endif %}
+    <li>{{ t('license_power_jobs') }}</li>
+    {% if not desktop %}
+    <li>{{ t('license_power_users') }}</li>
+    {% if license.can_mint_admin %}
+    <li>{{ t('license_power_promote') }}</li>
+    {% endif %}
+    <li>{{ t('license_power_billing') }}</li>
+    {% endif %}
+  </ul>
+  <p class="muted license-mint-hint">{{ t('license_grant_hint') }}</p>
+  <form id="license-mint-form" class="license-mint-form">
+    <label class="field">
+      <span>{{ t('license_mint_role') }}</span>
+      <select class="input" name="role" id="license-mint-role">
+        {% for r in license.mint_roles %}
+        <option value="{{ r }}">{{ t('license_role_' ~ r) }} — {{ 'VC1' if r == 'user' else 'VCA' }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="field">
+      <span>{{ t('license_mint_days') }}</span>
+      <div class="license-grants" id="license-grants">
+        {% for p in license.grant_presets or [] %}
+        <button type="button" class="btn ghost btn-sm license-grant{% if p.id == 'trial' %} on{% endif %}" data-days="{{ p.days }}" data-id="{{ p.id }}">{{ t(p.label_key) }}</button>
+        {% endfor %}
+      </div>
+      <input type="hidden" name="days" id="license-mint-days" value="5" />
+    </div>
+    <label class="field license-mint-machine">
+      <span>{{ t('license_mint_machine') }}</span>
+      <input class="input" name="machine" id="license-mint-machine" required placeholder="XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false" />
+      <p class="hint left">{{ t('license_mint_machine_hint') }}</p>
+    </label>
+    <button type="submit" class="btn primary" id="license-mint-btn">{{ t('license_mint_btn') }}</button>
+  </form>
+  <p class="ok-banner license-ok" id="license-mint-ok" hidden></p>
+  <p class="error" id="license-mint-error"></p>
+  <div class="license-mint-out" id="license-mint-out" hidden>
+    <textarea class="input license-input" id="license-mint-key" rows="3" readonly></textarea>
+    <button type="button" class="btn ghost" id="license-mint-copy">{{ t('license_mint_copy') }}</button>
+  </div>
+
+  <h3 class="license-renew-h">{{ t('license_renew_title') }}</h3>
+  <p class="muted license-mint-hint">{{ t('license_renew_lead') }}</p>
+  <form id="license-renew-form" class="license-mint-form license-renew-form">
+    <label class="field license-mint-machine">
+      <span>{{ t('license_renew_old') }}</span>
+      <textarea class="input license-input" name="key" id="license-renew-key" rows="2" required placeholder="VC1-…"></textarea>
+    </label>
+    <div class="field">
+      <span>{{ t('license_mint_days') }}</span>
+      <div class="license-grants" id="license-renew-grants">
+        {% for p in license.grant_presets or [] %}
+        {% if p.id != 'trial' %}
+        <button type="button" class="btn ghost btn-sm license-renew-grant{% if p.id == '1m' %} on{% endif %}" data-days="{{ p.days }}">{{ t(p.label_key) }}</button>
+        {% endif %}
+        {% endfor %}
+      </div>
+      <input type="hidden" name="days" id="license-renew-days" value="30" />
+    </div>
+    <label class="field">
+      <span>{{ t('license_renew_machine') }}</span>
+      <input class="input" name="machine" id="license-renew-machine" placeholder="{{ t('license_renew_machine_ph') }}" autocomplete="off" spellcheck="false" />
+    </label>
+    <button type="submit" class="btn primary" id="license-renew-btn">{{ t('license_renew_btn') }}</button>
+  </form>
+  <p class="error" id="license-renew-error"></p>
+</section>
+{% endif %}

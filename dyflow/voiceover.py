@@ -267,10 +267,14 @@ def _openai_voice_id(cfg: dict) -> str:
 
 
 def _synthesize_openai(text: str, out_path: Path, cfg: dict) -> None:
-    from .preflight import hydrate_openai_key
-    key = hydrate_openai_key()
+    from .user_openai import load_tts_key
+
+    key = load_tts_key()
     if not key:
-        raise RuntimeError("Thieu OPENAI_API_KEY trong .env")
+        raise RuntimeError(
+            "Chua co key OpenAI TTS. Dan key sk-... cua ban trong app "
+            "(khong dung key cua chu app)."
+        )
     try:
         from openai import OpenAI
     except ImportError as e:

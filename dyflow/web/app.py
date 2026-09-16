@@ -47,7 +47,7 @@ from ..brand import BRAND_DOMAIN, BRAND_NAME
 from .progress import STAGES, stage_index, stage_label
 
 _MAX_BATCH_URLS = 20
-_MAX_BATCH_URLS_DESKTOP = 40
+_MAX_BATCH_URLS_DESKTOP = 200
 _MAX_CHANNEL_FULL = 40
 _MAX_CHANNEL_FULL_DESKTOP = 200
 _MAX_LOCAL_VIDEO_BYTES = 2 * 1024 * 1024 * 1024
@@ -71,9 +71,15 @@ def _channel_full_cap() -> int:
         return _MAX_CHANNEL_FULL
 
 
-def _use_chrome_for_channel(mode: str) -> bool:
-    """Full kênh: mo Chrome de cuon het API aweme/post. Quote nhanh (N moi nhat) thi khong."""
-    return (mode or "").strip().lower() == "full"
+def _use_chrome_for_channel(mode: str, count: str = "10") -> bool:
+    """Chrome khi can full kenh hoac nhieu hon 1-2 trang API (~18 clip)."""
+    if (mode or "").strip().lower() == "full":
+        return True
+    try:
+        n = int(str(count or "10").strip())
+    except ValueError:
+        n = 10
+    return n > 20
 
 
 def _channel_fetch_limit(mode: str, count: str) -> int:
@@ -218,9 +224,6 @@ async def _kick_worker(request: Request, call_next):
 
 
 def _require_admin(request: Request) -> dict:
-    from ..desktop_mode import enabled as desktop_on
-    if desktop_on():
-        raise HTTPException(404, "Khong dung tren app desktop")
     user = _require_user(request)
     if models.is_blocked_user(user):
         raise HTTPException(403, "Tai khoan bi khoa")
@@ -243,19 +246,20 @@ def license_page(request: Request):
 
     if not desktop_on() and not is_required():
         return RedirectResponse("/", status_code=302)
+    user = auth.current_user(request)
     return _page(
         request,
         "license.html",
-        user=None,
-        license=public_status(),
+        user=user,
+        license=public_status(user=user),
     )
 
 
 @app.get("/api/license")
-def api_license_status():
+def api_license_status(request: Request):
     from ..license_key import public_status
 
-    return public_status()
+    return public_status(user=auth.current_user(request))
 
 
 @app.post("/api/license")
@@ -270,9 +274,122 @@ def api_license_activate(request: Request, key: str = Form("")):
             "empty": "license_empty",
             "expired": "license_expired",
             "invalid": "license_invalid",
+            "machine": "license_machine",
         }.get(e.code, "license_invalid")
         raise HTTPException(400, i18n.t(lang, msg_key)) from e
-    return {"ok": True, **public_status()}
+    models.apply_desktop_license_role()
+    user = auth.current_user(request)
+    return {"ok": True, **public_status(user=user)}
+
+
+@app.post("/api/license/mint")
+def api_license_mint(
+    request: Request,
+    days: str = Form("5d"),
+    role: str = Form("user"),
+    machine: str = Form(""),
+):
+    from ..license_key import (
+        actor_role_for,
+        allowed_mint_roles,
+        mint,
+        mint_max_days,
+        normalize_role,
+        parse_duration,
+        parse_machine_code,
+        public_status,
+    )
+
+    user = _require_user(request)
+    lang = i18n.get_ui_lang(request)
+    actor = actor_role_for(user)
+    try:
+        target = normalize_role(role)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    if target not in allowed_mint_roles(actor):
+        raise HTTPException(403, i18n.t(lang, "license_mint_forbidden"))
+    try:
+        n = parse_duration(days, max_days=mint_max_days(actor))
+        mach = parse_machine_code(machine)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    key, info = mint(n, role=target, machine=mach)
+    return {
+        "ok": True,
+        "key": key,
+        "role": info["role"],
+        "days": info["days"],
+        "kid": info.get("kid") or "",
+        "machine_code": info.get("machine_code") or "",
+        "expires_at": info["expires_at"],
+        "until_label": time.strftime("%d/%m/%Y", time.localtime(float(info["expires_at"]))),
+        **public_status(user=user),
+    }
+
+
+@app.post("/api/license/renew")
+def api_license_renew(
+    request: Request,
+    key: str = Form(""),
+    days: str = Form("1m"),
+    machine: str = Form(""),
+):
+    from ..license_key import (
+        LicenseError,
+        actor_role_for,
+        allowed_mint_roles,
+        mint_max_days,
+        parse_duration,
+        public_status,
+        renew,
+    )
+
+    user = _require_user(request)
+    lang = i18n.get_ui_lang(request)
+    actor = actor_role_for(user)
+    if actor not in ("admin", "super"):
+        raise HTTPException(403, i18n.t(lang, "license_mint_forbidden"))
+    try:
+        from ..license_key import decode as _decode
+
+        info_probe = _decode(key, allow_expired=True, check_machine=False)
+    except LicenseError as e:
+        msg_key = "license_empty" if e.code == "empty" else "license_invalid"
+        raise HTTPException(400, i18n.t(lang, msg_key)) from e
+    target_role = str(info_probe.get("role") or "user")
+    if target_role not in allowed_mint_roles(actor):
+        raise HTTPException(403, i18n.t(lang, "license_mint_forbidden"))
+    try:
+        n = parse_duration(days, max_days=mint_max_days(actor))
+        new_key, info = renew(key, n, machine=machine.strip() or None)
+    except (ValueError, LicenseError) as e:
+        raise HTTPException(400, str(e)) from e
+    return {
+        "ok": True,
+        "key": new_key,
+        "role": info["role"],
+        "days": info["days"],
+        "kid": info.get("kid") or "",
+        "machine_code": info.get("machine_code") or "",
+        "expires_at": info["expires_at"],
+        "until_label": time.strftime("%d/%m/%Y", time.localtime(float(info["expires_at"]))),
+        **public_status(user=user),
+    }
+
+
+@app.post("/api/openai-tts-key")
+def api_openai_tts_key(request: Request, key: str = Form("")):
+    from ..license_key import public_status
+    from ..user_openai import save_tts_key
+
+    _require_user(request)
+    lang = i18n.get_ui_lang(request)
+    try:
+        save_tts_key(key)
+    except ValueError:
+        raise HTTPException(400, i18n.t(lang, "openai_tts_key_invalid"))
+    return {"ok": True, **public_status(user=auth.current_user(request))}
 
 
 # ----------------------------- pages -----------------------------
@@ -1049,6 +1166,11 @@ def api_voice_preview(
         tts_cfg = resolve_tts(tts)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    if tts_cfg.get("needs_openai_key"):
+        from ..user_openai import has_tts_key
+
+        if not has_tts_key():
+            raise HTTPException(400, i18n.t(i18n.get_ui_lang(request), "openai_tts_key_needed"))
     from ..voiceover import synthesize_preview
 
     preset = resolve_preset(lang, voice)
@@ -1087,8 +1209,8 @@ def api_quote(
     ch_lim = _channel_fetch_limit(channel_mode, channel_count)
     try:
         result = quote.quote_urls(
-            url, dl_cfg, limit=_batch_limit(), channel_limit=ch_lim,
-            allow_chrome=_use_chrome_for_channel(channel_mode),
+            url, dl_cfg, limit=max(_batch_limit(), ch_lim), channel_limit=ch_lim,
+            allow_chrome=_use_chrome_for_channel(channel_mode, channel_count),
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
@@ -1223,7 +1345,7 @@ def api_create_job(
     dl_cfg = dict(cfg.get("download") or {})
     quoted_items: list[dict] = []
     room = max(limit, ch_lim) - len(local_paths)
-    full_channel = _use_chrome_for_channel(channel_mode)
+    full_channel = _use_chrome_for_channel(channel_mode, channel_count)
     # Full kênh: khong dung bang gia 32 clip (HTML/yt-dlp thieu trang).
     reused = [] if full_channel else _items_from_quoted_json(quoted_json, limit=room)
     if reused:

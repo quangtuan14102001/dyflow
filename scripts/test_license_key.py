@@ -20,12 +20,17 @@ os.environ["VC_LICENSE_FILE"] = str(Path(tempfile.gettempdir()) / "vc_license_te
 from dyflow.license_key import (  # noqa: E402
     LicenseError,
     activate,
+    actor_role_for,
+    allowed_mint_roles,
     current,
     decode,
+    format_machine_code,
     gate_ok,
     mint,
+    mint_legacy_v1,
     parse_duration,
     public_status,
+    renew,
 )
 
 
@@ -39,15 +44,43 @@ def main() -> int:
     if path.exists():
         path.unlink()
 
-    _assert(parse_duration("30") == 30, "30 days")
+    _assert(parse_duration("5d") == 5, "5d")
+    _assert(parse_duration("3m") == 90, "3m")
+    _assert(parse_duration("6m") == 180, "6m")
     _assert(parse_duration("12m") == 360, "12m")
     _assert(parse_duration("1y") == 365, "1y")
+    _assert(allowed_mint_roles("super") == ("user", "admin"), "super mint")
+    _assert(allowed_mint_roles("admin") == ("user",), "admin mint")
+    _assert(allowed_mint_roles("user") == (), "user mint")
 
     frozen = 1_700_000_000
     key, info = mint(30, now=frozen)
     _assert(key.startswith("VC1-"), key)
+    _assert(info["role"] == "user", info)
     got = decode(key, now=frozen + 10)
     _assert(got["expires_at"] == info["expires_at"], "exp match")
+    _assert(got["role"] == "user", got)
+
+    admin_key, admin_info = mint(30, role="admin", now=frozen)
+    _assert(admin_key.startswith("VCA-"), admin_key)
+    _assert(decode(admin_key, now=frozen + 10)["role"] == "admin", "admin role")
+
+    super_key, _ = mint(30, role="super", now=frozen)
+    _assert(super_key.startswith("VCS-"), super_key)
+    _assert(decode(super_key, now=frozen + 10)["role"] == "super", "super role")
+
+    spoof = "VCS-" + key.split("-", 1)[1]
+    try:
+        decode(spoof, now=frozen + 10)
+        raise SystemExit("FAIL: prefix spoof became super")
+    except LicenseError as e:
+        _assert(e.code == "invalid", e.code)
+
+    v1, v1_info = mint_legacy_v1(30, now=frozen)
+    _assert(v1.startswith("VC1-"), v1)
+    v1_got = decode(v1, now=frozen + 10)
+    _assert(v1_got["role"] == "user", v1_got)
+    _assert(v1_got["expires_at"] == v1_info["expires_at"], "v1 exp")
 
     try:
         decode(key, now=info["expires_at"] + 1)
@@ -70,10 +103,42 @@ def main() -> int:
     st = public_status()
     _assert(st["ok"] and st["days_left"] >= 29, st)
     _assert(st["expires_at"] == live_info["expires_at"], "live exp")
+    _assert(st["role"] == "user", st)
+    _assert(not st["can_mint"], st)
+
+    live_super, _ = mint(30, role="super")
+    activate(live_super)
+    st_super = public_status()
+    _assert(st_super["role"] == "super" and st_super["can_mint_admin"], st_super)
+    _assert(actor_role_for() == "super", "actor super")
 
     path.write_text('{"key": "%s"}' % key, encoding="utf-8")
     st2 = public_status(now=info["expires_at"] + 5)
     _assert(not st2["ok"] and st2["reason"] == "expired", st2)
+    _assert(st2["until_label"], "expired date")
+
+    here = format_machine_code()
+    locked, locked_info = mint(5, machine=here, now=frozen)
+    _assert(locked_info["bound"] and locked_info["machine_code"], locked_info)
+    _assert(decode(locked, now=frozen + 10)["bound"], "this machine ok")
+    alien, _ = mint(5, machine=b"\x11" * 8, now=frozen)
+    try:
+        decode(alien, now=frozen + 10)
+        raise SystemExit("FAIL: other-machine key valid here")
+    except LicenseError as e:
+        _assert(e.code == "machine", e.code)
+    _assert(
+        decode(alien, now=frozen + 10, check_machine=False)["bound"],
+        "inspect other machine",
+    )
+
+    old, old_info = mint(1, machine=here, now=frozen)
+    new, new_info = renew(old, 30, now=old_info["expires_at"] + 50)
+    _assert(new_info["kid"] == old_info["kid"], "renew keeps kid")
+    _assert(new_info["machine_code"] == old_info["machine_code"], "renew keeps machine")
+    _assert(new != old, "renew new token")
+    got_new = decode(new, now=old_info["expires_at"] + 50)
+    _assert(got_new["days"] >= 29, got_new)
 
     print("OK license_key")
     return 0

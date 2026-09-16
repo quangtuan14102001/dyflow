@@ -1,9 +1,14 @@
 {# Admin sub-nav — include trong cac trang /admin/* #}
 <nav class="admin-nav">
   <a href="/admin" class="{% if admin_tab == 'home' %}active{% endif %}">{{ t('admin_nav_home') }}</a>
+  {% if not desktop %}
   <a href="/admin/payments" class="{% if admin_tab == 'payments' %}active{% endif %}">{{ t('admin_nav_payments') }}{% if stats and stats.payments_pending %} <span class="admin-pill">{{ stats.payments_pending }}</span>{% endif %}</a>
   <a href="/admin/users" class="{% if admin_tab == 'users' %}active{% endif %}">{{ t('admin_nav_users') }}</a>
+  {% endif %}
   <a href="/admin/jobs" class="{% if admin_tab == 'jobs' %}active{% endif %}">{{ t('admin_nav_jobs') }}{% if stats and stats.jobs_failed %} <span class="admin-pill fail">{{ stats.jobs_failed }}</span>{% endif %}</a>
+  {% if license and license.can_mint %}
+  <a href="/license#license-mint" class="{% if admin_tab == 'keys' %}active{% endif %}">{{ t('studio_nav_keys') }}</a>
+  {% endif %}
 </nav>
 {% if stats %}
 <div class="admin-stats">

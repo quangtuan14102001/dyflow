@@ -4,10 +4,11 @@
 
 {% block content %}
 <section class="card">
-  <h1>{{ t('admin_home_title') }}</h1>
-  <p class="sub">{{ t('admin_home_sub') }}</p>
+  <h1>{{ t('admin_home_title') }}{% if license and license.role %} <span class="license-role-chip role-{{ license.role }}">{{ t('license_role_' ~ license.role) }}</span>{% endif %}</h1>
+  <p class="sub">{% if desktop %}{{ t('admin_home_sub_desktop') }}{% else %}{{ t('admin_home_sub') }}{% endif %}</p>
   {% include "_admin_nav.html" %}
 
+  {% if not desktop %}
   <div class="admin-cards">
     <a class="admin-card" href="/admin/payments">
       <strong>{{ t('admin_nav_payments') }}</strong>
@@ -22,5 +23,11 @@
       <span>{{ stats.jobs_failed }} {{ t('admin_failed') }}</span>
     </a>
   </div>
+  {% endif %}
+  {% include "_license_mint.html" %}
 </section>
+{% endblock %}
+
+{% block scripts %}
+<script>DyflowLicense.init();</script>
 {% endblock %}

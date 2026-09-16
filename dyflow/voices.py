@@ -223,40 +223,44 @@ LANGUAGES: dict[str, dict[str, Any]] = {
 DEFAULT_LANG = "vi"
 
 # Lua chon TTS tren web. Batch 1000 clip van dung Edge (khong qua form nay).
-TTS_CHOICES: dict[str, dict[str, str]] = {
+TTS_CHOICES: dict[str, dict[str, object]] = {
     "edge": {
         "id": "edge",
         "tts_engine": "edge",
         "openai_model": "tts-1",
         "label": "Edge TTS",
+        "needs_openai_key": False,
     },
     "tts-1": {
         "id": "tts-1",
         "tts_engine": "openai",
         "openai_model": "tts-1",
         "label": "OpenAI tts-1",
+        "needs_openai_key": True,
     },
     "tts-1-hd": {
         "id": "tts-1-hd",
         "tts_engine": "openai",
         "openai_model": "tts-1-hd",
         "label": "OpenAI tts-1-hd",
+        "needs_openai_key": True,
     },
     "gpt-4o-mini-tts": {
         "id": "gpt-4o-mini-tts",
         "tts_engine": "openai",
         "openai_model": "gpt-4o-mini-tts",
         "label": "OpenAI gpt-4o-mini-tts",
+        "needs_openai_key": True,
     },
 }
 DEFAULT_TTS = "edge"
 
 
-def list_tts_choices() -> list[dict[str, str]]:
+def list_tts_choices() -> list[dict]:
     return [dict(v) for v in TTS_CHOICES.values()]
 
 
-def resolve_tts(choice: str) -> dict[str, str]:
+def resolve_tts(choice: str) -> dict:
     key = (choice or DEFAULT_TTS).strip().lower()
     if key in ("openai", "openai_tts"):
         key = "tts-1"

@@ -141,11 +141,15 @@ def quote_urls(
     want_channel = any(
         is_channel_url(u) or is_channel_url(resolve_share_url(u)) for u in raw
     )
+    listed = len(items)
+    ch_lim = int(channel_limit) if channel_limit is not None else int(limit)
+    truncated = want_channel and listed in (18, 20, 36) and ch_lim > listed
     return {
         "items": items,
         "total_credits": total,
-        "count": len(items),
+        "count": listed,
         "block_sec": billing.BLOCK_SEC,
         "max_duration_sec": billing.MAX_DURATION_SEC,
-        "channel_incomplete": bool(want_channel and len(items) <= 1),
+        "channel_incomplete": bool(want_channel and (listed <= 1 or truncated)),
+        "channel_listed": listed,
     }

@@ -474,17 +474,41 @@ async def cmd_license(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     args = context.args or []
     if not args:
         await update.message.reply_text(
-            "Mint key desktop (khach dan vao app, khong can email):\n"
-            "/license 30\n"
-            "/license 12m\n"
-            "/license 1y"
+            "Uu tien tao key trong app (Admin / Keys). Telegram chi du phong:\n"
+            "/license 5d user MA-MAY\n"
+            "/license 1m user MA-MAY\n"
+            "/license 3m admin MA-MAY\n"
+            "/license renew KEY 1m\n"
+            "Goi: 5d (lan 1) | 1m | 3m | 6m | 1y"
         )
         return
     try:
-        from .license_key import mint, parse_duration
+        from .license_key import mint, normalize_role, parse_duration, renew
 
-        days = parse_duration(args[0])
-        key, info = mint(days)
+        if args[0].lower() == "renew":
+            if len(args) < 3:
+                await update.message.reply_text("Dung: /license renew KEY 1m [MA-MAY]")
+                return
+            days = parse_duration(args[2])
+            machine = args[3] if len(args) > 3 else None
+            key, info = renew(args[1], days, machine=machine)
+        else:
+            days = parse_duration(args[0])
+            role = "user"
+            machine = None
+            rest = args[1:]
+            if rest and rest[0].lower() in ("user", "admin", "super"):
+                role = normalize_role(rest[0])
+                rest = rest[1:]
+            if rest:
+                machine = rest[0]
+            if not machine:
+                await update.message.reply_text(
+                    "Thieu ma may. Khach copy ma may trong app roi:\n"
+                    "/license 5d user MA-MAY"
+                )
+                return
+            key, info = mint(days, role=role, machine=machine)
     except ValueError as e:
         await update.message.reply_text(f"Loi: {e}")
         return
@@ -493,8 +517,9 @@ async def cmd_license(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     exp = time.strftime("%d/%m/%Y", time.localtime(float(info["expires_at"])))
     await update.message.reply_text(
-        f"Key {days} ngay — han {exp}\n\n{key}\n\n"
-        "Gui dung dong nay cho khach. Het han thi mint key moi."
+        f"Key {info['role']} — {info['days']} ngay — han {exp}\n"
+        f"May: {info.get('machine_code') or '-'}\n\n{key}\n\n"
+        "Gui dung dong nay cho khach. Het han thi /license renew KEY 1m"
     )
 
 

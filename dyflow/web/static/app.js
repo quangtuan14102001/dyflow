@@ -57,25 +57,184 @@ const DyflowTime = {
 const DyflowLicense = {
   init() {
     const form = document.getElementById("license-form");
-    if (!form) return;
     const btn = document.getElementById("license-btn");
     const err = document.getElementById("license-error");
     const input = document.getElementById("license-key");
+    if (form) {
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        if (err) err.textContent = "";
+        if (btn) btn.disabled = true;
+        try {
+          const data = new FormData();
+          data.set("key", (input && input.value) || "");
+          const res = await fetch("/api/license", { method: "POST", body: data });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(_apiDetail(body, _("license_invalid")));
+          window.location.href = "/";
+        } catch (ex) {
+          if (err) err.textContent = ex.message || _("generic_error");
+          if (btn) btn.disabled = false;
+        }
+      });
+    }
+    this._mint();
+    this._renew();
+    this._openaiTts();
+    this._machineCopy();
+    if (input && (location.hash === "#license-key" || location.hash === "#license-form")) {
+      input.focus();
+      try { input.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (_) {}
+    }
+  },
+
+  _mint() {
+    const form = document.getElementById("license-mint-form");
+    if (!form) return;
+    const btn = document.getElementById("license-mint-btn");
+    const err = document.getElementById("license-mint-error");
+    const ok = document.getElementById("license-mint-ok");
+    const out = document.getElementById("license-mint-out");
+    const keyEl = document.getElementById("license-mint-key");
+    const copyBtn = document.getElementById("license-mint-copy");
+    const roleEl = document.getElementById("license-mint-role");
+    const daysEl = document.getElementById("license-mint-days");
+    const machineEl = document.getElementById("license-mint-machine");
+    document.querySelectorAll(".license-grant").forEach((b) => {
+      b.addEventListener("click", () => {
+        document.querySelectorAll(".license-grant").forEach((x) => x.classList.remove("on"));
+        b.classList.add("on");
+        if (daysEl) daysEl.value = b.dataset.days || "5";
+      });
+    });
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (err) err.textContent = "";
+      if (ok) {
+        ok.hidden = true;
+        ok.textContent = "";
+      }
+      if (btn) btn.disabled = true;
+      try {
+        const data = new FormData();
+        data.set("role", (roleEl && roleEl.value) || "user");
+        data.set("days", (daysEl && daysEl.value) || "5");
+        data.set("machine", (machineEl && machineEl.value) || "");
+        const res = await fetch("/api/license/mint", { method: "POST", body: data });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(_apiDetail(body, _("license_mint_fail")));
+        if (keyEl) keyEl.value = body.key || "";
+        if (out) out.hidden = false;
+        if (ok) {
+          const msg = _("license_mint_ok")
+            .replace("{role}", body.role || "")
+            .replace("{date}", body.until_label || "")
+            .replace("{n}", String(body.days != null ? body.days : ""));
+          ok.textContent = msg;
+          ok.hidden = false;
+        }
+      } catch (ex) {
+        if (err) err.textContent = ex.message || _("license_mint_fail");
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    });
+    if (copyBtn && keyEl) {
+      copyBtn.addEventListener("click", async () => {
+        const text = keyEl.value || "";
+        if (!text) return;
+        try {
+          await navigator.clipboard.writeText(text);
+          copyBtn.textContent = _("copied");
+          setTimeout(() => { copyBtn.textContent = _("license_mint_copy"); }, 1400);
+        } catch (_) { /* ignore */ }
+      });
+    }
+  },
+
+  _renew() {
+    const form = document.getElementById("license-renew-form");
+    if (!form) return;
+    const btn = document.getElementById("license-renew-btn");
+    const err = document.getElementById("license-renew-error");
+    const ok = document.getElementById("license-mint-ok");
+    const out = document.getElementById("license-mint-out");
+    const keyEl = document.getElementById("license-mint-key");
+    const daysEl = document.getElementById("license-renew-days");
+    const oldEl = document.getElementById("license-renew-key");
+    const machineEl = document.getElementById("license-renew-machine");
+    document.querySelectorAll(".license-renew-grant").forEach((b) => {
+      b.addEventListener("click", () => {
+        document.querySelectorAll(".license-renew-grant").forEach((x) => x.classList.remove("on"));
+        b.classList.add("on");
+        if (daysEl) daysEl.value = b.dataset.days || "30";
+      });
+    });
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       if (err) err.textContent = "";
       if (btn) btn.disabled = true;
       try {
         const data = new FormData();
-        data.set("key", (input && input.value) || "");
-        const res = await fetch("/api/license", { method: "POST", body: data });
+        data.set("key", (oldEl && oldEl.value) || "");
+        data.set("days", (daysEl && daysEl.value) || "30");
+        data.set("machine", (machineEl && machineEl.value) || "");
+        const res = await fetch("/api/license/renew", { method: "POST", body: data });
         const body = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(body.detail || _("license_invalid"));
-        window.location.href = "/";
+        if (!res.ok) throw new Error(_apiDetail(body, _("license_mint_fail")));
+        if (keyEl) keyEl.value = body.key || "";
+        if (out) out.hidden = false;
+        if (ok) {
+          ok.textContent = _("license_mint_ok")
+            .replace("{role}", body.role || "")
+            .replace("{date}", body.until_label || "")
+            .replace("{n}", String(body.days != null ? body.days : ""));
+          ok.hidden = false;
+        }
       } catch (ex) {
-        if (err) err.textContent = ex.message || _("generic_error");
+        if (err) err.textContent = ex.message || _("license_mint_fail");
+      } finally {
         if (btn) btn.disabled = false;
       }
+    });
+  },
+
+  _openaiTts() {
+    const form = document.getElementById("openai-tts-form");
+    if (!form) return;
+    const input = document.getElementById("openai-tts-key");
+    const err = document.getElementById("openai-tts-error");
+    const ok = document.getElementById("openai-tts-ok");
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (err) err.textContent = "";
+      try {
+        const data = new FormData();
+        data.set("key", (input && input.value) || "");
+        const res = await fetch("/api/openai-tts-key", { method: "POST", body: data });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(_apiDetail(body, _("openai_tts_key_invalid")));
+        if (ok) {
+          ok.hidden = !body.has_openai_tts_key;
+          ok.textContent = body.has_openai_tts_key ? _("openai_tts_key_ok") : "";
+        }
+        if (input) input.value = "";
+      } catch (ex) {
+        if (err) err.textContent = ex.message || _("openai_tts_key_invalid");
+      }
+    });
+  },
+
+  _machineCopy() {
+    const btn = document.getElementById("license-machine-copy");
+    const code = document.getElementById("license-machine-code");
+    if (!btn || !code) return;
+    btn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText((code.textContent || "").trim());
+        btn.textContent = _("copied");
+        setTimeout(() => { btn.textContent = _("copy"); }, 1400);
+      } catch (_) { /* ignore */ }
     });
   },
 };
@@ -489,6 +648,7 @@ const DyflowHome = {
 
     this._languages = window.DYFLOW_LANGUAGES || [];
     this._ttsChoices = window.DYFLOW_TTS || [];
+    this._hasOpenaiTts = !!window.DYFLOW_HAS_OPENAI_TTS;
     this._audio = null;
     this._quoteTimer = null;
     this._quoteSeq = 0;
@@ -508,6 +668,7 @@ const DyflowHome = {
     this._jobsBusy = false;
     this._renderVoices();
     this._renderTts();
+    this._bindOpenaiTts();
     this._bindStudio();
     this._pollLiveLog();
     this._liveTimer = setInterval(() => this._pollLiveLog(), 2000);
@@ -1109,7 +1270,10 @@ const DyflowHome = {
       this._lastQuoteItems = items;
       this._quoteError = "";
       if (body.channel_incomplete) {
-        this._lastQuoteStatus = _("quote_channel_one");
+        this._lastQuoteStatus = items.length > 1
+          ? _("quote_channel_short")
+              .replace("{n}", String(items.length))
+          : _("quote_channel_one");
       } else if (ch.channel_mode === "full" && items.length) {
         this._lastQuoteStatus = _("quote_channel_n").replace("{n}", String(items.length));
       } else {
@@ -1201,6 +1365,36 @@ const DyflowHome = {
     });
   },
 
+  _bindOpenaiTts() {
+    const btn = document.getElementById("home-openai-tts-save");
+    const input = document.getElementById("home-openai-tts-key");
+    const status = document.getElementById("home-openai-tts-status");
+    if (!btn || !input) return;
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        const data = new FormData();
+        data.set("key", input.value || "");
+        const res = await fetch("/api/openai-tts-key", { method: "POST", body: data });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(_apiDetail(body, _("openai_tts_key_invalid")));
+        this._hasOpenaiTts = !!body.has_openai_tts_key;
+        window.DYFLOW_HAS_OPENAI_TTS = this._hasOpenaiTts;
+        if (status) {
+          status.textContent = this._hasOpenaiTts
+            ? _("openai_tts_key_ok")
+            : _("openai_tts_key_needed");
+        }
+        input.value = "";
+        this._renderTts();
+      } catch (ex) {
+        if (status) status.textContent = ex.message || _("openai_tts_key_invalid");
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  },
+
   _showTtsError(msg) {
     const box = document.getElementById("tts-error");
     const field = document.getElementById("tts-field");
@@ -1225,17 +1419,24 @@ const DyflowHome = {
     const prev = (wrap.querySelector('input[name="tts"]:checked') || {}).value;
     wrap.innerHTML = "";
     choices.forEach((t) => {
-      const checked = prev === t.id;
+      const needs = !!t.needs_openai_key;
+      const locked = needs && !this._hasOpenaiTts;
+      const checked = prev === t.id && !locked;
       const el = document.createElement("label");
-      el.className = "voice-opt";
+      el.className = "voice-opt" + (locked ? " is-locked" : "");
       el.innerHTML = `
-        <input type="radio" name="tts" value="${t.id}" ${checked ? "checked" : ""} />
+        <input type="radio" name="tts" value="${t.id}" ${checked ? "checked" : ""} ${locked ? "disabled" : ""} />
         <span class="voice-card">
           <strong>${t.label}</strong>
-          <button type="button" class="voice-play" data-tts="${t.id}" title="${_("preview")}" aria-label="${_("preview")}">▶</button>
+          ${locked ? `<em class="tts-lock">${_("openai_tts_locked")}</em>` : ""}
+          <button type="button" class="voice-play" data-tts="${t.id}" title="${_("preview")}" aria-label="${_("preview")}" ${locked ? "disabled" : ""}>▶</button>
         </span>`;
       wrap.appendChild(el);
     });
+    if (!wrap.querySelector('input[name="tts"]:checked')) {
+      const edge = wrap.querySelector('input[name="tts"][value="edge"]');
+      if (edge) edge.checked = true;
+    }
     wrap.querySelectorAll('input[name="tts"]').forEach((inp) => {
       inp.addEventListener("change", () => this._showTtsError(""));
     });

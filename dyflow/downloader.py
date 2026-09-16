@@ -379,18 +379,57 @@ def _ids_from_channel_html(html: str, sec_uid: str) -> list[str]:
     return ids
 
 
+def _http_user_aweme_count(sec_uid: str) -> int:
+    """So 作品 public (khong can cookie). Dung de biet list 36 clip la thieu."""
+    if not sec_uid:
+        return 0
+    import urllib.parse
+    import urllib.request
+
+    href = (
+        "https://www.iesdouyin.com/web/api/v2/user/info/?"
+        + urllib.parse.urlencode({"sec_uid": sec_uid})
+    )
+    try:
+        req = urllib.request.Request(
+            href,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) "
+                    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 "
+                    "Mobile/15E148 Safari/604.1"
+                ),
+                "Accept": "application/json,text/plain,*/*",
+                "Referer": "https://www.iesdouyin.com/",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="ignore") or "{}")
+    except Exception as e:  # noqa: BLE001
+        log.debug("user/info count: %s", e)
+        return 0
+    if not isinstance(data, dict):
+        return 0
+    ui = data.get("user_info") if isinstance(data.get("user_info"), dict) else {}
+    raw = ui.get("aweme_count") or ui.get("awemeCount") or 0
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _http_aweme_post(opener, sec_uid: str, limit: int) -> list[str]:
     """Goi API 作品 bang cookie — khong mo Chrome."""
     import urllib.parse
 
-    from .chrome_dl import aweme_ids_from_user_post, post_has_more
+    from .chrome_dl import aweme_ids_from_user_post, post_next_cursor
 
     if not sec_uid:
         return []
     ids: list[str] = []
     seen: set[str] = set()
     cursor = 0
-    for _ in range(12):
+    for _ in range(40):
         if len(ids) >= limit:
             break
         qs = urllib.parse.urlencode({
@@ -399,7 +438,15 @@ def _http_aweme_post(opener, sec_uid: str, limit: int) -> list[str]:
             "channel": "channel_pc_web",
             "sec_user_id": sec_uid,
             "max_cursor": str(cursor),
-            "count": "20",
+            "locate_query": "false",
+            "show_live_replay_strategy": "1",
+            "need_time_list": "1",
+            "time_list_query": "0",
+            "count": "18",
+            "publish_video_strategy_type": "2",
+            "from_user_page": "1",
+            "update_version_code": "170400",
+            "pc_client_type": "1",
             "version_code": "170400",
             "version_name": "17.4.0",
         })
@@ -420,16 +467,12 @@ def _http_aweme_post(opener, sec_uid: str, limit: int) -> list[str]:
             seen.add(vid)
             ids.append(vid)
             added += 1
-        if added == 0 or post_has_more(data) is False:
+        if added == 0:
             break
-        nxt = data.get("max_cursor") or (data.get("data") or {}).get("max_cursor")
-        try:
-            nxt_i = int(nxt or 0)
-        except (TypeError, ValueError):
-            nxt_i = 0
-        if nxt_i <= cursor:
+        nxt = post_next_cursor(data, cursor)
+        if nxt <= cursor:
             break
-        cursor = nxt_i
+        cursor = nxt
     return ids
 
 
@@ -495,12 +538,19 @@ def list_channel_videos(
 ) -> list[str]:
     """Liet ke video cua user/kênh Douyin, khong tai file.
 
-    Chrome (allow_chrome) chi khi yt-dlp + scrape chua du, va co timeout.
+    Full kênh: mo trang PC www.douyin.com/user/SEC (Chrome), khong dung
+    iesdouyin share — share chi tra ~2 trang API (36 clip).
     """
-    url = resolve_share_url(extract_url(url))
-    url = public_watch_url(url, prefer_user=True)
+    from .chrome_dl import pc_user_url, sec_uid_from_user_url
+
+    raw = resolve_share_url(extract_url(url))
+    pc = pc_user_url(raw) or raw
+    sec = sec_uid_from_user_url(pc) or sec_uid_from_user_url(raw)
     cfg = cfg or {}
     limit = max(1, min(int(limit or 40), 200))
+    expected = _http_user_aweme_count(sec) if sec else 0
+    if expected:
+        log.info("Kenh %s: profile 作品=%d", pc[:70], expected)
     errors: list[str] = []
     merged: list[str] = []
     seen: set[str] = set()
@@ -512,48 +562,26 @@ def list_channel_videos(
             seen.add(href)
             merged.append(href)
 
-    if check_tool("yt-dlp"):
-        from .chrome_dl import sec_uid_from_user_url
+    def _need_more() -> bool:
+        n = len(merged)
+        if n >= limit:
+            return False
+        if expected and n < expected:
+            return True
+        return n in (0, 18, 20, 36)
 
-        ytdlp_urls = [url]
-        sec = sec_uid_from_user_url(url)
-        if sec:
-            ytdlp_urls.append(f"https://www.iesdouyin.com/share/user/{sec}")
-        last_err = ""
-        for href in ytdlp_urls:
-            try:
-                got = _ytdlp_flat_channel(href, cfg, limit)
-                if got:
-                    log.info("Kenh %s: yt-dlp liet ke %d video", href[:70], len(got))
-                    _absorb(got)
-                    break
-            except Exception as e:  # noqa: BLE001
-                last_err = str(e)
-                log.warning("list_channel yt-dlp: %s", e)
-        if not merged:
-            errors.append(f"yt-dlp: {last_err or 'khong thay video'}")
-
-    if len(merged) < limit:
-        cookies_path, _from_browser = _ytdlp_cookies(cfg)
-        try:
-            got = _http_scrape_channel(url, cookies_path, limit)
-            if got:
-                log.info("Kenh %s: scrape HTML %d video", url[:70], len(got))
-                _absorb(got)
-            else:
-                errors.append("trang kenh khong co danh sach video")
-        except Exception as e:  # noqa: BLE001
-            errors.append(f"scrape: {e}")
-            log.warning("list_channel scrape: %s", e)
-
-    # Chrome khi yt-dlp + scrape chua du. Full kênh: timeout dai de cuon het.
-    if allow_chrome and len(merged) < limit:
+    if allow_chrome:
         try:
             from .chrome_dl import list_user_videos_with_chrome
 
-            chrome_timeout = 120 if limit > 40 else 70
+            chrome_timeout = 240 if limit > 20 else 80
             got = list_user_videos_with_chrome(
-                url, cfg, limit=limit, timeout_sec=chrome_timeout, headed_fallback=True,
+                pc,
+                cfg,
+                limit=limit,
+                timeout_sec=chrome_timeout,
+                headed_fallback=True,
+                expected=expected,
             )
             if got:
                 _absorb(got)
@@ -563,11 +591,48 @@ def list_channel_videos(
             errors.append(f"Chrome: {e}")
             log.warning("list_channel Chrome: %s", e)
 
+    if _need_more() and check_tool("yt-dlp"):
+        ytdlp_urls = [pc]
+        if sec:
+            ytdlp_urls.append(f"https://www.iesdouyin.com/share/user/{sec}")
+        last_err = ""
+        for href in ytdlp_urls:
+            if not _need_more():
+                break
+            try:
+                got = _ytdlp_flat_channel(href, cfg, limit)
+                if got:
+                    log.info("Kenh %s: yt-dlp liet ke %d video", href[:70], len(got))
+                    _absorb(got)
+            except Exception as e:  # noqa: BLE001
+                last_err = str(e)
+                log.warning("list_channel yt-dlp: %s", e)
+        if not merged:
+            errors.append(f"yt-dlp: {last_err or 'khong thay video'}")
+
+    if _need_more():
+        cookies_path, _from_browser = _ytdlp_cookies(cfg)
+        try:
+            got = _http_scrape_channel(pc, cookies_path, limit)
+            if got:
+                log.info("Kenh %s: scrape HTML %d video", pc[:70], len(got))
+                _absorb(got)
+            else:
+                errors.append("trang kenh khong co danh sach video")
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"scrape: {e}")
+            log.warning("list_channel scrape: %s", e)
+
     if not merged:
         raise RuntimeError(" | ".join(errors) or "Khong liet ke duoc kenh")
     rows = [(_aweme_id_from_url(h) or i, h) for i, h in enumerate(merged)]
     out = _newest_urls(rows, limit=limit)
-    log.info("Kenh %s: tong %d video (gop nguon)", url[:70], len(out))
+    log.info(
+        "Kenh %s: tong %d video (gop nguon, 作品=%s)",
+        pc[:70],
+        len(out),
+        expected or "?",
+    )
     return out
 
 

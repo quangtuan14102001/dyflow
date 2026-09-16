@@ -13,9 +13,15 @@
     <a class="studio-link{% if path.startswith('/library') or path.startswith('/jobs/') %} on{% endif %}" href="/library">{{ t('studio_nav_library') }}</a>
     {% if not desktop %}
     <a class="studio-link{% if path.startswith('/billing') %} on{% endif %}" href="/billing">{{ t('studio_nav_billing') }}</a>
+    {% endif %}
+    {% if desktop %}
+    <a class="studio-link{% if path.startswith('/license') %} on{% endif %}" href="/license#license-key">{{ t('license_change') }}</a>
+    {% endif %}
     {% if user.is_admin or user.is_super_admin %}
     <a class="studio-link{% if path.startswith('/admin') %} on{% endif %}" href="/admin">{{ t('studio_nav_admin') }}</a>
     {% endif %}
+    {% if license and license.can_mint %}
+    <a class="studio-link{% if path.startswith('/license') %} on{% endif %}" href="/license#license-mint">{{ t('studio_nav_keys') }}</a>
     {% endif %}
   </nav>
 
@@ -26,11 +32,28 @@
   </nav>
 
   <div class="studio-rail-end">
-    {% if desktop and license and license.required %}
-    <a class="studio-credits" href="/license" title="{{ t('license_until', date=license.until_label) if license.ok else t('license_needed') }}">
-      <span>{{ t('license_needed') if not license.ok else t('license_until', date=license.until_label) }}</span>
-      <strong>{{ t('license_days_left', n=license.days_left) if license.ok else '—' }}</strong>
+    {% if desktop %}
+    {% if license and (license.required or license.reason == 'ok') %}
+    <a class="studio-credits studio-lic" href="/license#license-key" title="{{ t('license_until', date=license.until_label) if license.ok else t('license_needed') }}">
+      <span class="studio-lic-meta">
+        <span>{{ t('license_badge') }}</span>
+        {% if license.ok and license.role %}
+        <span class="studio-lic-role role-{{ license.role }}">{{ t('license_role_' ~ license.role) }}</span>
+        {% endif %}
+      </span>
+      {% if license.ok and license.days_left is not none %}
+      <strong>{{ license.days_left }}</strong>
+      <span class="studio-lic-sub">{{ t('license_days_unit') }} · {{ license.until_label }}</span>
+      {% elif license.ok %}
+      <strong>✓</strong>
+      <span class="studio-lic-sub">{{ t('license_change') }}</span>
+      {% else %}
+      <strong>—</strong>
+      <span class="studio-lic-sub">{{ t('license_needed') }}</span>
+      {% endif %}
     </a>
+    {% endif %}
+    <a class="btn ghost btn-sm studio-change-key" href="/license#license-key">{{ t('license_change') }}</a>
     {% elif not desktop %}
     <a class="studio-credits" href="/billing" title="{{ t('credits_title') }}">
       <span>{{ t('credits_title') }}</span>

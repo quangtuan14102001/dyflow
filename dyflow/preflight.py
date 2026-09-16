@@ -14,11 +14,10 @@ from .utils import log
 
 _DEV_ENVS = {"dev", "development", "local"}
 
-MISSING_OPENAI = (
-    "Thieu OPENAI_API_KEY. Job da dung o buoc kiem tra cau hinh — "
-    "chua tai video, chua ton compute. Dat key trong .env "
-    "(thu muc source hoac VideosCreator). "
-    "Chi dat DYFLOW_ENV=dev khi test cuc bo (moi duoc chay draft/F0)."
+MISSING_TTS_OPENAI = (
+    "Chua co key OpenAI TTS cua ban. Job dung o pre-flight — "
+    "dan key sk-... (platform.openai.com) trong app de dung tts-1 / HD / mini. "
+    "Edge TTS khong can key nay."
 )
 
 
@@ -137,6 +136,8 @@ def _required_keys(cfg: dict | None, job: dict | None) -> list[tuple[str, str]]:
     if job:
         vo.update(job.get("voiceover") or {})
     engine = str(vo.get("tts_engine") or "edge").strip().lower()
+    if engine in ("openai", "tts-1", "tts-1-hd", "gpt-4o-mini-tts", "openai_tts"):
+        keys.append(("OPENAI_TTS_API_KEY", MISSING_TTS_OPENAI))
     if engine in ("eleven", "elevenlabs"):
         keys.append((
             "ELEVENLABS_API_KEY",
@@ -154,6 +155,12 @@ def missing_keys(cfg: dict | None = None, job: dict | None = None) -> list[str]:
             if not openai_key():
                 out.append(name)
             continue
+        if name == "OPENAI_TTS_API_KEY":
+            from .user_openai import has_tts_key
+
+            if not has_tts_key():
+                out.append(name)
+            continue
         aliases = env_alias.get(name, (name,))
         if not any((os.getenv(a) or "").strip() for a in aliases):
             out.append(name)
@@ -166,7 +173,9 @@ def assert_job_ready(cfg: dict | None = None, job: dict | None = None) -> None:
     missing = missing_keys(cfg, job)
     if not missing:
         return
-    if "OPENAI_API_KEY" in missing:
+    if "OPENAI_TTS_API_KEY" in missing:
+        msg = MISSING_TTS_OPENAI
+    elif "OPENAI_API_KEY" in missing:
         msg = MISSING_OPENAI
     else:
         msg = (
