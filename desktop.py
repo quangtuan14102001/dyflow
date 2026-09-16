@@ -128,6 +128,14 @@ def main() -> int:
         ) from e
     worker.start_background(cfg_path)
 
+    if sys.platform == "win32" and getattr(sys, "frozen", False):
+        _win_unblock_install()
+        # pywebview Windows luon import pythonnet (clr). Frozen exe (ke ca
+        # ARM emulation) hay fail Python.Runtime.dll — khong ep o C:.
+        _log_startup(f"frozen win shell {url} from {_win_install_dir()}")
+        _win_browser_shell(url)
+        return 0
+
     try:
         import webview
     except ImportError:
@@ -160,14 +168,266 @@ def main() -> int:
         )
     if icon and win is not None:
         win.events.shown += lambda: _mac_title_icon(win, icon)
-    if icon:
-        try:
-            webview.start(icon=icon)
-        except TypeError:
-            webview.start()
-    else:
-        webview.start()
+    _start_webview(icon)
     return 0
+
+
+def _win_install_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return ROOT
+
+
+def _win_unblock_install() -> None:
+    """Bo Mark-of-the-Web (Downloads) — khong chan thu muc, khong ep o C:."""
+    here = _win_install_dir()
+    n = 0
+    try:
+        for p in here.rglob("*"):
+            if not p.is_file():
+                continue
+            ads = f"{p}:Zone.Identifier"
+            try:
+                os.remove(ads)
+                n += 1
+            except OSError:
+                pass
+    except Exception as e:
+        _log_startup(f"unblock: {e}")
+        return
+    if n:
+        _log_startup(f"unblocked {n} files in {here}")
+
+
+def _win_browser_shell(url: str) -> None:
+    """Giu process song + mo trinh duyet. Khong dung pythonnet."""
+    webbrowser.open(url)
+    if sys.platform != "win32":
+        try:
+            while True:
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            return
+        return
+    try:
+        _win_status_window(url)
+        return
+    except Exception as e:
+        _log_startup(f"status window: {e}")
+    try:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            f"VideosCreator dang chay tren trinh duyet.\n\n{url}\n\n"
+            "Bam OK de thoat ung dung.",
+            "VideosCreator",
+            0x40,
+        )
+    except Exception:
+        try:
+            while True:
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            return
+
+
+def _win_status_window(url: str) -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    LRESULT = ctypes.c_ssize_t
+    WNDPROC = ctypes.WINFUNCTYPE(
+        LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM
+    )
+
+    class WNDCLASSW(ctypes.Structure):
+        _fields_ = [
+            ("style", wintypes.UINT),
+            ("lpfnWndProc", WNDPROC),
+            ("cbClsExtra", ctypes.c_int),
+            ("cbWndExtra", ctypes.c_int),
+            ("hInstance", wintypes.HINSTANCE),
+            ("hIcon", wintypes.HICON),
+            ("hCursor", wintypes.HCURSOR),
+            ("hbrBackground", wintypes.HBRUSH),
+            ("lpszMenuName", wintypes.LPCWSTR),
+            ("lpszClassName", wintypes.LPCWSTR),
+        ]
+
+    WM_DESTROY = 0x0002
+    WM_COMMAND = 0x0111
+    WS_OVERLAPPED = 0x00CF0000
+    WS_VISIBLE = 0x10000000
+    WS_CHILD = 0x40000000
+    WS_TABSTOP = 0x00010000
+    BS_DEFPUSHBUTTON = 1
+    COLOR_WINDOW = 5
+    IDC_ARROW = 32512
+    ID_REOPEN = 1001
+    ID_QUIT = 1002
+    SW_SHOW = 5
+
+    user32.DefWindowProcW.argtypes = [
+        wintypes.HWND,
+        wintypes.UINT,
+        wintypes.WPARAM,
+        wintypes.LPARAM,
+    ]
+    user32.DefWindowProcW.restype = LRESULT
+    user32.PostQuitMessage.argtypes = [ctypes.c_int]
+    user32.PostQuitMessage.restype = None
+    user32.LoadCursorW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR]
+    user32.LoadCursorW.restype = wintypes.HCURSOR
+    user32.CreateWindowExW.restype = wintypes.HWND
+    user32.CreateWindowExW.argtypes = [
+        wintypes.DWORD,
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        wintypes.HWND,
+        wintypes.HMENU,
+        wintypes.HINSTANCE,
+        wintypes.LPVOID,
+    ]
+    kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+    kernel32.GetModuleHandleW.restype = wintypes.HINSTANCE
+
+    def wndproc(hwnd, msg, wparam, lparam):
+        if msg == WM_DESTROY:
+            user32.PostQuitMessage(0)
+            return 0
+        if msg == WM_COMMAND:
+            cmd = int(wparam) & 0xFFFF
+            if cmd == ID_REOPEN:
+                webbrowser.open(url)
+                return 0
+            if cmd == ID_QUIT:
+                user32.DestroyWindow(hwnd)
+                return 0
+        return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+    proc = WNDPROC(wndproc)
+    hinst = kernel32.GetModuleHandleW(None)
+    cls_name = "VideosCreatorShell"
+    wc = WNDCLASSW()
+    wc.style = 0x0003
+    wc.lpfnWndProc = proc
+    wc.hInstance = hinst
+    wc.hCursor = user32.LoadCursorW(None, ctypes.cast(IDC_ARROW, wintypes.LPCWSTR))
+    wc.hbrBackground = COLOR_WINDOW + 1
+    wc.lpszClassName = cls_name
+    atom = user32.RegisterClassW(ctypes.byref(wc))
+    if not atom:
+        err = ctypes.get_last_error()
+        if err not in (0, 1410):  # 1410 = class already exists
+            raise ctypes.WinError(err)
+
+    hwnd = user32.CreateWindowExW(
+        0,
+        cls_name,
+        "VideosCreator",
+        WS_OVERLAPPED | WS_VISIBLE,
+        280,
+        220,
+        520,
+        260,
+        None,
+        None,
+        hinst,
+        None,
+    )
+    if not hwnd:
+        raise ctypes.WinError(ctypes.get_last_error())
+
+    body = (
+        "App dang chay tren trinh duyet mac dinh.\n"
+        f"{url}\n\n"
+        "Giu cua so nay mo. Dong cua so de thoat."
+    )
+    user32.CreateWindowExW(
+        0,
+        "STATIC",
+        body,
+        WS_CHILD | WS_VISIBLE,
+        24,
+        20,
+        460,
+        110,
+        hwnd,
+        None,
+        hinst,
+        None,
+    )
+    user32.CreateWindowExW(
+        0,
+        "BUTTON",
+        "Mo lai trinh duyet",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+        24,
+        150,
+        200,
+        36,
+        hwnd,
+        wintypes.HMENU(ID_REOPEN),
+        hinst,
+        None,
+    )
+    user32.CreateWindowExW(
+        0,
+        "BUTTON",
+        "Thoat",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+        240,
+        150,
+        120,
+        36,
+        hwnd,
+        wintypes.HMENU(ID_QUIT),
+        hinst,
+        None,
+    )
+    user32.ShowWindow(hwnd, SW_SHOW)
+    user32.UpdateWindow(hwnd)
+
+    msg = wintypes.MSG()
+    while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
+        user32.TranslateMessage(ctypes.byref(msg))
+        user32.DispatchMessageW(ctypes.byref(msg))
+
+
+def _start_webview(icon: str | None) -> None:
+    import webview
+
+    kwargs: dict = {}
+    if sys.platform == "win32":
+        kwargs["gui"] = "edgechromium"
+    if icon:
+        kwargs["icon"] = icon
+    try:
+        webview.start(**kwargs)
+        return
+    except TypeError:
+        kwargs.pop("icon", None)
+        try:
+            webview.start(**kwargs)
+            return
+        except TypeError:
+            pass
+    except Exception as e:
+        raise RuntimeError(
+            "Khong mo duoc cua so app. Cai Microsoft Edge WebView2 "
+            "(Evergreen Runtime) roi chay lai.\n"
+            f"({e})"
+        ) from e
+    webview.start()
 
 
 def _app_icon() -> str | None:

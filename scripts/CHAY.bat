@@ -7,8 +7,13 @@ set HTTPS_PROXY=
 set http_proxy=
 set https_proxy=
 set ALL_PROXY=
+
+echo Dang mo khoa file Windows (Unblock) neu tai tu internet...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-ChildItem -LiteralPath '%~dp0' -Recurse -File -ErrorAction SilentlyContinue | Unblock-File" >nul 2>&1
+
 echo.
-echo VideosCreator dang mo. Lan dau doi 1-3 phut, dung tat cua so.
+echo VideosCreator dang mo tren trinh duyet. Lan dau doi 1-3 phut.
 echo Neu SmartScreen: More info -^> Run anyway.
+echo Giai nen o thu muc nao cung duoc (Downloads, D:, USB...).
 echo.
 start "" "%~dp0VideosCreator.exe"
