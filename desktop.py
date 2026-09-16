@@ -72,7 +72,18 @@ def main() -> int:
     os.environ["DYFLOW_WEB_WORKERS"] = "1"
     os.environ["NO_PROXY"] = "127.0.0.1,localhost,::1"
     os.environ["no_proxy"] = "127.0.0.1,localhost,::1"
+    for _k in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    ):
+        os.environ.pop(_k, None)
     os.environ.setdefault("PUBLIC_BASE_URL", "http://127.0.0.1:8765")
+    if sys.platform == "win32" and getattr(sys, "frozen", False):
+        _win_unblock_install()
     # FastAPI startup khong start worker: uvicorn trong thread Windows
     # de soat startup. Ta start worker o main thread cho chac.
     os.environ["DYFLOW_WEB_NO_WORKER"] = "1"
@@ -129,8 +140,6 @@ def main() -> int:
     worker.start_background(cfg_path)
 
     if sys.platform == "win32" and getattr(sys, "frozen", False):
-        _win_unblock_install()
-        # Cua so Win32 + WebView2. Khong dung pythonnet, khong mo trinh duyet.
         from dyflow.win_webview import run_desktop
 
         _log_startup(f"frozen win webview {url} from {_win_install_dir()}")

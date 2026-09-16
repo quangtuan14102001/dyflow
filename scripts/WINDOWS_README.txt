@@ -2,11 +2,7 @@ VideosCreator (Windows)
 =======================
 
 1. Giai nen zip o thu muc nao cung duoc: Downloads, Desktop, o D:, USB...
-   Khong can copy sang o C:.
-   Neu Windows chan file tai tu internet: click phai zip -> Properties -> Unblock,
-   roi giai nen (hoac chay CHAY.bat — file nay tu Unblock).
-2. Double-click CHAY.bat (hoac VideosCreator.exe). Mo cua so desktop
-   (khong dung trinh duyet).
+2. Double-click VideosCreator.exe. Do la app desktop — khong can file .bat.
 3. Lan dau Windows SmartScreen: More info -> Run anyway.
    Doi 1-3 phut lan dau. Neu bao timeout 127.0.0.1: Settings -> Network -> Proxy
    -> tat proxy cho localhost.

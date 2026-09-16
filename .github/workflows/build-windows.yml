@@ -51,7 +51,6 @@ jobs:
           if (-not (Test-Path $dll)) { throw "Thieu $dll" }
           Copy-Item $dll dist\VideosCreator\VideosCreatorWebView.dll -Force
           Copy-Item scripts\WINDOWS_README.txt dist\VideosCreator\README.txt -Force
-          Copy-Item scripts\CHAY.bat dist\VideosCreator\CHAY.bat -Force
           Get-Item dist\VideosCreator\VideosCreator.exe, dist\VideosCreator\VideosCreatorWebView.dll
 
       - name: Bundle OPENAI_API_KEY into dist .env
