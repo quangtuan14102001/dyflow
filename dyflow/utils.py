@@ -76,13 +76,15 @@ def media_bin_dir() -> Path | None:
         if not folder.is_dir():
             continue
         exe = folder / names[0]
-        if exe.is_file() and exe.stat().st_size > 100_000:
+        if exe.is_file() and exe.stat().st_size > 5_000_000:
             return folder
     which = shutil.which("ffmpeg")
     if which:
         p = Path(which)
-        if p.is_file() and p.stat().st_size > 100_000:
-            return p.resolve().parent
+        if p.is_file():
+            # Windows: bo Chocolatey shim. Mac/Linux: wrapper nho van chay duoc.
+            if sys.platform != "win32" or p.stat().st_size > 5_000_000:
+                return p.resolve().parent
     return None
 
 

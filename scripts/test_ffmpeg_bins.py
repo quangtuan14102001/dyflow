@@ -26,8 +26,8 @@ def test_skips_chocolatey_shim() -> None:
 
     with tempfile.TemporaryDirectory() as raw:
         d = Path(raw)
-        _write_bin(d / "ffmpeg", 8000)
-        _write_bin(d / "ffmpeg.exe", 8000)
+        _write_bin(d / "ffmpeg", 400_000)
+        _write_bin(d / "ffmpeg.exe", 400_000)
         with mock.patch.dict(os.environ, {"DYFLOW_FFMPEG_DIR": str(d)}):
             got = media_bin_dir()
         _assert(got is None or got.resolve() != d.resolve(), f"accepted shim dir {got}")
@@ -39,7 +39,7 @@ def test_accepts_real_ffmpeg() -> None:
     with tempfile.TemporaryDirectory() as raw:
         d = Path(raw)
         name = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
-        _write_bin(d / name, 200_000)
+        _write_bin(d / name, 6_000_000)
         with mock.patch.dict(os.environ, {"DYFLOW_FFMPEG_DIR": str(d)}):
             got = media_bin_dir()
             _assert(got is not None and got.resolve() == d.resolve(), got)
@@ -55,17 +55,18 @@ def test_ytdlp_cmd_has_ffmpeg_and_sections() -> None:
     with tempfile.TemporaryDirectory() as raw:
         d = Path(raw)
         name = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
-        _write_bin(d / name, 200_000)
+        _write_bin(d / name, 6_000_000)
         with mock.patch.dict(os.environ, {"DYFLOW_FFMPEG_DIR": str(d)}):
             cmd = _build_ytdlp_cmd(
                 "https://www.douyin.com/video/7679803336194854180",
                 "/tmp/out.%(ext)s",
                 {"max_duration_sec": 120, "retries": 3},
             )
-    joined = " ".join(cmd)
-    _assert("--ffmpeg-location" in cmd, cmd)
-    _assert("--download-sections" in joined, cmd)
-    _assert(ytdlp_ffmpeg_args()[0] == "--ffmpeg-location", ytdlp_ffmpeg_args())
+            args = ytdlp_ffmpeg_args()
+        joined = " ".join(cmd)
+        _assert("--ffmpeg-location" in cmd, cmd)
+        _assert("--download-sections" in joined, cmd)
+        _assert(args[:1] == ["--ffmpeg-location"], args)
 
 
 def test_no_sections_without_ffmpeg() -> None:

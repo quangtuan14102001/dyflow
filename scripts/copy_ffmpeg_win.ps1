@@ -1,39 +1,62 @@
-# Copy ffmpeg/ffprobe THAT (khong copy Chocolatey shim ~8KB).
-# Dung tu GitHub Actions va scripts/build_windows.ps1.
+# Copy ffmpeg/ffprobe THAT. Chocolatey shim (~400KB, nam trong chocolatey\bin)
+# chi redirect toi ..\lib\ffmpeg\tools\... — copy shim thi exe khach se fail.
 param(
   [Parameter(Mandatory = $true)]
   [string]$DestDir
 )
 
 $ErrorActionPreference = "Stop"
+$MinBytes = 5MB
+
+function Test-RealFfmpegDir([string]$dir) {
+  if (-not $dir) { return $false }
+  if ($dir -match '\\chocolatey\\bin$') { return $false }
+  $ff = Join-Path $dir "ffmpeg.exe"
+  $probe = Join-Path $dir "ffprobe.exe"
+  if (-not (Test-Path $ff) -or -not (Test-Path $probe)) { return $false }
+  return ((Get-Item $ff).Length -gt $MinBytes) -and ((Get-Item $probe).Length -gt $MinBytes)
+}
 
 function Find-FfmpegDir {
-  $cmd = Get-Command ffmpeg -ErrorAction SilentlyContinue
-  if ($cmd) {
-    $dir = Split-Path -Parent $cmd.Source
-    $ff = Join-Path $dir "ffmpeg.exe"
-    $probe = Join-Path $dir "ffprobe.exe"
-    if ((Test-Path $ff) -and (Get-Item $ff).Length -gt 100000 -and (Test-Path $probe)) {
-      return $dir
-    }
+  $explicit = @(
+    "$env:ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg\bin",
+    "$env:ProgramData\chocolatey\lib\ffmpeg\tools\bin",
+    "$env:ProgramData\chocolatey\lib\ffmpeg-full\tools\ffmpeg\bin"
+  )
+  foreach ($dir in $explicit) {
+    if (Test-RealFfmpegDir $dir) { return $dir }
   }
   $roots = @(
-    "$env:ProgramData\chocolatey\lib\ffmpeg",
-    "$env:ProgramData\chocolatey\lib\ffmpeg-full",
+    "$env:ProgramData\chocolatey\lib",
     "$env:LOCALAPPDATA\Microsoft\WinGet\Packages"
   )
   foreach ($root in $roots) {
     if (-not (Test-Path $root)) { continue }
     $hit = Get-ChildItem $root -Recurse -Filter ffmpeg.exe -ErrorAction SilentlyContinue |
-      Where-Object { $_.Length -gt 100000 } |
+      Where-Object { $_.Length -gt $MinBytes -and $_.DirectoryName -notmatch '\\chocolatey\\bin$' } |
       Select-Object -First 1
-    if ($hit) {
-      $probe = Join-Path $hit.DirectoryName "ffprobe.exe"
-      if (Test-Path $probe) { return $hit.DirectoryName }
+    if ($hit -and (Test-RealFfmpegDir $hit.DirectoryName)) {
+      return $hit.DirectoryName
     }
   }
-  throw "Khong tim thay ffmpeg.exe that (>100KB) kem ffprobe.exe"
+  $cmd = Get-Command ffmpeg -ErrorAction SilentlyContinue
+  if ($cmd -and (Test-RealFfmpegDir (Split-Path -Parent $cmd.Source))) {
+    return (Split-Path -Parent $cmd.Source)
+  }
+  throw "Khong tim thay ffmpeg.exe that (>5MB) kem ffprobe. Khong dung Chocolatey shim."
 }
+
+$src = Find-FfmpegDir
+New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
+Copy-Item (Join-Path $src "ffmpeg.exe") (Join-Path $DestDir "ffmpeg.exe") -Force
+Copy-Item (Join-Path $src "ffprobe.exe") (Join-Path $DestDir "ffprobe.exe") -Force
+Get-ChildItem $src -Filter *.dll -ErrorAction SilentlyContinue | ForEach-Object {
+  Copy-Item $_.FullName (Join-Path $DestDir $_.Name) -Force
+}
+$ffOut = Get-Item (Join-Path $DestDir "ffmpeg.exe")
+$fpOut = Get-Item (Join-Path $DestDir "ffprobe.exe")
+if ($ffOut.Length -lt $MinBytes) { throw "ffmpeg.exe copy van qua nho ($($ffOut.Length) bytes) — van la shim" }
+Write-Host "Copied ffmpeg $($ffOut.Length) bytes + ffprobe $($fpOut.Length) bytes from $src"
 
 $src = Find-FfmpegDir
 New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
