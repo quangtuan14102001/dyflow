@@ -961,7 +961,7 @@ async ({ secUid, limit, known }) => {
     + '&max_cursor=' + String(cur)
     + '&count=18&publish_video_strategy_type=2&from_user_page=1'
   );
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 16; i++) {
     if (seen.size >= limit) break;
     let j;
     try {
@@ -973,17 +973,22 @@ async ({ secUid, limit, known }) => {
       const t = await r.text();
       j = JSON.parse(t);
     } catch (e) { break; }
+    if (!j || j.status_code === 5) break;
     const list = (j && j.aweme_list)
       || (j && j.data && j.data.aweme_list)
       || (j && j.awemeList)
       || [];
     let added = 0;
+    let oldest = 0;
     for (const it of list) {
       const id = String((it && (it.aweme_id || it.awemeId)) || '');
       if (!/^\\d{10,}$/.test(id) || seen.has(id)) continue;
       seen.add(id);
       out.push(id);
       added++;
+      let t = Number((it && (it.create_time || it.createTime)) || 0);
+      if (t > 0 && t < 10000000000) t *= 1000;
+      if (t && (!oldest || t < oldest)) oldest = t;
     }
     const nxt = Number(
       (j && j.max_cursor)
@@ -992,9 +997,11 @@ async ({ secUid, limit, known }) => {
     );
     const more = (j && j.has_more);
     if (added === 0) break;
-    if (more === 0 || more === false) break;
-    if (!(nxt > cursor)) break;
-    cursor = nxt;
+    let nextCursor = (nxt > cursor) ? nxt : oldest;
+    if (!(nextCursor > cursor)) break;
+    // Douyin hay gan has_more=0 som — chi dung khi trang thuc su ngan.
+    if ((more === 0 || more === false) && added < 10) break;
+    cursor = nextCursor;
   }
   return out;
 }
@@ -1095,7 +1102,10 @@ def list_user_videos_with_chrome(
     headed_fallback: bool = False,
     expected: int = 0,
 ) -> list[str]:
-    """Bat danh sach kenh: fetch unsigned trong Chrome/Edge (headless truoc)."""
+    """Liet ke kenh bang Chromium/Edge HEADLESS (fetch unsigned trong trang).
+
+    Khong bao gio mo cua so (headed_fallback bi bo qua).
+    """
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as e:
@@ -1111,7 +1121,6 @@ def list_user_videos_with_chrome(
         CHROME_LOCK = None
 
     sec_uid = sec_uid_from_user_url(url)
-    # Phai mo trang PC www.douyin.com/user/SEC. Share iesdouyin chi ra ~2 trang API (36 clip).
     clean_url = pc_user_url(url) or (url or "").split("#")[0].split("?")[0]
     sec_uid = sec_uid_from_user_url(clean_url) or sec_uid
     ids: list[str] = []
@@ -1121,7 +1130,7 @@ def list_user_videos_with_chrome(
     last_cursor = 0
     empty_streak = 0
     expected = max(0, int(expected or 0))
-    deadline = time.monotonic() + max(8, int(timeout_sec or 40))
+    deadline = time.monotonic() + max(12, int(timeout_sec or 40))
 
     def _remaining_ms(floor: int = 1500) -> int:
         left = int((deadline - time.monotonic()) * 1000)
@@ -1131,9 +1140,21 @@ def list_user_videos_with_chrome(
         return len(ids) < limit
 
     def _add_post_payload(blob, src_url: str = "") -> int:
-        nonlocal has_more, last_post_url, last_cursor, empty_streak
+        nonlocal has_more, last_post_url, last_cursor, empty_streak, expected, sec_uid
         if not isinstance(blob, dict):
             return 0
+        user = blob.get("user") if isinstance(blob.get("user"), dict) else {}
+        if not user and isinstance(blob.get("user_info"), dict):
+            user = blob["user_info"]
+        if user:
+            raw_n = user.get("aweme_count") or user.get("awemeCount") or 0
+            try:
+                expected = max(expected, int(raw_n))
+            except (TypeError, ValueError):
+                pass
+            real_sec = str(user.get("sec_uid") or user.get("secUid") or "").strip()
+            if real_sec:
+                sec_uid = real_sec
         more = post_has_more(blob)
         if more is False:
             has_more = False
@@ -1157,8 +1178,47 @@ def list_user_videos_with_chrome(
             empty_streak = 0
         return added
 
+    def _collect_dom(page) -> int:
+        before = len(ids)
+        try:
+            page.evaluate(_SCROLL_ALL_JS)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            dom_ids = page.evaluate(
+                """() => {
+                  const seen = new Set();
+                  const out = [];
+                  const re = /\\/video\\/(\\d{15,})/;
+                  const reModal = /[?&](?:modal_id|aweme_id|vid)=(\\d{15,})/i;
+                  const nodes = document.querySelectorAll(
+                    'a[href*="/video/"], a[href*="modal_id"], [href*="vid="], [src*="/video/"]'
+                  );
+                  for (const a of nodes) {
+                    const h = (a.getAttribute('href') || a.href || a.getAttribute('src') || '');
+                    if (/baiduspider/i.test(h)) continue;
+                    const m = h.match(re) || h.match(reModal);
+                    if (m && !seen.has(m[1])) { seen.add(m[1]); out.push(m[1]); }
+                  }
+                  const html = document.documentElement.innerHTML || '';
+                  for (const m of html.matchAll(/\\/video\\/(\\d{15,})/g)) {
+                    if (!seen.has(m[1])) { seen.add(m[1]); out.push(m[1]); }
+                  }
+                  return out;
+                }"""
+            )
+            for vid in dom_ids or []:
+                s = str(vid or "").strip()
+                if not re.fullmatch(r"\d{10,}", s) or s in seen:
+                    continue
+                seen.add(s)
+                ids.append(s)
+        except Exception as e:  # noqa: BLE001
+            log.debug("list-channel DOM: %s", e)
+        return len(ids) - before
+
     def _run(headless: bool) -> None:
-        nonlocal ids, has_more, expected, empty_streak
+        nonlocal ids, has_more, expected, empty_streak, sec_uid
         has_more = True
         empty_streak = 0
         with sync_playwright() as p:
@@ -1166,13 +1226,13 @@ def list_user_videos_with_chrome(
             context = None
             from .browser_launch import launch_playwright_chromium
 
-            browser = launch_playwright_chromium(p, headless=headless)
+            browser = launch_playwright_chromium(p, headless=True)  # luon headless
             context = browser.new_context(
                 locale="zh-CN",
                 user_agent=_DEFAULT_UA,
                 viewport={"width": 1280, "height": 900},
             )
-            log.info("list-channel browser OK headless=%s", headless)
+            log.info("list-channel browser OK headless=%s", True)
 
             for c in _load_netscape_cookies(cookies_file):
                 try:
@@ -1183,11 +1243,11 @@ def list_user_videos_with_chrome(
             page = context.pages[0] if context.pages else context.new_page()
 
             def on_response(resp) -> None:
+                nonlocal last_post_url, expected, sec_uid
                 raw_url = resp.url or ""
-                if "aweme/v1/web/aweme/post" not in (raw_url or "").lower():
+                low = (raw_url or "").lower()
+                if "aweme/v1/web/aweme/post" not in low and "user/profile/other" not in low:
                     return
-                nonlocal last_post_url
-                last_post_url = raw_url
                 raw_txt = ""
                 try:
                     raw = resp.body()
@@ -1203,6 +1263,25 @@ def list_user_videos_with_chrome(
                     data = json.loads(raw_txt)
                 except Exception:
                     return
+                if "user/profile/other" in low and isinstance(data, dict):
+                    user = data.get("user") if isinstance(data.get("user"), dict) else {}
+                    if user:
+                        real = str(user.get("sec_uid") or user.get("secUid") or "").strip()
+                        if real:
+                            sec_uid = real
+                        raw_n = user.get("aweme_count") or user.get("awemeCount") or 0
+                        try:
+                            expected = max(expected, int(raw_n))
+                        except (TypeError, ValueError):
+                            pass
+                        log.info(
+                            "profile/other nick=%s sec=%s 作品=%s",
+                            user.get("nickname"),
+                            (sec_uid or "")[:24],
+                            expected or "?",
+                        )
+                    return
+                last_post_url = raw_url
                 n = _add_post_payload(data, raw_url)
                 if n:
                     log.info("aweme/post +%d tong=%d", n, len(ids))
@@ -1216,55 +1295,54 @@ def list_user_videos_with_chrome(
                 wait_until="domcontentloaded",
                 timeout=min(45000, goto_ms),
             )
-            # Cho cookie/SDK; khong doi intercept (body aweme/post thuong rong).
-            page.wait_for_timeout(min(2500, max(800, _remaining_ms(800))))
-            if sec_uid and _still_short() and _remaining_ms(500) > 800:
-                try:
-                    extra = page.evaluate(
-                        _PAGINATE_AWEME_JS,
-                        {
-                            "secUid": sec_uid,
-                            "limit": limit,
-                            "known": list(seen),
-                        },
-                    )
-                    for vid in extra or []:
-                        s = str(vid or "").strip()
-                        if not re.fullmatch(r"\d{10,}", s) or s in seen:
-                            continue
-                        seen.add(s)
-                        ids.append(s)
-                    log.info("Kenh Chrome fetch ngay %d (tong %d)", len(extra or []), len(ids))
-                except Exception as e:  # noqa: BLE001
-                    log.warning("list-channel fetch ngay: %s", e)
+            page.wait_for_timeout(min(3000, max(800, _remaining_ms(800))))
+            # Dong overlay login neu che grid (van lay duoc thumbnail).
             try:
-                dom_ids = page.evaluate(
+                page.evaluate(
                     """() => {
-                      const seen = new Set();
-                      const out = [];
-                      const re = /\\/video\\/(\\d{15,})/;
-                      const reModal = /[?&](?:modal_id|aweme_id)=(\\d{15,})/i;
-                      const nodes = document.querySelectorAll(
-                        'a[href*="/video/"], a[href*="modal_id"], [src*="/video/"]'
-                      );
-                      for (const a of nodes) {
-                        const h = (a.getAttribute('href') || a.href || a.getAttribute('src') || '');
-                        if (/baiduspider/i.test(h)) continue;
-                        const m = h.match(re) || h.match(reModal);
-                        if (m && !seen.has(m[1])) { seen.add(m[1]); out.push(m[1]); }
+                      for (const el of document.querySelectorAll('button, [role="button"], div, span')) {
+                        const t = (el.innerText || '').trim();
+                        if (t === '×' || t === 'X' || t === '关闭' || t === '暂不登录' || t === '以后再说') {
+                          try { el.click(); } catch (e) {}
+                        }
                       }
-                      return out;
                     }"""
                 )
-                for vid in dom_ids or []:
-                    if vid in seen:
-                        continue
-                    seen.add(vid)
-                    ids.append(vid)
-                if dom_ids:
-                    log.info("Kenh Chrome DOM links=%d tong=%d", len(dom_ids), len(ids))
-            except Exception as e:  # noqa: BLE001
-                log.debug("list-channel DOM: %s", e)
+            except Exception:  # noqa: BLE001
+                pass
+
+            for attempt in range(3):
+                if not _still_short() or _remaining_ms(400) <= 400:
+                    break
+                if sec_uid:
+                    try:
+                        extra = page.evaluate(
+                            _PAGINATE_AWEME_JS,
+                            {
+                                "secUid": sec_uid,
+                                "limit": limit,
+                                "known": list(seen),
+                            },
+                        )
+                        for vid in extra or []:
+                            s = str(vid or "").strip()
+                            if not re.fullmatch(r"\d{10,}", s) or s in seen:
+                                continue
+                            seen.add(s)
+                            ids.append(s)
+                        log.info(
+                            "Kenh headless fetch lan %d: +%d tong=%d",
+                            attempt + 1,
+                            len(extra or []),
+                            len(ids),
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("list-channel fetch: %s", e)
+                added_dom = _collect_dom(page)
+                if added_dom:
+                    log.info("Kenh headless DOM +%d tong=%d", added_dom, len(ids))
+                page.wait_for_timeout(min(1200, max(400, _remaining_ms(400))))
+
             try:
                 context.close()
             except Exception:  # noqa: BLE001
@@ -1278,24 +1356,24 @@ def list_user_videos_with_chrome(
     if CHROME_LOCK is not None:
         CHROME_LOCK.acquire()
     try:
-        # Fetch unsigned trong trang: headless duoc (~8s). Headed chi khi 0 clip.
         try:
             _run(True)
         except Exception as e:  # noqa: BLE001
             log.warning("list-channel headless fail: %s", e)
-        if not ids and headed_fallback:
-            try:
-                _run(False)
-            except Exception as e:  # noqa: BLE001
-                log.warning("list-channel headed fail: %s", e)
+        # headed_fallback: KHONG mo cua so — user yeu cau.
+        if headed_fallback and not ids:
+            log.info("list-channel: bo headed_fallback (khong mo trinh duyet)")
     finally:
         if CHROME_LOCK is not None:
             CHROME_LOCK.release()
 
     if not ids:
-        raise RuntimeError("Khong bat duoc video cua kenh.")
-    # aweme id lon = moi hon
+        raise RuntimeError(
+            "Khong bat duoc video cua kenh (headless). "
+            "Mo Douyin tren Edge/Chrome, dang nhap neu can, roi Preview lai. "
+            "App khong mo cua so trinh duyet."
+        )
     uniq = sorted(set(ids), key=lambda x: int(x), reverse=True)
     out = [f"https://www.douyin.com/video/{v}" for v in uniq[:limit]]
-    log.info("Kenh Chrome liet ke %d video", len(out))
+    log.info("Kenh headless liet ke %d video (作品=%s)", len(out), expected or "?")
     return out

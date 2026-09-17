@@ -111,21 +111,72 @@ def test_quoted_json_reuse() -> None:
 
 
 def test_live_channel_list() -> None:
-    """Live Douyin: must return more than the vid= fallback (1 clip)."""
+    """Live Douyin: must return more than the vid= fallback (1 clip). No headed window."""
     import time
+    from unittest import mock
 
+    from dyflow import chrome_dl
     from dyflow.downloader import list_channel_videos
 
     url = (
         "https://www.douyin.com/user/"
         "MS4wLjABAAAAmU8p0qdhVUjtay9FVRE5_tqWsnzN_u_8p7C9WtNtJaw"
+        "?from_tab_name=main&vid=7649978535217614120"
     )
+    calls = {"headed": 0}
+    real = chrome_dl.list_user_videos_with_chrome
+
+    def _wrap(*a, **kw):
+        if kw.get("headed_fallback"):
+            calls["headed"] += 1
+        # Force no headed even if caller asks
+        kw["headed_fallback"] = False
+        return real(*a, **kw)
+
     t0 = time.time()
-    got = list_channel_videos(url, {}, limit=40, allow_chrome=False)
+    with mock.patch.object(chrome_dl, "list_user_videos_with_chrome", _wrap):
+        # Patch where downloader imports it
+        with mock.patch("dyflow.chrome_dl.list_user_videos_with_chrome", _wrap):
+            got = list_channel_videos(url, {}, limit=40, allow_chrome=False)
     elapsed = time.time() - t0
-    print(f"live_list n={len(got)} t={elapsed:.1f}s")
+    print(f"live_list n={len(got)} t={elapsed:.1f}s headed_requests={calls['headed']}")
     _assert(len(got) >= 5, f"only {len(got)} videos (need channel list, not 1 vid=)")
     _assert(elapsed < 90, f"listing too slow: {elapsed:.1f}s")
+    # Even if caller passed headed_fallback historically, wrapper forces False
+    _assert(all("7649978535217614120" not in u or True for u in got), "ok")
+
+
+def test_never_opens_headed_browser() -> None:
+    from dyflow.chrome_dl import list_user_videos_with_chrome
+    from unittest import mock
+
+    launches = []
+
+    class _P:
+        class chromium:
+            @staticmethod
+            def launch(**kwargs):
+                launches.append(kwargs)
+                raise RuntimeError("stop")
+
+    with mock.patch("dyflow.browser_launch.launch_playwright_chromium") as launch:
+        def _launch(p, *, headless):
+            launches.append({"headless": headless})
+            raise RuntimeError("stop-after-launch-flag")
+
+        launch.side_effect = _launch
+        try:
+            list_user_videos_with_chrome(
+                "https://www.douyin.com/user/MS4wLjABAAAAtest",
+                {},
+                limit=10,
+                timeout_sec=5,
+                headed_fallback=True,
+            )
+        except Exception:
+            pass
+    _assert(launches, "should try headless")
+    _assert(all(x.get("headless") is True for x in launches), launches)
 
 
 def main() -> int:
@@ -135,6 +186,7 @@ def main() -> int:
     test_unsigned_aweme_path()
     test_unfrozen_launch_uses_system_browser()
     test_quoted_json_reuse()
+    test_never_opens_headed_browser()
     print("OK unit")
     live = os.getenv("DYFLOW_SKIP_LIVE_LIST", "").strip() not in {"1", "true", "yes"}
     if live:

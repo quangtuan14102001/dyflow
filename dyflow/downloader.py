@@ -677,8 +677,10 @@ def list_channel_videos(
     if not merged and _stale():
         raise RuntimeError("cancelled")
 
-    # 1 video / 0 video: can Edge headless (khong mo cua so, khong mo lai .exe).
-    need_browser = (not merged) or (expected and len(merged) < min(limit, expected) and len(merged) <= 1)
+    # HTTP (ies/cookie) thuong tra rong. Chi dung Chromium HEADLESS — khong mo cua so.
+    need_browser = (not merged) or (
+        expected and len(merged) < min(limit, expected) and len(merged) <= 1
+    ) or (len(merged) <= 1 and limit > 1)
     if need_browser and not _stale():
         try:
             from .chrome_dl import list_user_videos_with_chrome
@@ -687,12 +689,12 @@ def list_channel_videos(
                 pc,
                 cfg,
                 limit=limit,
-                timeout_sec=25,
-                headed_fallback=True,
+                timeout_sec=45,
+                headed_fallback=False,
                 expected=expected,
             )
             if got:
-                log.info("Kenh %s: Edge headless liet ke %d video", pc[:70], len(got))
+                log.info("Kenh %s: headless liet ke %d video", pc[:70], len(got))
                 _absorb(got)
             else:
                 errors.append("headless khong thay video")
@@ -701,14 +703,14 @@ def list_channel_videos(
             log.warning("list_channel browser: %s", e)
 
     if allow_chrome:
-        log.debug("list_channel: khong mo cua so Chrome headed")
+        log.debug("list_channel: allow_chrome ignored (headed disabled)")
 
     if not merged:
         raise RuntimeError(" | ".join(errors) or "Khong liet ke duoc kenh")
     rows = [(_aweme_id_from_url(h) or i, h) for i, h in enumerate(merged)]
     out = _newest_urls(rows, limit=limit)
     log.info(
-        "Kenh %s: tong %d video (HTTP, 作品=%s)",
+        "Kenh %s: tong %d video (HTTP/headless, 作品=%s)",
         pc[:70],
         len(out),
         expected or "?",

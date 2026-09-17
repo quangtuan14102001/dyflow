@@ -47,13 +47,13 @@ def expand_sources(
                     resolved or u,
                     download_cfg,
                     limit=room,
-                    allow_chrome=allow_chrome,
+                    allow_chrome=False,
                 )
             except Exception as e:  # noqa: BLE001
-                # vid= tren link kenh: dung tam 1 clip, UI bao thieu danh sach
+                # Khong im lang fallback 1 clip vid= — do la ly do UI bao "1 video"
+                # khi kenh co 18. Chi fallback khi user chi xin 1 clip.
                 fallback = []
-                if has_channel:
-                    # embedded_video_urls bo qua channel URL — lay vid= truc tiep
+                if has_channel and room <= 1:
                     import re as _re
                     for m in _re.finditer(r"[?&]vid=(\d{10,})", text or "", _re.I):
                         fallback.append(f"https://www.douyin.com/video/{m.group(1)}")
@@ -65,14 +65,14 @@ def expand_sources(
                     chunk = fallback
                 else:
                     raise ValueError(
-                        "Khong lay duoc danh sach video cua kenh. "
-                        "Khong mo duoc danh sach kenh (cookie / Douyin chan). "
+                        "Khong lay duoc danh sach video cua kenh (khong mo cua so trinh duyet). "
+                        "Thu Preview lai; neu van loi, mo Douyin tren Edge/Chrome roi thu tiep. "
                         f"({e})"
                     ) from e
             if not chunk and not out:
                 raise ValueError(
-                    "Kenh khong co video (hoac Douyin chan). "
-                    "Thu lai sau khi mo Douyin tren trinh duyet, hoac dan link 1 video."
+                    "Kenh khong co video (hoac Douyin chan danh sach). "
+                    "Bam Preview costs lai. App khong mo cua so trinh duyet."
                 )
         else:
             chunk = [resolved or u]
