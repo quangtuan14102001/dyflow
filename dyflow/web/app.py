@@ -27,6 +27,8 @@ except Exception:  # noqa: BLE001
     pass
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.exception_handlers import http_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -36,6 +38,7 @@ from fastapi.responses import (
     Response,
     StreamingResponse,
 )
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -137,31 +140,50 @@ def _validate_douyin(url: str) -> str:
 
 
 def _items_from_quoted_json(raw: str, *, limit: int) -> list[dict]:
-    """Tai su dung bang gia UI — tranh liet ke kenh (Chrome) lan 2 khi bam Start."""
+    """Tai su dung bang gia UI — tranh liet ke kenh (Chrome) lan 2 khi bam Start.
+
+    Chap nhan: JSON list object, JSON list URL, object {items: [...]},
+    hoac text nhieu dong URL (WebView2 Windows hay lam vo quoted_json).
+    """
     text = (raw or "").strip()
     if not text or limit <= 0:
         return []
+    blob: object | None
     try:
         blob = json.loads(text)
     except json.JSONDecodeError:
-        return []
-    rows = blob if isinstance(blob, list) else []
+        blob = None
+    rows: list = []
+    if isinstance(blob, list):
+        rows = blob
+    elif isinstance(blob, dict):
+        inner = blob.get("items")
+        rows = inner if isinstance(inner, list) else []
+    if not rows:
+        from ..pipeline import extract_douyin_urls
+
+        urls = extract_douyin_urls(text, limit=limit)
+        rows = urls
     out: list[dict] = []
     seen: set[str] = set()
     for row in rows:
-        if not isinstance(row, dict):
+        credits = 1
+        if isinstance(row, str):
+            href = row.strip()
+        elif isinstance(row, dict):
+            href = str(row.get("url") or "").strip()
+            try:
+                credits = max(1, int(row.get("credits") or 1))
+            except (TypeError, ValueError):
+                credits = 1
+        else:
             continue
-        href = str(row.get("url") or "").strip()
         if not href or href in seen:
             continue
         try:
             href = _validate_douyin(href)
         except ValueError:
             continue
-        try:
-            credits = max(1, int(row.get("credits") or 1))
-        except (TypeError, ValueError):
-            credits = 1
         seen.add(href)
         out.append({"url": href, "credits": credits})
         if len(out) >= limit:
@@ -198,6 +220,18 @@ def _license_free_path(path: str) -> bool:
     if path.startswith("/static") or path.startswith("/api/license"):
         return True
     return path in ("/license", "/favicon.ico", "/api/ui-lang", "/robots.txt")
+
+
+@app.exception_handler(Exception)
+async def _unhandled_api_error(request: Request, exc: Exception):
+    """Windows WebView2: HTML/plain 500 -> UI chi hien 'Could not create job'."""
+    if isinstance(exc, (HTTPException, StarletteHTTPException, RequestValidationError)):
+        if isinstance(exc, RequestValidationError):
+            return JSONResponse({"detail": exc.errors()}, status_code=422)
+        return await http_exception_handler(request, exc)
+    log.exception("Unhandled %s %s", request.method, request.url.path)
+    msg = str(exc).strip() or exc.__class__.__name__
+    return JSONResponse({"detail": msg[:500]}, status_code=500)
 
 
 @app.middleware("http")
@@ -1309,10 +1343,11 @@ def api_create_job(
     sub_pos_y: str = Form(""),
     sub_scale: str = Form(""),
     logo: UploadFile | None = File(None),
-    videos: list[UploadFile] = File(default=[]),
+    videos: list[UploadFile] | None = File(None),
     channel_mode: str = Form("count"),
     channel_count: str = Form("10"),
     quoted_json: str = Form(""),
+    quoted_urls: str = Form(""),
 ):
     """Tao 1 hoac nhieu job: link Douyin (ke ca full kenh), hoac video local."""
     user = _require_user(request)
@@ -1339,10 +1374,13 @@ def api_create_job(
         assert_job_ready(cfg, {"voiceover": {"tts_engine": tts_cfg["tts_engine"]}})
     except RuntimeError as e:
         raise HTTPException(400, str(e)) from e
+    except NameError as e:
+        raise HTTPException(400, f"Pre-flight loi cau hinh: {e}") from e
 
     limit = _batch_limit()
     ch_lim = _channel_fetch_limit(channel_mode, channel_count)
-    uploads = [v for v in (videos or []) if v is not None and (v.filename or "").strip()]
+    upload_list = videos if isinstance(videos, list) else ([videos] if videos is not None else [])
+    uploads = [v for v in upload_list if v is not None and (v.filename or "").strip()]
     local_paths = _save_local_videos(uploads, limit=max(limit, ch_lim)) if uploads else []
 
     # Probe do dai + tinh credit (cung logic /api/quote) — xu ly full clip theo so credit
@@ -1351,10 +1389,20 @@ def api_create_job(
     room = max(limit, ch_lim) - len(local_paths)
     # Luon dung bang gia UI — Start khong liet ke kenh / mo Chrome lan 2.
     reused = _items_from_quoted_json(quoted_json, limit=room)
+    if not reused:
+        reused = _items_from_quoted_json(quoted_urls, limit=room)
     if reused:
         quoted_items = reused
         log.info("Tao job: tai su dung %d clip da bao gia", len(reused))
     elif (url or "").strip() and room > 0:
+        from ..pipeline import is_channel_url
+
+        if is_channel_url(url):
+            raise HTTPException(
+                400,
+                "Danh sach kenh chua toi duoc Start. Bam Preview costs truoc, "
+                "roi Start lai — khong mo Chrome lan 2.",
+            )
         try:
             quoted = quote.quote_urls(
                 url, dl_cfg, limit=room, channel_limit=min(ch_lim, room),
@@ -1362,6 +1410,9 @@ def api_create_job(
             )
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
+        except Exception as e:  # noqa: BLE001
+            log.exception("quote_urls luc tao job")
+            raise HTTPException(400, f"Khong tao duoc job tu link: {e}") from e
         quoted_items = list(quoted.get("items") or [])
 
     sources = [str(i["url"]) for i in quoted_items]
@@ -1413,18 +1464,22 @@ def api_create_job(
 
     ref = f"job-batch:{user['id']}:{int(time.time())}:{len(sources)}"
     trial = _trial_for_user(user)
-    result = models.create_jobs_with_trial(
-        user["id"],
-        sources,
-        voice,
-        lang,
-        costs,
-        ref,
-        trial_ok=bool(trial.get("active")),
-        tts_engine=tts_cfg["tts_engine"],
-        openai_model=tts_cfg["openai_model"],
-        output_opts_json=opts_json,
-    )
+    try:
+        result = models.create_jobs_with_trial(
+            user["id"],
+            sources,
+            voice,
+            lang,
+            costs,
+            ref,
+            trial_ok=bool(trial.get("active")),
+            tts_engine=tts_cfg["tts_engine"],
+            openai_model=tts_cfg["openai_model"],
+            output_opts_json=opts_json,
+        )
+    except Exception as e:  # noqa: BLE001
+        log.exception("create_jobs_with_trial")
+        raise HTTPException(500, f"Khong ghi duoc job vao database: {e}") from e
     if result is None:
         raise HTTPException(402, "Khong du credit. Vui long nap them.")
     job_ids, charged = result

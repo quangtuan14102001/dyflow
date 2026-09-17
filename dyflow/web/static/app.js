@@ -8,10 +8,29 @@ function _(key, fallback) {
 function _apiDetail(body, fallback) {
   const d = body && body.detail;
   if (Array.isArray(d)) {
-    const msg = d.map((x) => (x && x.msg) || x).filter(Boolean).join(" ");
+    const msg = d.map((x) => (x && (x.msg || x.message)) || x).filter(Boolean).join(" ");
     return msg || fallback;
   }
   if (typeof d === "string" && d.trim()) return d;
+  if (d && typeof d === "object") {
+    const msg = d.msg || d.message || d.error;
+    if (typeof msg === "string" && msg.trim()) return msg;
+  }
+  return fallback;
+}
+
+async function _readApiError(res, fallback) {
+  const raw = await res.text();
+  let body = {};
+  try {
+    body = raw ? JSON.parse(raw) : {};
+  } catch (_) {
+    body = {};
+  }
+  const fromJson = _apiDetail(body, "");
+  if (fromJson) return fromJson;
+  const plain = (raw || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  if (plain && plain.length < 400 && !/^<!doctype|^<html/i.test(plain)) return plain;
   return fallback;
 }
 
@@ -732,13 +751,34 @@ const DyflowHome = {
         if (ac) ac.abort();
         }, 120000);
       try {
-        const data = new FormData(form);
-        data.delete("videos");
+        // Khong dung FormData(form): WebView2 Windows gui file rong + mat quoted_json
+        // -> server 500 HTML -> UI chi hien "Could not create job".
+        const data = new FormData();
+        if (urlVal) data.set("url", urlVal);
+        data.set("voice", voiceVal);
+        data.set("lang", langVal);
+        data.set("tts", ttsVal);
+        const preset = document.getElementById("preset_name");
+        const speed = document.getElementById("video_speed");
+        const logoPos = document.getElementById("logo_position");
+        const logoSize = document.getElementById("logo_size_percent");
+        if (preset) data.set("preset_name", preset.value || "classic");
+        if (speed) data.set("video_speed", speed.value || "1.0");
+        if (logoPos) data.set("logo_position", logoPos.value || "top_right");
+        if (logoSize) data.set("logo_size_percent", logoSize.value || "10");
+        const ch = this._channelFields();
+        data.set("channel_mode", ch.channel_mode);
+        data.set("channel_count", ch.channel_count);
         locals.forEach((f) => data.append("videos", f, f.name));
         const logoOn = document.getElementById("logo-enable");
-        if (logoOn && !logoOn.checked) data.delete("logo");
-        if (this._lastQuoteItems && this._lastQuoteItems.length) {
-          data.set("quoted_json", JSON.stringify(this._lastQuoteItems));
+        const logoInput = document.getElementById("logo");
+        if (logoOn && logoOn.checked && logoInput && logoInput.files && logoInput.files[0]) {
+          data.set("logo", logoInput.files[0], logoInput.files[0].name);
+        }
+        const quoted = this._lastQuoteItems || [];
+        if (quoted.length) {
+          data.set("quoted_json", JSON.stringify(quoted));
+          data.set("quoted_urls", quoted.map((it) => it.url).filter(Boolean).join("\n"));
         }
         const res = await fetch("/api/jobs", {
           method: "POST",
@@ -751,8 +791,8 @@ const DyflowHome = {
           btn.textContent = _("start");
           return;
         }
+        if (!res.ok) throw new Error(await _readApiError(res, _("job_create_fail")));
         const body = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(_apiDetail(body, _("job_create_fail")));
         const ids = body.ids || (body.id ? [body.id] : []);
         if (ids.length > 1) {
           // nhieu job: ve trang chu de xem hang doi (2 luong chay song song)

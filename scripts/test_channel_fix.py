@@ -102,6 +102,12 @@ def test_quoted_json_reuse() -> None:
     items = _items_from_quoted_json(raw, limit=200)
     _assert(len(items) == 2, items)
     _assert(items[0]["credits"] == 1, items)
+    lines = (
+        "https://www.douyin.com/video/7681235453843394927\n"
+        "https://www.douyin.com/video/7681235453843394928"
+    )
+    items2 = _items_from_quoted_json(lines, limit=200)
+    _assert(len(items2) == 2, items2)
 
 
 def test_live_channel_list() -> None:

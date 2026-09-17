@@ -14,6 +14,12 @@ from .utils import log
 
 _DEV_ENVS = {"dev", "development", "local"}
 
+MISSING_OPENAI = (
+    "Thieu OPENAI_API_KEY. Job dung o pre-flight — chua tai video. "
+    "Ban Windows: key nam trong file .env canh VideosCreator.exe "
+    "hoac %LOCALAPPDATA%\\VideosCreator\\.env."
+)
+
 MISSING_TTS_OPENAI = (
     "Chua co key OpenAI TTS cua ban. Job dung o pre-flight — "
     "dan key sk-... (platform.openai.com) trong app de dung tts-1 / HD / mini. "
