@@ -128,15 +128,20 @@ def normalize_douyin_url(text: str) -> str:
     url = m.group(0) if m else text
     # bo ky tu thua cuoi (dau cau khi copy)
     url = url.rstrip(".,;:!?)】」』\"'")
+    # Kênh trước — giữ ?vid= để recover sec_uid sai (không đổi thành 1 clip).
+    ch = _CHANNEL_RE.search(url)
+    if ch:
+        base = ch.group(0).rstrip("/")
+        hint = _VID_QUERY_RE.search(url) or _MODAL_ID_RE.search(url)
+        if hint:
+            return f"{base}?vid={hint.group(1)}"
+        return base
     modal = _MODAL_ID_RE.search(url)
     if modal:
         return f"https://www.douyin.com/video/{modal.group(1)}"
     vid = _VIDEO_ID_RE.search(url)
     if vid:
         return f"https://www.douyin.com/video/{vid.group(1)}"
-    ch = _CHANNEL_RE.search(url)
-    if ch:
-        return ch.group(0).rstrip("/")
     if _is_douyin_non_video(url):
         raise ValueError(_NOT_VIDEO_MSG)
     if _SHORT_RE.search(url):

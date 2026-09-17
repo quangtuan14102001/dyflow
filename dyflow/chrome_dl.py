@@ -834,12 +834,56 @@ def sec_uid_from_user_url(url: str) -> str:
     return unquote(m.group(1)).strip() if m else ""
 
 
+def vid_from_url(url: str) -> str:
+    """Aweme id tu ?vid= / modal_id= / /video/ — dung de doi sec_uid sai tren link kenh."""
+    for rx in (
+        r"[?&](?:vid|modal_id|aweme_id)=(\d{10,})",
+        r"douyin\.com/(?:share/)?video/(\d{10,})",
+    ):
+        m = re.search(rx, url or "", re.I)
+        if m:
+            return m.group(1)
+    return ""
+
+
 def pc_user_url(url: str) -> str:
     """Trang PC /user/SEC — bo ?vid= (modal clip dang mo khong phai ca kenh)."""
     sec = sec_uid_from_user_url(url)
     if sec:
         return f"https://www.douyin.com/user/{sec}"
     return (url or "").split("#")[0].split("?")[0]
+
+
+_RESOLVE_AUTHOR_JS = """
+async (vid) => {
+  if (!vid) return '';
+  const tryFetch = async () => {
+    const r = await fetch(
+      '/aweme/v1/web/aweme/detail/?device_platform=webapp&aid=6383'
+      + '&channel=channel_pc_web&aweme_id=' + encodeURIComponent(vid),
+      { credentials: 'include', headers: { accept: 'application/json,text/plain,*/*' } }
+    );
+    const t = await r.text();
+    const j = JSON.parse(t);
+    const aweme = (j && j.aweme_detail)
+      || (j && j.aweme_list && j.aweme_list[0])
+      || null;
+    const author = (aweme && aweme.author) || {};
+    return String(author.sec_uid || author.secUid || '');
+  };
+  try {
+    let sec = await tryFetch();
+    if (sec) return sec;
+  } catch (e) {}
+  try {
+    const html = document.documentElement.innerHTML || '';
+    const re = /"sec_uid"\\s*:\\s*"(MS4wLjABAAAA[^"]+)"/;
+    const m = html.match(re);
+    if (m) return m[1];
+  } catch (e) {}
+  return '';
+}
+"""
 
 
 def _author_sec_uid(item: dict) -> str:
@@ -1121,6 +1165,7 @@ def list_user_videos_with_chrome(
         CHROME_LOCK = None
 
     sec_uid = sec_uid_from_user_url(url)
+    hint_vid = vid_from_url(url)
     clean_url = pc_user_url(url) or (url or "").split("#")[0].split("?")[0]
     sec_uid = sec_uid_from_user_url(clean_url) or sec_uid
     ids: list[str] = []
@@ -1131,6 +1176,7 @@ def list_user_videos_with_chrome(
     empty_streak = 0
     expected = max(0, int(expected or 0))
     deadline = time.monotonic() + max(12, int(timeout_sec or 40))
+    profile_invalid = False
 
     def _remaining_ms(floor: int = 1500) -> int:
         left = int((deadline - time.monotonic()) * 1000)
@@ -1218,7 +1264,7 @@ def list_user_videos_with_chrome(
         return len(ids) - before
 
     def _run(headless: bool) -> None:
-        nonlocal ids, has_more, expected, empty_streak, sec_uid
+        nonlocal ids, has_more, expected, empty_streak, sec_uid, clean_url, profile_invalid
         has_more = True
         empty_streak = 0
         with sync_playwright() as p:
@@ -1243,7 +1289,7 @@ def list_user_videos_with_chrome(
             page = context.pages[0] if context.pages else context.new_page()
 
             def on_response(resp) -> None:
-                nonlocal last_post_url, expected, sec_uid
+                nonlocal last_post_url, expected, sec_uid, profile_invalid
                 raw_url = resp.url or ""
                 low = (raw_url or "").lower()
                 if "aweme/v1/web/aweme/post" not in low and "user/profile/other" not in low:
@@ -1264,6 +1310,15 @@ def list_user_videos_with_chrome(
                 except Exception:
                     return
                 if "user/profile/other" in low and isinstance(data, dict):
+                    sc = data.get("status_code")
+                    if sc not in (0, None, "0") and not data.get("user"):
+                        profile_invalid = True
+                        log.warning(
+                            "profile/other invalid status=%s msg=%s",
+                            sc,
+                            data.get("status_msg"),
+                        )
+                        return
                     user = data.get("user") if isinstance(data.get("user"), dict) else {}
                     if user:
                         real = str(user.get("sec_uid") or user.get("secUid") or "").strip()
@@ -1281,12 +1336,64 @@ def list_user_videos_with_chrome(
                             expected or "?",
                         )
                     return
+                if isinstance(data, dict) and data.get("status_code") == 5:
+                    profile_invalid = True
+                    return
                 last_post_url = raw_url
                 n = _add_post_payload(data, raw_url)
                 if n:
                     log.info("aweme/post +%d tong=%d", n, len(ids))
 
             page.on("response", on_response)
+
+            def _resolve_author_from_vid(vid: str) -> str:
+                if not vid:
+                    return ""
+                goto_ms = _remaining_ms(2000)
+                if goto_ms <= 0:
+                    return ""
+                try:
+                    page.goto(
+                        f"https://www.douyin.com/video/{vid}",
+                        wait_until="domcontentloaded",
+                        timeout=min(45000, goto_ms),
+                    )
+                    page.wait_for_timeout(min(2800, max(900, _remaining_ms(900))))
+                    real = ""
+                    for _try in range(2):
+                        real = str(page.evaluate(_RESOLVE_AUTHOR_JS, vid) or "").strip()
+                        if real:
+                            break
+                        page.wait_for_timeout(800)
+                    if real:
+                        log.info(
+                            "list-channel: sec_uid tu vid=%s -> %s…",
+                            vid,
+                            real[:28],
+                        )
+                    return real
+                except Exception as e:  # noqa: BLE001
+                    log.warning("list-channel resolve author: %s", e)
+                    return ""
+
+            # Link /user/SEC?vid= thuong co SEC sai/loi copy — uu tien author tu clip.
+            if hint_vid:
+                real = _resolve_author_from_vid(hint_vid)
+                if real:
+                    if real != sec_uid:
+                        log.info(
+                            "list-channel: thay sec_uid path (%s…) bang author clip",
+                            (sec_uid or "")[:20],
+                        )
+                    sec_uid = real
+                    clean_url = f"https://www.douyin.com/user/{sec_uid}"
+                    profile_invalid = False
+                else:
+                    log.warning(
+                        "list-channel: khong resolve duoc author tu vid=%s, thu path SEC",
+                        hint_vid,
+                    )
+
             goto_ms = _remaining_ms(2000)
             if goto_ms <= 0:
                 return
@@ -1310,6 +1417,20 @@ def list_user_videos_with_chrome(
                 )
             except Exception:  # noqa: BLE001
                 pass
+
+            # Neu path SEC khong hop le ma con vid — resolve author roi doi URL.
+            if profile_invalid and hint_vid and _remaining_ms(1500) > 1500:
+                real = _resolve_author_from_vid(hint_vid)
+                if real and real != sec_uid:
+                    sec_uid = real
+                    clean_url = f"https://www.douyin.com/user/{sec_uid}"
+                    profile_invalid = False
+                    page.goto(
+                        clean_url,
+                        wait_until="domcontentloaded",
+                        timeout=min(45000, _remaining_ms(2000)),
+                    )
+                    page.wait_for_timeout(min(2500, max(800, _remaining_ms(800))))
 
             for attempt in range(3):
                 if not _still_short() or _remaining_ms(400) <= 400:
@@ -1336,6 +1457,27 @@ def list_user_videos_with_chrome(
                             len(extra or []),
                             len(ids),
                         )
+                        # status_code 5 / SEC sai: thu author tu vid= 1 lan.
+                        if (
+                            not extra
+                            and not ids
+                            and hint_vid
+                            and attempt == 0
+                            and _remaining_ms(2000) > 2000
+                        ):
+                            real = _resolve_author_from_vid(hint_vid)
+                            if real and real != sec_uid:
+                                sec_uid = real
+                                clean_url = f"https://www.douyin.com/user/{sec_uid}"
+                                page.goto(
+                                    clean_url,
+                                    wait_until="domcontentloaded",
+                                    timeout=min(45000, _remaining_ms(2000)),
+                                )
+                                page.wait_for_timeout(
+                                    min(2000, max(600, _remaining_ms(600)))
+                                )
+                                continue
                     except Exception as e:  # noqa: BLE001
                         log.warning("list-channel fetch: %s", e)
                 added_dom = _collect_dom(page)

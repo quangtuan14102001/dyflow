@@ -685,11 +685,15 @@ def list_channel_videos(
         try:
             from .chrome_dl import list_user_videos_with_chrome
 
+            # Giữ ?vid= — sec_uid trên path đôi khi sai; headless resolve author từ clip.
+            browser_url = raw if ("vid=" in (raw or "").lower() or "modal_id=" in (raw or "").lower()) else pc
+            # Extra time when we must open the clip first to recover the real sec_uid.
+            list_timeout = 70 if ("vid=" in (browser_url or "").lower()) else 55
             got = list_user_videos_with_chrome(
-                pc,
+                browser_url,
                 cfg,
                 limit=limit,
-                timeout_sec=45,
+                timeout_sec=list_timeout,
                 headed_fallback=False,
                 expected=expected,
             )

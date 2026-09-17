@@ -110,6 +110,35 @@ def test_quoted_json_reuse() -> None:
     _assert(len(items2) == 2, items2)
 
 
+def test_channel_normalize_keeps_vid() -> None:
+    from dyflow.pipeline import normalize_douyin_url, extract_douyin_urls
+
+    raw = (
+        "https://www.douyin.com/user/"
+        "MS4wLjABAAAAr7cM94IrRPrVqd5FcTKOxX2qV2_Z5DCLQI82IZJQYHwJBqVo4RiN4yuH5Gnq11Vq"
+        "?from_tab_name=main&vid=7679803336194854180"
+    )
+    got = normalize_douyin_url(raw)
+    _assert("vid=7679803336194854180" in got, got)
+    _assert("/user/" in got, got)
+    urls = extract_douyin_urls(raw)
+    _assert(len(urls) == 1 and "vid=7679803336194854180" in urls[0], urls)
+
+
+def test_vid_from_url_and_author_resolve_helpers() -> None:
+    from dyflow.chrome_dl import vid_from_url, pc_user_url, _RESOLVE_AUTHOR_JS
+
+    url = (
+        "https://www.douyin.com/user/"
+        "MS4wLjABAAAAr7cM94IrRPrVqd5FcTKOxX2qV2_Z5DCLQI82IZJQYHwJBqVo4RiN4yuH5Gnq11Vq"
+        "?from_tab_name=main&vid=7679803336194854180"
+    )
+    _assert(vid_from_url(url) == "7679803336194854180", vid_from_url(url))
+    _assert("vid=" not in pc_user_url(url), pc_user_url(url))
+    _assert("aweme/detail" in _RESOLVE_AUTHOR_JS, "need detail fetch")
+    _assert("sec_uid" in _RESOLVE_AUTHOR_JS, _RESOLVE_AUTHOR_JS[:80])
+
+
 def test_live_channel_list() -> None:
     """Live Douyin: must return more than the vid= fallback (1 clip). No headed window."""
     import time
@@ -179,11 +208,28 @@ def test_never_opens_headed_browser() -> None:
     _assert(all(x.get("headless") is True for x in launches), launches)
 
 
+def test_live_kk_channel_bad_sec_uid() -> None:
+    """User paste often has a slightly wrong sec_uid; resolve author from vid=."""
+    from dyflow.downloader import list_channel_videos
+
+    # Intentionally WRONG sec (O/J/11) — real author differs by 0/j/1I.
+    url = (
+        "https://www.douyin.com/user/"
+        "MS4wLjABAAAAr7cM94IrRPrVqd5FcTKOxX2qV2_Z5DCLQI82IZJQYHwJBqVo4RiN4yuH5Gnq11Vq"
+        "?from_tab_name=main&vid=7679803336194854180"
+    )
+    got = list_channel_videos(url, {}, limit=40, allow_chrome=False)
+    print(f"live_kk_bad_sec n={len(got)}")
+    _assert(len(got) >= 10, f"KK channel expected ~18 clips, got {len(got)}")
+
+
 def main() -> int:
     test_ytdlp_frozen_marker()
     test_browser_exe_not_this_python()
     test_frozen_launch_requires_system_browser()
     test_unsigned_aweme_path()
+    test_channel_normalize_keeps_vid()
+    test_vid_from_url_and_author_resolve_helpers()
     test_unfrozen_launch_uses_system_browser()
     test_quoted_json_reuse()
     test_never_opens_headed_browser()
@@ -192,6 +238,8 @@ def main() -> int:
     if live:
         test_live_channel_list()
         print("OK live list")
+        test_live_kk_channel_bad_sec_uid()
+        print("OK live KK")
     return 0
 
 
