@@ -48,6 +48,7 @@ for pkg in (
     "yt_dlp",
     "curl_cffi",
     "openai",
+    "playwright",
 ):
     try:
         d, b, h = collect_all(pkg)

@@ -51,16 +51,53 @@ def test_frozen_launch_requires_system_browser() -> None:
             bl.launch_headless_browser(_P())
             raise SystemExit("FAIL: frozen launch without browser should raise")
         except RuntimeError as e:
-            _assert("Edge" in str(e) or "Douyin" in str(e), str(e))
+            _assert("Edge" in str(e) or "Douyin" in str(e) or "Chrome" in str(e), str(e))
 
     with mock.patch.object(bl, "is_frozen", return_value=True), mock.patch.object(
         bl, "system_browser_exe", return_value="/tmp/msedge.exe"
     ):
         kwargs = bl.launch_headless_browser(_P())
-    _assert(kwargs.get("executable_path") == "/tmp/msedge.exe", kwargs)
+    # Windows prefers channel=msedge; other OS uses executable_path.
+    if kwargs.get("channel"):
+        _assert(kwargs.get("channel") == "msedge", kwargs)
+        _assert("executable_path" not in kwargs, kwargs)
+    else:
+        _assert(kwargs.get("executable_path") == "/tmp/msedge.exe", kwargs)
     _assert("--headless=new" not in (kwargs.get("args") or []), kwargs)
     _assert(kwargs.get("headless") is True, kwargs)
-    _assert(kwargs.get("executable_path") == "/tmp/msedge.exe", kwargs)
+
+
+def test_looks_like_chromium_argv() -> None:
+    from dyflow.browser_launch import looks_like_chromium_argv
+
+    _assert(looks_like_chromium_argv(["--type=gpu-process"]), "type=")
+    _assert(
+        looks_like_chromium_argv(
+            ["--no-sandbox", "--user-data-dir=/tmp/x", "--disable-gpu"]
+        ),
+        "chrome main",
+    )
+    _assert(not looks_like_chromium_argv(["--ytdlp", "-f", "best"]), "ytdlp")
+    _assert(not looks_like_chromium_argv([]), "empty")
+
+
+def test_refuse_self_as_browser() -> None:
+    from dyflow import browser_launch as bl
+
+    class _P:
+        class chromium:
+            @staticmethod
+            def launch(**kwargs):
+                return kwargs
+
+    with mock.patch.object(bl, "is_frozen", return_value=True), mock.patch.object(
+        bl, "system_browser_exe", return_value=sys.executable
+    ), mock.patch.object(bl, "_is_self_exe", return_value=True):
+        try:
+            bl.launch_playwright_chromium(_P(), headless=True)
+            raise SystemExit("FAIL: must refuse self exe")
+        except RuntimeError as e:
+            _assert("VideosCreator" in str(e) or "abort" in str(e).lower() or "trung" in str(e), str(e))
 
 
 def test_unsigned_aweme_path() -> None:
@@ -227,6 +264,8 @@ def main() -> int:
     test_ytdlp_frozen_marker()
     test_browser_exe_not_this_python()
     test_frozen_launch_requires_system_browser()
+    test_looks_like_chromium_argv()
+    test_refuse_self_as_browser()
     test_unsigned_aweme_path()
     test_channel_normalize_keeps_vid()
     test_vid_from_url_and_author_resolve_helpers()

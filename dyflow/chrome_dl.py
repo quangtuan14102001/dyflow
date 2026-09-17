@@ -479,23 +479,19 @@ def _chrome_session_download(
                 browser = None
                 context = None
         else:
-            exe = None
             try:
-                from .browser_launch import system_browser_exe
+                from .browser_launch import launch_persistent_context
 
-                exe = system_browser_exe()
-            except Exception:  # noqa: BLE001
-                exe = None
-            persist_kwargs = dict(common_kwargs)
-            if exe:
-                persist_kwargs["executable_path"] = exe
-            try:
-                context = p.chromium.launch_persistent_context(
+                # Never launch without Edge/Chrome — frozen exe would reopen itself.
+                context = launch_persistent_context(
+                    p,
                     user_data_dir=str(profile),
                     headless=False,
-                    **persist_kwargs,
+                    locale=common_kwargs.get("locale") or "zh-CN",
+                    viewport=common_kwargs.get("viewport") or {"width": 1280, "height": 900},
+                    args=common_kwargs.get("args") or None,
                 )
-                log.info("Browser persistent OK exe=%s", exe or "bundled")
+                log.info("Browser persistent OK (system Edge/Chrome)")
             except Exception as e:  # noqa: BLE001
                 launch_errs.append(f"persistent: {e}")
                 log.warning("persistent fail: %s", e)

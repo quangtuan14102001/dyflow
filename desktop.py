@@ -311,20 +311,27 @@ def _win_alert(msg: str) -> None:
 
 
 if __name__ == "__main__":
+    # BEFORE any heavy import: Playwright may spawn VideosCreator.exe as a fake
+    # Chromium (with --type= / --user-data-dir / …). Exit instantly — no window.
+    if getattr(sys, "frozen", False) and len(sys.argv) > 1:
+        try:
+            from dyflow.browser_launch import looks_like_chromium_argv
+
+            if looks_like_chromium_argv(sys.argv[1:]):
+                raise SystemExit(0)
+        except SystemExit:
+            raise
+        except Exception:
+            # Fallback if import fails in a broken install.
+            if any(a.startswith("--type=") for a in sys.argv[1:]):
+                raise SystemExit(0)
+
     import multiprocessing
 
     multiprocessing.freeze_support()
     # Frozen helper: yt-dlp / demucs — KHONG mo cua so, KHONG bind port.
     if getattr(sys, "frozen", False) and len(sys.argv) > 1:
         argv1 = sys.argv[1]
-        # Playwright launched VideosCreator.exe as a fake Chromium.
-        if argv1.startswith("--type=") or argv1 in {
-            "--headless",
-            "--headless=new",
-            "--gpu-process",
-            "--utility-sub-type=network.mojom.NetworkService",
-        } or any(a.startswith("--type=") for a in sys.argv[1:]):
-            raise SystemExit(0)
         if argv1 == "--ytdlp":
             from dyflow.utils import ensure_media_bins, ytdlp_ffmpeg_args
 
