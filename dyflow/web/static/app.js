@@ -1302,6 +1302,14 @@ const DyflowHome = {
     this._setQuoteLoading(true, waitMsg);
     if (totalEl) totalEl.textContent = "…";
 
+    // Channel list must not spin for minutes if Edge hangs.
+    let quoteTimer = null;
+    if (this._quoteAbort && this._isChannelText(text)) {
+      quoteTimer = setTimeout(() => {
+        try { this._quoteAbort.abort(); } catch (_) { /* ignore */ }
+      }, 45000);
+    }
+
     try {
       const data = new FormData();
       data.set("url", text);
@@ -1345,8 +1353,13 @@ const DyflowHome = {
       this._lastQuoteItems = [];
       this._lastQuoteStatus = "";
       this._lastQuoteTotal = "";
-      this._quoteError = ex.message || _("quote_fail");
+      const aborted = ex && (ex.name === "AbortError" || /aborted/i.test(String(ex.message || "")));
+      this._quoteError = aborted
+        ? (_("quote_channel_timeout") || "Channel listing timed out (~45s). Close Edge/Chrome, then Preview again.")
+        : (ex.message || _("quote_fail"));
       this._fillQuoteBox();
+    } finally {
+      if (quoteTimer) clearTimeout(quoteTimer);
     }
   },
 

@@ -1170,9 +1170,12 @@ def list_user_videos_with_chrome(
     last_post_url = ""
     last_cursor = 0
     empty_streak = 0
+    # Hard cap — Windows Edge launch can hang forever without this.
+    timeout_sec = max(12, min(int(timeout_sec or 40), 45))
     expected = max(0, int(expected or 0))
-    deadline = time.monotonic() + max(12, int(timeout_sec or 40))
+    deadline = time.monotonic() + timeout_sec
     profile_invalid = False
+    run_err: list[BaseException] = []
 
     def _remaining_ms(floor: int = 1500) -> int:
         left = int((deadline - time.monotonic()) * 1000)
@@ -1283,6 +1286,11 @@ def list_user_videos_with_chrome(
                     pass
 
             page = context.pages[0] if context.pages else context.new_page()
+            try:
+                page.set_default_timeout(12_000)
+                page.set_default_navigation_timeout(18_000)
+            except Exception:  # noqa: BLE001
+                pass
 
             def on_response(resp) -> None:
                 nonlocal last_post_url, expected, sec_uid, profile_invalid
@@ -1354,13 +1362,13 @@ def list_user_videos_with_chrome(
                         wait_until="domcontentloaded",
                         timeout=min(45000, goto_ms),
                     )
-                    page.wait_for_timeout(min(2800, max(900, _remaining_ms(900))))
+                    page.wait_for_timeout(min(1200, max(400, _remaining_ms(400))))
                     real = ""
                     for _try in range(2):
                         real = str(page.evaluate(_RESOLVE_AUTHOR_JS, vid) or "").strip()
                         if real:
                             break
-                        page.wait_for_timeout(800)
+                        page.wait_for_timeout(400)
                     if real:
                         log.info(
                             "list-channel: sec_uid tu vid=%s -> %s…",
@@ -1398,7 +1406,7 @@ def list_user_videos_with_chrome(
                 wait_until="domcontentloaded",
                 timeout=min(45000, goto_ms),
             )
-            page.wait_for_timeout(min(3000, max(800, _remaining_ms(800))))
+            page.wait_for_timeout(min(1500, max(400, _remaining_ms(400))))
             # Dong overlay login neu che grid (van lay duoc thumbnail).
             try:
                 page.evaluate(
@@ -1415,7 +1423,7 @@ def list_user_videos_with_chrome(
                 pass
 
             # Neu path SEC khong hop le ma con vid — resolve author roi doi URL.
-            if profile_invalid and hint_vid and _remaining_ms(1500) > 1500:
+            if profile_invalid and hint_vid and _remaining_ms(1200) > 1200:
                 real = _resolve_author_from_vid(hint_vid)
                 if real and real != sec_uid:
                     sec_uid = real
@@ -1424,12 +1432,12 @@ def list_user_videos_with_chrome(
                     page.goto(
                         clean_url,
                         wait_until="domcontentloaded",
-                        timeout=min(45000, _remaining_ms(2000)),
+                        timeout=min(18000, _remaining_ms(1500)),
                     )
-                    page.wait_for_timeout(min(2500, max(800, _remaining_ms(800))))
+                    page.wait_for_timeout(min(1000, max(300, _remaining_ms(300))))
 
-            for attempt in range(3):
-                if not _still_short() or _remaining_ms(400) <= 400:
+            for attempt in range(2):
+                if not _still_short() or _remaining_ms(300) <= 300:
                     break
                 if sec_uid:
                     try:
@@ -1453,13 +1461,16 @@ def list_user_videos_with_chrome(
                             len(extra or []),
                             len(ids),
                         )
+                        # Enough clips — stop early (whole-channel Preview).
+                        if len(ids) >= min(limit, 10) or (expected and len(ids) >= min(limit, expected)):
+                            break
                         # status_code 5 / SEC sai: thu author tu vid= 1 lan.
                         if (
                             not extra
                             and not ids
                             and hint_vid
                             and attempt == 0
-                            and _remaining_ms(2000) > 2000
+                            and _remaining_ms(1500) > 1500
                         ):
                             real = _resolve_author_from_vid(hint_vid)
                             if real and real != sec_uid:
@@ -1468,10 +1479,10 @@ def list_user_videos_with_chrome(
                                 page.goto(
                                     clean_url,
                                     wait_until="domcontentloaded",
-                                    timeout=min(45000, _remaining_ms(2000)),
+                                    timeout=min(18000, _remaining_ms(1500)),
                                 )
                                 page.wait_for_timeout(
-                                    min(2000, max(600, _remaining_ms(600)))
+                                    min(800, max(300, _remaining_ms(300)))
                                 )
                                 continue
                     except Exception as e:  # noqa: BLE001
@@ -1479,7 +1490,9 @@ def list_user_videos_with_chrome(
                 added_dom = _collect_dom(page)
                 if added_dom:
                     log.info("Kenh headless DOM +%d tong=%d", added_dom, len(ids))
-                page.wait_for_timeout(min(1200, max(400, _remaining_ms(400))))
+                if len(ids) >= min(limit, 10):
+                    break
+                page.wait_for_timeout(min(600, max(200, _remaining_ms(200))))
 
             try:
                 context.close()
@@ -1491,25 +1504,53 @@ def list_user_videos_with_chrome(
                 except Exception:  # noqa: BLE001
                     pass
 
+    locked = False
     if CHROME_LOCK is not None:
-        CHROME_LOCK.acquire()
+        locked = CHROME_LOCK.acquire(timeout=8)
+        if not locked:
+            raise RuntimeError(
+                "Edge dang ban (job khac dang dung). Doi vai giay roi Preview lai."
+            )
     try:
-        try:
-            _run(True)
-        except Exception as e:  # noqa: BLE001
-            log.warning("list-channel headless fail: %s", e)
-        # headed_fallback: KHONG mo cua so — user yeu cau.
+        import concurrent.futures
+
+        def _job() -> None:
+            try:
+                _run(True)
+            except BaseException as e:  # noqa: BLE001
+                run_err.append(e)
+                log.warning("list-channel headless fail: %s", e)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            fut = pool.submit(_job)
+            try:
+                fut.result(timeout=timeout_sec + 2)
+            except concurrent.futures.TimeoutError:
+                if ids:
+                    log.warning(
+                        "list-channel timeout %ss nhung da co %d clip",
+                        timeout_sec,
+                        len(ids),
+                    )
+                else:
+                    log.warning("list-channel hard timeout %ss", timeout_sec)
+                    raise RuntimeError(
+                        f"Lay danh sach kenh qua lau (>{timeout_sec}s). "
+                        "Edge co the bi treo — dong Edge/Chrome roi Preview lai."
+                    ) from None
         if headed_fallback and not ids:
             log.info("list-channel: bo headed_fallback (khong mo trinh duyet)")
     finally:
-        if CHROME_LOCK is not None:
+        if locked and CHROME_LOCK is not None:
             CHROME_LOCK.release()
 
     if not ids:
+        extra = f" ({run_err[0]})" if run_err else ""
         raise RuntimeError(
             "Khong bat duoc video cua kenh (headless). "
             "Mo Douyin tren Edge/Chrome, dang nhap neu can, roi Preview lai. "
             "App khong mo cua so trinh duyet."
+            + extra
         )
     uniq = sorted(set(ids), key=lambda x: int(x), reverse=True)
     out = [f"https://www.douyin.com/video/{v}" for v in uniq[:limit]]

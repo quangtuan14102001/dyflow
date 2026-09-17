@@ -631,9 +631,13 @@ def list_channel_videos(
     raw = resolve_share_url(extract_url(url))
     pc = pc_user_url(raw) or raw
     sec = sec_uid_from_user_url(pc) or sec_uid_from_user_url(raw)
+    from .chrome_dl import vid_from_url
+
+    hint_vid = vid_from_url(raw) or vid_from_url(url)
     cfg = cfg or {}
     limit = max(1, min(int(limit or 40), 200))
-    expected = _http_user_aweme_count(sec) if sec else 0
+    # Sai sec_uid + HTTP timeout lam Preview quay 5+ phut — skip khi co vid=.
+    expected = 0 if hint_vid else (_http_user_aweme_count(sec) if sec else 0)
     if expected:
         log.info("Kenh %s: profile 作品=%d", pc[:70], expected)
     errors: list[str] = []
@@ -649,23 +653,24 @@ def list_channel_videos(
 
     cookies_path, _from_browser = _ytdlp_cookies(cfg)
     try:
-        if sec:
+        # Co vid= → uu tien headless resolve author (HTTP voi SEC sai chi mat thoi gian).
+        if sec and not hint_vid:
             for vid in _http_ies_aweme_post(sec, limit):
                 href = f"https://www.douyin.com/video/{vid}"
                 _absorb([href])
-        if len(merged) < limit and cookies_path and sec:
-            from http.cookiejar import MozillaCookieJar
-            import urllib.request
+            if len(merged) < limit and cookies_path:
+                from http.cookiejar import MozillaCookieJar
+                import urllib.request
 
-            jar = MozillaCookieJar()
-            try:
-                jar.load(cookies_path, ignore_discard=True, ignore_expires=True)
-            except Exception:  # noqa: BLE001
                 jar = MozillaCookieJar()
-            opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
-            for vid in _http_aweme_post(opener, sec, limit):
-                href = f"https://www.douyin.com/video/{vid}"
-                _absorb([href])
+                try:
+                    jar.load(cookies_path, ignore_discard=True, ignore_expires=True)
+                except Exception:  # noqa: BLE001
+                    jar = MozillaCookieJar()
+                opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+                for vid in _http_aweme_post(opener, sec, limit):
+                    href = f"https://www.douyin.com/video/{vid}"
+                    _absorb([href])
         if merged:
             log.info("Kenh %s: HTTP liet ke %d video", pc[:70], len(merged))
         else:
@@ -687,8 +692,8 @@ def list_channel_videos(
 
             # Giữ ?vid= — sec_uid trên path đôi khi sai; headless resolve author từ clip.
             browser_url = raw if ("vid=" in (raw or "").lower() or "modal_id=" in (raw or "").lower()) else pc
-            # Extra time when we must open the clip first to recover the real sec_uid.
-            list_timeout = 70 if ("vid=" in (browser_url or "").lower()) else 55
+            # Cap 35s — Edge treo tren Windows khong duoc quay 400s.
+            list_timeout = 35 if hint_vid else 30
             got = list_user_videos_with_chrome(
                 browser_url,
                 cfg,
