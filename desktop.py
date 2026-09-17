@@ -326,9 +326,15 @@ if __name__ == "__main__":
         } or any(a.startswith("--type=") for a in sys.argv[1:]):
             raise SystemExit(0)
         if argv1 == "--ytdlp":
+            from dyflow.utils import ensure_media_bins, ytdlp_ffmpeg_args
+
+            ensure_media_bins()
+            rest = list(sys.argv[2:])
+            if "--ffmpeg-location" not in rest:
+                rest = [*ytdlp_ffmpeg_args(), *rest]
             from yt_dlp import main as ytdlp_main
 
-            sys.argv = ["yt-dlp", *sys.argv[2:]]
+            sys.argv = ["yt-dlp", *rest]
             raise SystemExit(ytdlp_main())
         if argv1 == "--demucs":
             from demucs.separate import main as demucs_main

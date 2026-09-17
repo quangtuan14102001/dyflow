@@ -127,6 +127,12 @@ def prepare() -> Path:
     bins = extra_bin_dir()
     if bins and bins.is_dir():
         os.environ["PATH"] = str(bins) + os.pathsep + os.environ.get("PATH", "")
+    try:
+        from .utils import ensure_media_bins
+
+        ensure_media_bins()
+    except Exception:
+        pass
 
     cfg_path = root / "config.yaml"
     bundled = resource_root() / "config.yaml"

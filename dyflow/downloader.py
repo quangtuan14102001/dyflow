@@ -9,6 +9,7 @@ Thu tu:
 """
 from __future__ import annotations
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -19,7 +20,7 @@ from pathlib import Path
 
 from . import cookies as cookie_util
 from . import dl_cache
-from .utils import log, run, check_tool, probe_has_audio, probe_duration, ytdlp_argv
+from .utils import log, run, check_tool, probe_has_audio, probe_duration, ytdlp_argv, ytdlp_ffmpeg_args
 
 # Cache do dai remote (tranh probe lai khi user goi quote nhieu lan)
 _DURATION_CACHE: dict[str, tuple[float, float]] = {}  # key -> (expires, seconds)
@@ -723,8 +724,10 @@ def _build_ytdlp_cmd(
     cookies_file: str | None = None,
     cookies_from_browser: str | None = None,
 ) -> list[str]:
+    ff_args = ytdlp_ffmpeg_args()
     cmd = [
         *ytdlp_argv(),
+        *ff_args,
         "--no-playlist",
         "--retries", str(cfg.get("retries", 3)),
         "--no-warnings",
@@ -733,11 +736,13 @@ def _build_ytdlp_cmd(
         "-o", out_tmpl,
     ]
     max_dur = float(cfg.get("max_duration_sec") or 0)
-    if max_dur > 0:
-        # chi tai doan dau — tranh keo clip 40+ phut
+    if max_dur > 0 and ff_args:
+        # chi tai doan dau — tranh keo clip 40+ phut. Can ffmpeg that.
         end = max(5.0, max_dur + 5.0)
         cmd += ["--download-sections", f"*{0}-{end}"]
         cmd += ["--force-keyframes-at-cuts"]
+    elif max_dur > 0:
+        log.warning("Bo --download-sections: khong thay ffmpeg (yt-dlp se abort neu van cat doan)")
     if cfg.get("fetch_subs", True):
         cmd += [
             "--write-subs",
@@ -758,8 +763,14 @@ def _build_ytdlp_cmd(
 
 
 def _run_ytdlp(cmd: list[str]) -> subprocess.CompletedProcess:
+    from .utils import ensure_media_bins
+
+    ensure_media_bins()
     log.debug("RUN: %s", " ".join(str(c) for c in cmd))
-    return subprocess.run([str(c) for c in cmd], capture_output=True, text=True)
+    kw: dict = {"capture_output": True, "text": True, "env": os.environ.copy()}
+    if sys.platform == "win32":
+        kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    return subprocess.run([str(c) for c in cmd], **kw)
 
 
 def _latest_mp4(out_dir: Path) -> Path | None:

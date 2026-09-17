@@ -171,6 +171,9 @@ def run_forever(config_path: str = "config.yaml", stop_event: threading.Event | 
 
 
 def _run_forever(config_path: str = "config.yaml", stop_event: threading.Event | None = None) -> None:
+    from ..utils import ensure_media_bins
+
+    ensure_media_bins()
     cfg = load_config(config_path)
     models.init_db()
     recovered = models.recover_stale()

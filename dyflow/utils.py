@@ -2,9 +2,11 @@
 from __future__ import annotations
 import json
 import logging
+import os
 import random
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import yaml
@@ -41,15 +43,106 @@ def deep_merge(base: dict, override: dict) -> dict:
     return out
 
 
+def _bin_name(tool: str) -> str:
+    if sys.platform == "win32" and not tool.lower().endswith(".exe"):
+        return f"{tool}.exe"
+    return tool
+
+
+def media_bin_dir() -> Path | None:
+    """Thu muc chua ffmpeg/ffprobe that (ke ca ban frozen Windows)."""
+    names = (_bin_name("ffmpeg"),)
+    cands: list[Path] = []
+    if getattr(sys, "frozen", False):
+        cands.append(Path(sys.executable).resolve().parent)
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            cands.append(Path(meipass))
+            cands.append(Path(meipass) / "_internal")
+    cands.append(Path(__file__).resolve().parents[1])
+    cands.append(Path.cwd())
+    extra = os.environ.get("DYFLOW_FFMPEG_DIR", "").strip()
+    if extra:
+        cands.insert(0, Path(extra))
+    seen: set[str] = set()
+    for folder in cands:
+        try:
+            key = str(folder.resolve())
+        except OSError:
+            key = str(folder)
+        if key in seen:
+            continue
+        seen.add(key)
+        if not folder.is_dir():
+            continue
+        exe = folder / names[0]
+        if exe.is_file() and exe.stat().st_size > 100_000:
+            return folder
+    which = shutil.which("ffmpeg")
+    if which:
+        p = Path(which)
+        if p.is_file() and p.stat().st_size > 100_000:
+            return p.resolve().parent
+    return None
+
+
+def ffmpeg_path() -> str:
+    folder = media_bin_dir()
+    if folder:
+        p = folder / _bin_name("ffmpeg")
+        if p.is_file():
+            return str(p)
+    return "ffmpeg"
+
+
+def ffprobe_path() -> str:
+    folder = media_bin_dir()
+    if folder:
+        p = folder / _bin_name("ffprobe")
+        if p.is_file():
+            return str(p)
+    found = shutil.which("ffprobe")
+    return found or "ffprobe"
+
+
+def ensure_media_bins() -> Path | None:
+    """Dua ffmpeg vao PATH — bat buoc cho yt-dlp --download-sections."""
+    folder = media_bin_dir()
+    if folder is None:
+        return None
+    cur = os.environ.get("PATH", "")
+    prefix = str(folder)
+    if cur.split(os.pathsep)[:1] != [prefix]:
+        os.environ["PATH"] = prefix + os.pathsep + cur
+    return folder
+
+
+def ytdlp_ffmpeg_args() -> list[str]:
+    folder = ensure_media_bins()
+    if not folder:
+        return []
+    return ["--ffmpeg-location", str(folder)]
+
+
+def _resolve_media_cmd(cmd: list[str]) -> list[str]:
+    if not cmd:
+        return cmd
+    name = Path(str(cmd[0])).name.lower()
+    if name in {"ffmpeg", "ffmpeg.exe"}:
+        return [ffmpeg_path(), *[str(c) for c in cmd[1:]]]
+    if name in {"ffprobe", "ffprobe.exe"}:
+        return [ffprobe_path(), *[str(c) for c in cmd[1:]]]
+    return [str(c) for c in cmd]
+
+
 def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
     """Chay 1 command, raise neu loi, log gon."""
-    import sys
-
+    cmd = _resolve_media_cmd(cmd)
     log.debug("RUN: %s", " ".join(str(c) for c in cmd))
     if sys.platform == "win32" and "creationflags" not in kw:
         kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
     proc = subprocess.run(
-        [str(c) for c in cmd],
+        cmd,
         capture_output=True,
         text=True,
         **kw,
@@ -129,8 +222,6 @@ def probe_video_size(path: str | Path) -> tuple[int, int]:
 
 def ytdlp_argv() -> list[str]:
     """Goi yt-dlp. Frozen exe dung --ytdlp (khong mo cua so app moi)."""
-    import sys
-
     if getattr(sys, "frozen", False):
         return [sys.executable, "--ytdlp"]
     wrapper = Path(__file__).resolve().parents[1] / "scripts" / "run_ytdlp.py"
@@ -144,6 +235,13 @@ def ytdlp_argv() -> list[str]:
 
 def check_tool(name: str) -> bool:
     if name == "yt-dlp":
+        if getattr(sys, "frozen", False):
+            return True
         wrapper = Path(__file__).resolve().parents[1] / "scripts" / "run_ytdlp.py"
         return wrapper.is_file() or shutil.which("yt-dlp") is not None
+    if name in {"ffmpeg", "ffprobe"}:
+        folder = media_bin_dir()
+        if folder and (folder / _bin_name(name)).is_file():
+            return True
+        return shutil.which(name) is not None
     return shutil.which(name) is not None

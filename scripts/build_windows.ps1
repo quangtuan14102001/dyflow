@@ -9,12 +9,14 @@ Set-Location (Split-Path -Parent $PSScriptRoot)
 & $Python -m pip install -r requirements.txt -r requirements-desktop.txt
 & $Python -m PyInstaller --noconfirm --clean VideosCreator.spec
 
-$ffmpeg = Get-Command ffmpeg -ErrorAction SilentlyContinue
-if ($ffmpeg) {
-  Copy-Item $ffmpeg.Source "dist\VideosCreator\ffmpeg.exe" -Force
-  Write-Host "Copied ffmpeg.exe"
+$ffmpegScript = Join-Path $PSScriptRoot "copy_ffmpeg_win.ps1"
+if (Test-Path $ffmpegScript) {
+  & $ffmpegScript -DestDir "dist\VideosCreator"
+  if (Test-Path "dist\VideosCreator\_internal") {
+    & $ffmpegScript -DestDir "dist\VideosCreator\_internal"
+  }
 } else {
-  Write-Host "WARN: ffmpeg not on PATH. Copy ffmpeg.exe next to VideosCreator.exe"
+  Write-Host "WARN: thieu copy_ffmpeg_win.ps1"
 }
 
 $readme = Join-Path $PSScriptRoot "WINDOWS_README.txt"
