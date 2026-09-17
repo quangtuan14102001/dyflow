@@ -52,8 +52,10 @@ jobs:
           Copy-Item $dll dist\VideosCreator\VideosCreatorWebView.dll -Force
           Copy-Item scripts\WINDOWS_README.txt dist\VideosCreator\README.txt -Force
           Get-Item dist\VideosCreator\VideosCreator.exe, dist\VideosCreator\ffmpeg.exe, dist\VideosCreator\ffprobe.exe, dist\VideosCreator\VideosCreatorWebView.dll
-          & dist\VideosCreator\ffmpeg.exe -version | Select-Object -First 1
-          if ($LASTEXITCODE -ne 0) { throw "ffmpeg.exe copy khong chay duoc" }
+          $ver = & dist\VideosCreator\ffmpeg.exe -version 2>&1 | Out-String
+          Write-Host $ver.Substring(0, [Math]::Min(180, $ver.Length))
+          if ($ver -notmatch "ffmpeg version") { throw "ffmpeg.exe copy khong chay duoc" }
+          if ((Get-Item dist\VideosCreator\ffmpeg.exe).Length -lt 5MB) { throw "ffmpeg.exe van la shim" }
 
       - name: Bundle OPENAI_API_KEY into dist .env
         env:
