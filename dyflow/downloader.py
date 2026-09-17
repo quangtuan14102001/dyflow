@@ -692,8 +692,8 @@ def list_channel_videos(
 
             # Giữ ?vid= — sec_uid trên path đôi khi sai; headless resolve author từ clip.
             browser_url = raw if ("vid=" in (raw or "").lower() or "modal_id=" in (raw or "").lower()) else pc
-            # Cap 35s — Edge treo tren Windows khong duoc quay 400s.
-            list_timeout = 35 if hint_vid else 30
+            # Cap — Edge treo khong quay 400s; van du cho resolve vid= + paginate.
+            list_timeout = 40
             got = list_user_videos_with_chrome(
                 browser_url,
                 cfg,

@@ -1307,7 +1307,7 @@ const DyflowHome = {
     if (this._quoteAbort && this._isChannelText(text)) {
       quoteTimer = setTimeout(() => {
         try { this._quoteAbort.abort(); } catch (_) { /* ignore */ }
-      }, 45000);
+      }, 55000);
     }
 
     try {
@@ -1355,7 +1355,7 @@ const DyflowHome = {
       this._lastQuoteTotal = "";
       const aborted = ex && (ex.name === "AbortError" || /aborted/i.test(String(ex.message || "")));
       this._quoteError = aborted
-        ? (_("quote_channel_timeout") || "Channel listing timed out (~45s). Close Edge/Chrome, then Preview again.")
+        ? (_("quote_channel_timeout") || "Channel listing timed out (~55s). Close Edge/Chrome, then Preview again.")
         : (ex.message || _("quote_fail"));
       this._fillQuoteBox();
     } finally {

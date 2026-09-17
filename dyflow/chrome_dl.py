@@ -1155,10 +1155,8 @@ def list_user_videos_with_chrome(
     limit = max(1, min(int(limit or 40), 200))
     cookies_file = Path(cfg.get("cookies_file") or "./cookies_douyin.txt")
 
-    try:
-        from .web.locks import CHROME_LOCK
-    except Exception:  # noqa: BLE001
-        CHROME_LOCK = None
+    # Ephemeral headless — KHONG dung CHROME_LOCK (lock do danh cho profile persistent
+    # cua download). Lock 8s gay loi "Edge dang ban" moi lan Preview lai.
 
     sec_uid = sec_uid_from_user_url(url)
     hint_vid = vid_from_url(url)
@@ -1170,12 +1168,10 @@ def list_user_videos_with_chrome(
     last_post_url = ""
     last_cursor = 0
     empty_streak = 0
-    # Hard cap — Windows Edge launch can hang forever without this.
-    timeout_sec = max(12, min(int(timeout_sec or 40), 45))
+    timeout_sec = max(15, min(int(timeout_sec or 40), 50))
     expected = max(0, int(expected or 0))
     deadline = time.monotonic() + timeout_sec
     profile_invalid = False
-    run_err: list[BaseException] = []
 
     def _remaining_ms(floor: int = 1500) -> int:
         left = int((deadline - time.monotonic()) * 1000)
@@ -1504,53 +1500,20 @@ def list_user_videos_with_chrome(
                 except Exception:  # noqa: BLE001
                     pass
 
-    locked = False
-    if CHROME_LOCK is not None:
-        locked = CHROME_LOCK.acquire(timeout=8)
-        if not locked:
-            raise RuntimeError(
-                "Edge dang ban (job khac dang dung). Doi vai giay roi Preview lai."
-            )
     try:
-        import concurrent.futures
-
-        def _job() -> None:
-            try:
-                _run(True)
-            except BaseException as e:  # noqa: BLE001
-                run_err.append(e)
-                log.warning("list-channel headless fail: %s", e)
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            fut = pool.submit(_job)
-            try:
-                fut.result(timeout=timeout_sec + 2)
-            except concurrent.futures.TimeoutError:
-                if ids:
-                    log.warning(
-                        "list-channel timeout %ss nhung da co %d clip",
-                        timeout_sec,
-                        len(ids),
-                    )
-                else:
-                    log.warning("list-channel hard timeout %ss", timeout_sec)
-                    raise RuntimeError(
-                        f"Lay danh sach kenh qua lau (>{timeout_sec}s). "
-                        "Edge co the bi treo — dong Edge/Chrome roi Preview lai."
-                    ) from None
-        if headed_fallback and not ids:
-            log.info("list-channel: bo headed_fallback (khong mo trinh duyet)")
-    finally:
-        if locked and CHROME_LOCK is not None:
-            CHROME_LOCK.release()
+        _run(True)
+    except Exception as e:  # noqa: BLE001
+        log.warning("list-channel headless fail: %s", e)
+        if not ids:
+            raise RuntimeError(f"list-channel fail: {e}") from e
+    if headed_fallback and not ids:
+        log.info("list-channel: bo headed_fallback (khong mo trinh duyet)")
 
     if not ids:
-        extra = f" ({run_err[0]})" if run_err else ""
         raise RuntimeError(
             "Khong bat duoc video cua kenh (headless). "
             "Mo Douyin tren Edge/Chrome, dang nhap neu can, roi Preview lai. "
             "App khong mo cua so trinh duyet."
-            + extra
         )
     uniq = sorted(set(ids), key=lambda x: int(x), reverse=True)
     out = [f"https://www.douyin.com/video/{v}" for v in uniq[:limit]]
