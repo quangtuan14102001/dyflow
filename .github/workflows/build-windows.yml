@@ -37,6 +37,16 @@ jobs:
         shell: pwsh
         run: ./packaging/build_win_webview.ps1
 
+      - name: Stamp build tag
+        shell: pwsh
+        run: |
+          $tag = "{0}.{1}" -f (Get-Date -Format "yyMMdd"), $env:GITHUB_RUN_NUMBER
+          Write-Host "BUILD_TAG=$tag"
+          $py = Get-Content dyflow\build_info.py -Raw
+          $py = $py -replace 'BUILD_TAG = "dev"', ('BUILD_TAG = "{0}"' -f $tag)
+          Set-Content dyflow\build_info.py -Value $py -Encoding utf8
+          "$tag" | Set-Content build_tag.txt -Encoding ascii -NoNewline
+
       - name: PyInstaller
         run: python -m PyInstaller --noconfirm --clean VideosCreator.spec
 
@@ -51,6 +61,7 @@ jobs:
           if (-not (Test-Path $dll)) { throw "Thieu $dll" }
           Copy-Item $dll dist\VideosCreator\VideosCreatorWebView.dll -Force
           Copy-Item scripts\WINDOWS_README.txt dist\VideosCreator\README.txt -Force
+          Copy-Item build_tag.txt dist\VideosCreator\build.txt -Force
           Get-Item dist\VideosCreator\VideosCreator.exe, dist\VideosCreator\ffmpeg.exe, dist\VideosCreator\ffprobe.exe, dist\VideosCreator\VideosCreatorWebView.dll
           $ver = & dist\VideosCreator\ffmpeg.exe -version 2>&1 | Out-String
           Write-Host $ver.Substring(0, [Math]::Min(180, $ver.Length))

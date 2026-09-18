@@ -2798,6 +2798,15 @@ body.studio .container-studio {
   text-decoration: none;
 }
 
+.studio-build {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  text-align: center;
+  opacity: 0.75;
+}
+
 .studio-desk {
   display: grid !important;
   grid-template-columns: minmax(0, 1fr) 42% !important;

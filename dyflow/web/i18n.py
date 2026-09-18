@@ -1606,6 +1606,7 @@ def template_globals(request: Request) -> dict[str, Any]:
             return voice_id or ""
         return t(lang, key)
 
+    from ..build_info import build_tag as _build_tag
     from ..desktop_mode import enabled as desktop_on
     from ..license_key import public_status
     from . import auth as _auth
@@ -1622,4 +1623,5 @@ def template_globals(request: Request) -> dict[str, Any]:
         "brand_domain": BRAND_DOMAIN,
         "desktop": desktop_on(),
         "license": public_status(user=user),
+        "build": _build_tag(),
     }
