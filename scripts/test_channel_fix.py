@@ -77,8 +77,15 @@ def test_looks_like_chromium_argv() -> None:
         ),
         "chrome main",
     )
+    _assert(
+        looks_like_chromium_argv(
+            ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
+        ),
+        "playwright args",
+    )
     _assert(not looks_like_chromium_argv(["--ytdlp", "-f", "best"]), "ytdlp")
     _assert(not looks_like_chromium_argv([]), "empty")
+    _assert(not looks_like_chromium_argv(["--no-sandbox"]), "single hint ok")
 
 
 def test_refuse_self_as_browser() -> None:

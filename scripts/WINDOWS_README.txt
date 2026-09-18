@@ -18,6 +18,8 @@ VideosCreator (Windows)
 1. Giai nen zip o thu muc nao cung duoc: Downloads, Desktop, o D:, USB...
    Xoa folder giai nen cu truoc — dung de de file moi len folder cu.
 2. Double-click VideosCreator.exe. Do la app desktop — khong can file .bat.
+   Neu bam .exe ma khong hien cua so: Task Manager (Ctrl+Shift+Esc) →
+   End task tat ca VideosCreator.exe → mo lai. (Instance cu co the treo ngam.)
 3. Lan dau doi 1-3 phut. Neu bao timeout 127.0.0.1: Settings -> Network -> Proxy
    -> tat proxy cho localhost.
    Neu bao thieu WebView2: cai Evergreen Runtime

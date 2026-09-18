@@ -182,23 +182,13 @@ def looks_like_chromium_argv(argv: list[str] | None = None) -> bool:
     joined = " ".join(args).lower()
     if any(a.startswith("--type=") for a in args):
         return True
-    if any(
-        a in {"--headless", "--headless=new", "--headless=old", "--gpu-process"}
-        for a in args
-    ):
+    if any(a.startswith("--headless") for a in args):
         return True
     if "--remote-debugging-pipe" in joined or "--remote-debugging-port" in joined:
         return True
-    hints = (
-        "--user-data-dir",
-        "--no-sandbox",
-        "--disable-gpu",
-        "--mute-audio",
-        "--disable-blink-features",
-        "--enable-features=",
-        "--disable-features=",
-        "--ozone-platform",
-        "--first-renderer-process",
-    )
-    hits = sum(1 for a in args if any(a.startswith(h) for h in hints))
-    return hits >= 2
+    # Main Chromium process (no --type=): need strong signal pair.
+    if "--user-data-dir" in joined and "--no-sandbox" in joined:
+        return True
+    if "--disable-blink-features" in joined and "--no-sandbox" in joined:
+        return True
+    return False

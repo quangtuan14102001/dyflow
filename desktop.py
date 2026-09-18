@@ -64,6 +64,24 @@ def _log_startup(msg: str) -> None:
     print(msg, flush=True)
 
 
+def _win_focus_existing() -> bool:
+    """Dua cua so VideosCreator dang mo len foreground. True neu tim thay."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        hwnd = user32.FindWindowW(None, "VideosCreator")
+        if not hwnd:
+            return False
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        user32.SetForegroundWindow(hwnd)
+        return True
+    except Exception:
+        return False
+
+
 def _win_claim_gui() -> bool:
     """True = instance dau (duoc mo UI). Instance 2 thoat — tranh 3 cua so app."""
     if sys.platform != "win32":
@@ -78,11 +96,38 @@ def _win_claim_gui() -> bool:
         return True
 
 
+def _win_already_running_exit() -> int:
+    """Khi mutex da co: thu focus cua so; neu khong — bao user tat process zombie."""
+    _log_startup("already running — skip extra window")
+    if _win_focus_existing():
+        return 0
+    # Co process giu mutex nhung khong co cua so (treo sau Playwright / crash WebView).
+    try:
+        opener = _no_proxy_opener()
+        opener.open("http://127.0.0.1:8765/", timeout=2)
+        webbrowser.open("http://127.0.0.1:8765/")
+        _win_alert(
+            "VideosCreator dang chay ngam (khong thay cua so).\n"
+            "Da mo http://127.0.0.1:8765/ tren trinh duyet.\n\n"
+            "Muon cua so app: Task Manager → End task VideosCreator.exe → mo lai."
+        )
+        return 0
+    except Exception:
+        pass
+    _win_alert(
+        "VideosCreator dang chay nhung khong mo duoc cua so.\n\n"
+        "Lam theo:\n"
+        "1) Ctrl+Shift+Esc (Task Manager)\n"
+        "2) End task tat ca VideosCreator.exe\n"
+        "3) Mo lai VideosCreator.exe"
+    )
+    return 0
+
+
 def main() -> int:
     if sys.platform == "win32" and getattr(sys, "frozen", False):
         if not _win_claim_gui():
-            _log_startup("already running — skip extra window")
-            return 0
+            return _win_already_running_exit()
     from dyflow.desktop_mode import prepare
 
     prepare()
@@ -311,27 +356,26 @@ def _win_alert(msg: str) -> None:
 
 
 if __name__ == "__main__":
-    # BEFORE any heavy import: Playwright may spawn VideosCreator.exe as a fake
-    # Chromium (with --type= / --user-data-dir / …). Exit instantly — no window.
-    if getattr(sys, "frozen", False) and len(sys.argv) > 1:
-        try:
-            from dyflow.browser_launch import looks_like_chromium_argv
-
-            if looks_like_chromium_argv(sys.argv[1:]):
-                raise SystemExit(0)
-        except SystemExit:
-            raise
-        except Exception:
-            # Fallback if import fails in a broken install.
-            if any(a.startswith("--type=") for a in sys.argv[1:]):
-                raise SystemExit(0)
-
     import multiprocessing
 
+    # freeze_support PHAI chay som tren Windows frozen.
     multiprocessing.freeze_support()
-    # Frozen helper: yt-dlp / demucs — KHONG mo cua so, KHONG bind port.
+
+    # Playwright co the spawn VideosCreator.exe nhu Chromium — thoat ngay, khong UI.
+    # Khong import dyflow o day (tranh crash truoc khi mo cua so).
     if getattr(sys, "frozen", False) and len(sys.argv) > 1:
-        argv1 = sys.argv[1]
+        _args = sys.argv[1:]
+        _join = " ".join(_args).lower()
+        _is_chrome = (
+            any(a.startswith("--type=") for a in _args)
+            or any(a.startswith("--headless") for a in _args)
+            or "--remote-debugging" in _join
+            or ("--user-data-dir" in _join and "--no-sandbox" in _join)
+            or ("--disable-blink-features" in _join and "--no-sandbox" in _join)
+        )
+        if _is_chrome:
+            raise SystemExit(0)
+        argv1 = _args[0]
         if argv1 == "--ytdlp":
             from dyflow.utils import ensure_media_bins, ytdlp_ffmpeg_args
 
