@@ -1,0 +1,14 @@
+[
+  {
+    "id": "dasheng_wentian_09_vi",
+    "source": "https://v.douyin.com/rc9FSYa16OE/",
+    "script": "AUTO",
+    "voiceover": {
+      "audio_mode": "dub"
+    },
+    "export": {
+      "fit": "source",
+      "formats": ["source"]
+    }
+  }
+]
