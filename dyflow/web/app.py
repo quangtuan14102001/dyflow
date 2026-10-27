@@ -1520,7 +1520,7 @@ def api_create_job(
     ac_color: str = Form(""),
     ac_vignette: str = Form(""),
     ac_blur_sub: str = Form(""),
-    ac_blur_sub_mode: str = Form("bottom"),
+    ac_blur_sub_mode: str = Form("auto_ai"),
     ac_pitch: str = Form(""),
     ac_zoom: str = Form(""),
     ac_speed: str = Form(""),

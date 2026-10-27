@@ -270,11 +270,11 @@ def blur_hardsubs_ocr(
     nframes = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
 
     # 1. Xac dinh ROI (Vung phu de day man hinh):
-    # Video doc 9:16 (h > w): phu de nam trong khoang 62% -> 94% chieu cao
-    # Video ngang 16:9 (w >= h): phu de nam trong khoang 70% -> 96% chieu cao
+    # Video doc 9:16 (h > w): phu de nam trong khoang 55% -> 95% chieu cao (bao gom ca phim ngan co sub cao)
+    # Video ngang 16:9 (w >= h): phu de nam trong khoang 65% -> 96% chieu cao
     is_portrait = h > w
-    roi_top_default = 0.62 if is_portrait else 0.70
-    roi_bot_default = 0.94 if is_portrait else 0.96
+    roi_top_default = 0.55 if is_portrait else 0.65
+    roi_bot_default = 0.95 if is_portrait else 0.96
 
     roi_top = float(cfg.get("ocr_roi_top", roi_top_default))
     roi_bot = float(cfg.get("ocr_roi_bottom", roi_bot_default))

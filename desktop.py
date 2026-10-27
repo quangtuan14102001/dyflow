@@ -20,12 +20,25 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 
-# Uu tien nap ban va patch dong tu AppData neu co
+# Uu tien nap ban va patch dong tu AppData neu co (truoc bat ky import dyflow nao)
 try:
-    from dyflow.desktop_mode import data_dir
-    _patch_dir = data_dir() / "patch"
-    if _patch_dir.is_dir() and str(_patch_dir) not in sys.path:
-        sys.path.insert(0, str(_patch_dir))
+    if sys.platform == "win32":
+        _appdata = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        _patch_dir = Path(_appdata) / "VideosCreator" / "patch"
+    elif sys.platform == "darwin":
+        _patch_dir = Path.home() / "Library" / "Application Support" / "VideosCreator" / "patch"
+    else:
+        _patch_dir = Path.home() / ".config" / "videoscreator" / "patch"
+
+    if _patch_dir.is_dir():
+        if str(_patch_dir) not in sys.path:
+            sys.path.insert(0, str(_patch_dir))
+        _patch_dyflow = _patch_dir / "dyflow"
+        if _patch_dyflow.is_dir():
+            import dyflow
+            _pstr = str(_patch_dyflow.resolve())
+            if _pstr not in dyflow.__path__:
+                dyflow.__path__.insert(0, _pstr)
 except Exception:
     pass
 

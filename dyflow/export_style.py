@@ -267,7 +267,7 @@ ANTI_COPYRIGHT_PRESETS: dict[str, dict[str, Any]] = {
         "color_shift": True,   # Tinh chinh contrast=1.04, saturation=1.06, gamma=0.98
         "vignette": False,
         "blur_sub": True,      # Che mo chu phu de goc o day clip (BAT MAC DINH theo yeu cau user)
-        "blur_sub_mode": "bottom",
+        "blur_sub_mode": "auto_ai",
         "pitch_shift": True,   # Dich tone am thanh nen +2.5% tranh acoustic fingerprint
         "micro_zoom": False,
         "speed": 1.03,         # Tang toc nhe 1.03x
@@ -280,7 +280,7 @@ ANTI_COPYRIGHT_PRESETS: dict[str, dict[str, Any]] = {
         "color_shift": True,   # Chinh mau vi mo
         "vignette": True,      # Vien toi 4 goc
         "blur_sub": True,      # Che mo dai phu de goc o chan video
-        "blur_sub_mode": "bottom",
+        "blur_sub_mode": "auto_ai",
         "pitch_shift": True,   # Dich tone am thanh nen
         "micro_zoom": True,    # Micro zoom 1.04x
         "speed": 1.04,         # Tang toc 1.04x
@@ -316,10 +316,10 @@ def normalize_output_opts(raw: dict[str, Any] | None) -> dict[str, Any]:
     if ac_mode not in ANTI_COPYRIGHT_MODES:
         ac_mode = "standard"
 
-    # blur_sub_mode: bottom (mac dinh) | center | auto_ai | ocr | off
-    bs_mode = str(raw.get("ac_blur_sub_mode") or raw.get("blur_sub_mode") or "bottom").strip().lower()
+    # blur_sub_mode: auto_ai (AI OCR tracking mac dinh) | bottom | center | bottom_full | off
+    bs_mode = str(raw.get("ac_blur_sub_mode") or raw.get("blur_sub_mode") or "auto_ai").strip().lower()
     if bs_mode not in BLUR_SUB_MODES:
-        bs_mode = "bottom"
+        bs_mode = "auto_ai"
 
     if "ac_blur_sub" in raw and raw.get("ac_blur_sub") is not None and str(raw.get("ac_blur_sub")).strip() != "":
         blur_sub_explicit = _opt_bool(raw.get("ac_blur_sub"))
@@ -495,11 +495,13 @@ def resolve_ass_style(
         margin_v = 0
     elif "margin_v" in cfg_cap and cfg_cap.get("margin_v") is not None and str(cfg_cap.get("margin_v")).strip() != "":
         margin_v = int(cfg_cap.get("margin_v"))
-    elif play_w >= play_h or play_h <= 1080:
-        # Video ngang (16:9, source 1080p/720p): MarginV ~7.5% chieu cao de nam gon chinh giua dai mo
-        margin_v = max(35, int(round(float(play_h) * 0.075)))
+    elif play_w >= play_h:
+        # Video ngang (16:9): Tam vet mo o y=91.75% -> MarginV can giua khoang 6.5% chieu cao
+        margin_v = max(35, int(round(float(play_h) * 0.065)))
     else:
-        margin_v = int(cfg_cap.get("margin_v", 220))
+        # Video doc (9:16): Tam vet mo o y=86.25% -> MarginV can giua khoang 12.0% chieu cao
+        # (vi du: 1080x1920 -> MarginV=230px, 720x1280 -> MarginV=154px)
+        margin_v = max(45, int(round(float(play_h) * 0.120)))
     return {
         "preset_name": name,
         "fontname": font_name,

@@ -332,10 +332,10 @@ def compose(video: str | Path, voice: str | Path | None, script: str,
 
     if ac_enabled:
         blur_sub_on = bool(ac_cfg.get("blur_sub", True))
-        blur_sub_mode = str(ac_cfg.get("blur_sub_mode") or "bottom").lower()
+        blur_sub_mode = str(ac_cfg.get("blur_sub_mode") or "auto_ai").lower()
     elif "blur_sub" in ac_cfg:
         blur_sub_on = bool(ac_cfg.get("blur_sub"))
-        blur_sub_mode = str(ac_cfg.get("blur_sub_mode") or "bottom").lower()
+        blur_sub_mode = str(ac_cfg.get("blur_sub_mode") or "auto_ai").lower()
     else:
         blur_sub_on = bool(
             cfg.get("caption", {}).get(
@@ -346,7 +346,7 @@ def compose(video: str | Path, voice: str | Path | None, script: str,
         blur_sub_mode = str(
             cfg.get("caption", {}).get("blur_sub_mode")
             or cfg.get("transform", {}).get("blur_burned_subs", {}).get("mode")
-            or "bottom"
+            or "auto_ai"
         ).lower()
 
     active_video = video
@@ -376,13 +376,17 @@ def compose(video: str | Path, voice: str | Path | None, script: str,
         cap_w, cap_h = ASPECT.get(cfg_exp.get("formats", ["9:16"])[0], (1080, 1920))
 
     # Neu AI OCR phat hien dong chu phu de goc -> can vi tri Sub tieng Viet vao dung tam vet mo!
-    if ocr_done and ocr_meta.get("detected") and ocr_meta.get("margin_v"):
+    if ocr_done and ocr_meta.get("detected") and ocr_meta.get("y_center"):
         scale_y = cap_h / max(1, src_h)
-        detected_mv = int(ocr_meta["margin_v"] * scale_y)
-        cfg_cap["margin_v"] = max(40, detected_mv - 10)
+        scaled_y_center = int(ocr_meta["y_center"] * scale_y)
+        # ASS Alignment=2: MarginV tinh tu day len mep duoi dong chu.
+        # De tam dong chu trung voi tam vet mo:
+        fs_est = int(cfg_cap.get("fontsize") or round(cap_h * 0.028))
+        target_mv = (cap_h - scaled_y_center) - int(fs_est * 0.60)
+        cfg_cap["margin_v"] = max(35, min(int(cap_h * 0.85), target_mv))
         log.info(
-            "AI OCR can toa do Sub tieng Viet: MarginV=%d (y_center=%d canvas=%dx%d)",
-            cfg_cap["margin_v"], ocr_meta.get("y_center", 0), cap_w, cap_h,
+            "AI OCR can toa do Sub tieng Viet: MarginV=%d (y_center=%d scaled=%d canvas=%dx%d fs=%d)",
+            cfg_cap["margin_v"], ocr_meta.get("y_center", 0), scaled_y_center, cap_w, cap_h, fs_est,
         )
 
     # tao caption ASS 1 lan (PlayRes khop khung hinh xuat)

@@ -1529,7 +1529,7 @@ const DyflowHome = {
     });
 
     try {
-      const savedBsMode = localStorage.getItem("dyflow_ac_blur_sub_mode") || "bottom";
+      const savedBsMode = localStorage.getItem("dyflow_ac_blur_sub_mode") || "auto_ai";
       if (blurSubMode) blurSubMode.value = savedBsMode;
 
       const savedMode = localStorage.getItem("dyflow_ac_mode") || "standard";
