@@ -48,7 +48,7 @@ for pkg in (
     "yt_dlp",
     "curl_cffi",
     "openai",
-    "playwright",
+    "f2",
 ):
     try:
         d, b, h = collect_all(pkg)
@@ -67,7 +67,10 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["tkinter", "matplotlib", "pytest", "webview", "pythonnet", "clr", "clr_loader"],
+    excludes=[
+        "tkinter", "matplotlib", "pytest", "webview", "pythonnet", "clr", "clr_loader",
+        "playwright", "playwright.sync_api", "playwright.async_api",
+    ],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
@@ -87,7 +90,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
-    disable_windowed_traceback=True,
+    disable_windowed_traceback=False,
     icon=str(_icon) if _icon.exists() else None,
     version=str(_ver) if _ver.is_file() else None,
 )

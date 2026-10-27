@@ -39,11 +39,11 @@ def _backup(path: Path) -> Path:
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Merge dub segments (slot ngan / qua_dai)")
-    p.add_argument("work_dir", nargs="?", default="work/hemorrhoid_care_vi_edge")
+    p.add_argument("work_dir", nargs="?", default="work/review_sample")
     p.add_argument(
         "--pairs",
-        default="3,4 8,9 12,13 14,15",
-        help='Cap gop "left,right" (mac dinh phase 1 hemorrhoid)',
+        default="",
+        help='Cap gop "left,right" (vd. "3,4 8,9"). De trong = khong gop theo cap.',
     )
     p.add_argument(
         "--ids",

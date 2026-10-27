@@ -1,4 +1,3 @@
 # Chi dung khi dong goi app desktop / .exe
 pywebview>=5.0
 pyinstaller>=6.3.0
-playwright>=1.40.0

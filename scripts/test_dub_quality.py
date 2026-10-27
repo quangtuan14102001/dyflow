@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """QA dub doc lap — bang so sanh duration goc vs TTS vs sau xu ly.
 
-  python scripts/test_dub_quality.py work/hemorrhoid_care_vi_edge
+  python scripts/test_dub_quality.py work/<job>
   python scripts/test_dub_quality.py work/<job> --resynth
   python scripts/test_dub_quality.py work/<job> --from-translate --resynth --fail
 """

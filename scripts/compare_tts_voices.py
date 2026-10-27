@@ -13,9 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output" / "voice_compare"
 MODELS = ROOT / "work" / "tts_models"
 TEXT = (
-    "Cục trĩ lòi ra, nhét không vào! Bạn chưa dùng cái này! "
-    "Ngồi lâu, mê cay — nhìn hậu môn ngay! "
-    "Hành lắm! Gel Hoa Hướng Dương này đó. Đừng chịu đau!"
+    "Xin chào. Đây là mẫu thử giọng VideosCreator. "
+    "Hôm nay trời đẹp, mình đi dạo công viên một chút rồi về nhà pha trà."
 )
 
 PIPER_ONNX = (

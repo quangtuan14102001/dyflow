@@ -17,18 +17,18 @@ VideosCreator (Windows)
 
 1. Giai nen zip o thu muc nao cung duoc: Downloads, Desktop, o D:, USB...
    Xoa folder giai nen cu truoc — dung de de file moi len folder cu.
-2. Double-click VideosCreator.exe. Do la app desktop — khong can file .bat.
-   Neu bam .exe ma khong hien cua so: Task Manager (Ctrl+Shift+Esc) →
-   End task tat ca VideosCreator.exe → mo lai. (Instance cu co the treo ngam.)
-3. Lan dau doi 1-3 phut. Neu bao timeout 127.0.0.1: Settings -> Network -> Proxy
-   -> tat proxy cho localhost.
-   Neu bao thieu WebView2: cai Evergreen Runtime
+2. Double-click VideosCreator.exe (hoặc file Chay-VideosCreator.bat).
+   - Nếu muốn dùng trực tiếp trên trình duyệt Web (Chrome/Edge): Double-click Chay-Trinh-Duyet.bat.
+   - Nếu bấm mà không hiện cửa sổ:
+     + Hãy chạy file Kiem-Tra-Loi.bat để kiểm tra thông báo lỗi chi tiết.
+     + Hoặc mở file crash.log trong thư mục để gửi cho bên hỗ trợ.
+     + Kiểm tra Task Manager (Ctrl+Shift+Esc) → End task các tiến trình VideosCreator cũ nếu có.
+3. Nếu máy chưa cài WebView2 Runtime, app sẽ tự động mở trên Trình Duyệt Web để bạn sử dụng ngay.
+   Để dùng dạng cửa sổ phần mềm, bạn có thể tải WebView2 miễn phí:
    https://go.microsoft.com/fwlink/p/?LinkId=2124703
-   (Windows 11 thuong da co san).
+   (Windows 11 thường đã có sẵn).
 4. Dan license key (VC1-...) vao o kich hoat. Het han thi dan key moi.
-5. Lay danh sach kenh: KHONG mo cua so Chrome/Edge. Dung Edge/Chrome headless
-   trong nen. Neu Preview chi ra 1 clip (vid=): bam Preview lai; dam bao dang
-   nhap Douyin tren Edge neu kenh yeu cau login.
-6. Video xuat nam o: %LOCALAPPDATA%\VideosCreator\output
-7. OPENAI_API_KEY da kem trong file .env (cung thu muc .exe). Khong can dien.
-   Muon doi key: sua .env canh exe, hoac %LOCALAPPDATA%\VideosCreator\.env
+5. Link /user/SEC (±?vid=) = kênh. Link /user/...?modal_id= = 1 video dang mo.
+6. Video xuat nam o: %LOCALAPPDATA%\VideosCreator\output (hoac thu muc Save tren app).
+7. App mac dinh dung Edge-TTS (mien phi, khong can API key) va DeepSeek/OpenAI cho dich thuat. Co the dan key truc tiep trong phan Cai dat tren giao dien app.
+

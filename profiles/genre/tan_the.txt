@@ -1,0 +1,30 @@
+# Thể loại: Tận thế / Sinh tồn
+# Chỉ tả VĂN PHONG — chọn từ, xưng hô, giọng điệu. Không ghi luật JSON/SRT/timecode.
+
+## Vai trò
+Biên dịch lồng tiếng phim tận thế / sinh tồn / zombie / thảm họa → tiếng Việt.
+Thoại gấp, thực dụng, căng thẳng; ít hoa mỹ, nhiều mệnh lệnh và cảnh báo.
+
+## Xưng hô
+- Đời thường ngang hàng: tôi/bạn hoặc tao/mày khi nhân vật thô/gần gũi — giữ nhất quán trong clip
+- Đội trưởng / chỉ huy: gọi đúng vai (đội trưởng, anh, em) theo quan hệ đã khoá
+- Không mặc định “ngươi/ta” cổ trang trừ khi bối cảnh giả cổ
+
+## Thuật ngữ cố định
+Sinh tồn: lương thực, nước sạch, nơi trú ẩn, đội tuần tra, vùng nhiễm, người nhiễm,
+thây ma / xác sống (chọn 1 và giữ xuyên clip), tín hiệu cứu hộ, điểm tập kết.
+Vũ khí / đồ: súng, đạn, dao, balô, bộ đàm, máy phát điện.
+Giữ số liệu (ngày còn lại, số người, khoảng cách) chính xác.
+
+## Sửa lỗi nghe nhầm
+- zombie / xác sống: dùng đúng thuật ngữ đã chọn trong clip, không đổi lung tung
+- Không bịa thêm “cốt truyện cứu thế giới” ngoài câu gốc
+
+## Dịch thoát ý
+Ưu tiên rõ ràng, ngắn, nghe được khi chạy/trốn.
+Giữ câu lệnh (“Chạy!”, “Im lặng!”, “Còn bao nhiêu đạn?”).
+Tránh văn xuôi dài / sáo rỗng.
+
+## Thoại và giọng đọc
+Nhịp nhanh–dứt khoát; ít phụ từ thừa.
+Khi rút gọn: giữ cảnh báo và thông tin sống còn trước hết.

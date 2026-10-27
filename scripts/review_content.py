@@ -23,10 +23,15 @@ from dyflow.utils import load_config, log, probe_duration  # noqa: E402
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Review noi dung dich vs zh goc")
-    p.add_argument("work_dir", nargs="?", default="work/hemorrhoid_care_vi_edge")
+    p.add_argument("work_dir", nargs="?", default="work/review_sample")
     p.add_argument("--fix-zero", action="store_true", help="Dich lai doan #0 truoc khi review")
     p.add_argument("--no-fix-zero", action="store_true", help="Khong sua #0 (mac dinh khi review lai)")
     p.add_argument("--write", action="store_true", help="Ghi segments_vi_goc.json sau khi sua #0")
+    p.add_argument(
+        "--topic-context",
+        default="",
+        help="Chu de/glossary theo job (tuy chon). De trong = review tong quat.",
+    )
     args = p.parse_args()
 
     work = Path(args.work_dir)
@@ -42,18 +47,16 @@ def main() -> int:
 
     segments = json.loads(seg_path.read_text(encoding="utf-8"))
 
+    topic = (args.topic_context or "").strip()
+
     if args.fix_zero and not args.no_fix_zero and segments:
-        emphasis = (
-            "This line is about prolapsed hemorrhoid that cannot be pushed back in. "
-            "Do NOT mention spicy food or eating habits."
-        )
         fixed = retranslate_segment_faithful(
             segments[0],
             segment_index=0,
             segments=segments,
             video_dur=video_dur,
             chars_per_sec=cps,
-            emphasis=emphasis,
+            topic_context=topic,
         )
         if fixed:
             old = segments[0].get("text", "")
@@ -65,7 +68,7 @@ def main() -> int:
         else:
             print("Khong dich lai duoc #0 — kiem tra OPENAI_API_KEY")
 
-    reviews = review_segments_content(segments)
+    reviews = review_segments_content(segments, topic_context=topic)
     if not reviews:
         print("Khong co ket qua review (API loi?)")
         return 1

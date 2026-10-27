@@ -1,0 +1,10 @@
+# Benchmark tốc độ voiceover — ghi nhớ nhiễu tự nhiên
+
+Soak 2026-09-19 (cùng video cli_f8f2, không đổi code): wall ~350s–870s (~2.5×).
+
+Khi đo patch tốc độ (song song shorten_slot, ffmpeg preset, …):
+- Mỗi phiên bản chạy ≥ 2–3 lần
+- Báo trung bình hoặc min, không kết luận từ 1 lần
+- Nhiễu có thể từ Defender / mạng Edge-TTS / LLM — chưa cần điều tra trừ khi chặn việc khác
+
+Tham chiếu số liệu: work/soak_voiceover_race.json

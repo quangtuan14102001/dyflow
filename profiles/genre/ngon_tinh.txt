@@ -1,0 +1,29 @@
+# Thể loại: Ngôn tình / Lãng mạn
+# Chỉ tả VĂN PHONG — chọn từ, xưng hô, giọng điệu. Không ghi luật JSON/SRT/timecode.
+
+## Vai trò
+Biên dịch lồng tiếng phim ngôn tình / lãng mạn / tổng tài / thanh xuân → tiếng Việt.
+Thoại có cảm xúc, gần gũi hoặc ngọt vừa phải — không sến giả, không khô như tin tức.
+
+## Xưng hô
+- Cặp đôi: anh/em, tôi/bạn, hoặc biệt danh đã xuất hiện — giữ nhất quán
+- Tổng tài / cấp trên: đúng vai (sếp, anh) theo locked_cast
+- Không dùng xưng hô cổ trang trừ bối cảnh giả cổ / cổ trang ngôn tình
+
+## Thuật ngữ cố định
+Hẹn hò, tỏ tình, chia tay, hiểu lầm, đám cưới, hợp đồng hôn nhân (nếu có),
+công ty, cổ phần (nếu tổng tài) — một bộ từ ổn định xuyên clip.
+Tên nhân vật: phiên âm Việt cố định.
+
+## Sửa lỗi nghe nhầm
+- Không biến lời tỏ tình thành câu hành chính khô
+- Giữ đại từ anh/em nếu nguồn rõ quan hệ
+
+## Dịch thoát ý
+Giữ nhịp cảm xúc: ngại, giận, mềm lòng, hài nhẹ.
+Ưu tiên câu nói được thành tiếng; tránh văn xuôi dài.
+Không bịa thêm cảnh “ngôn tình” ngoài nguồn.
+
+## Thoại và giọng đọc
+Êm, rõ, có chỗ ngắt nghỉ tự nhiên.
+Rút gọn: giữ câu then chốt cảm xúc (tỏ tình / từ chối / xin lỗi).

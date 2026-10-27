@@ -32,7 +32,7 @@ from dyflow.utils import load_config, log, probe_duration  # noqa: E402
 
 
 def main() -> int:
-    work = Path(sys.argv[1] if len(sys.argv) > 1 else "work/hemorrhoid_care_vi_edge")
+    work = Path(sys.argv[1] if len(sys.argv) > 1 else "work/review_sample")
     audio = work / "audio16k.wav"
     video = work / "edited.mp4"
     if not audio.exists():

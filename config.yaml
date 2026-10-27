@@ -10,20 +10,17 @@ paths:
   font_path: "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"
 
 download:
-  backend: "chrome"           # chrome = khong doc Keychain Chrome (khong pop password)
-  # "yt-dlp" se dung cookies_from_browser -> macOS hoi mat khau "Chrome Safe Storage"
-  fetch_subs: false           # chrome fallback khong tai sub; Whisper se xu ly
-  cookies_file: "./cookies_douyin.txt"
-  # TAT cookies-from-browser de khong pop Keychain moi lan chay
+  backend: "yt-dlp"           # f2 guest truoc; yt-dlp neu co cookie (khong bat buoc)
+  fetch_subs: false
+  cookies_file: "./cookies_douyin.txt"  # tuy chon; de trong van tai duoc
   cookies_from_browser: ""
-  auto_refresh_cookies: true  # refresh cookie file khi yt-dlp bao stale
-  ytdlp_first: true           # thu yt-dlp nhanh truoc, fail thi Chrome sniff
-  cookie_refresh_method: "auto"
+  auto_refresh_cookies: false
+  ytdlp_first: false          # uu tien f2 guest (khong cookie)
+  cookie_refresh_method: "none"
   cookie_max_age_hours: 12
-  chrome_fallback: true
-  chrome_headless: true            # true = khong mo cua so Chrome/Edge (desktop)
+  chrome_fallback: false      # tat — user moi khong can Chrome/Playwright
+  chrome_headless: true
   chrome_profile_dir: "./work/_chrome_dy_profile"
-  playwright_headless: true
   remove_watermark: true
   retries: 3
   rate_limit: ""
@@ -79,6 +76,7 @@ voiceover:
   enabled: true
   audio_mode: dub
   tts_engine: edge            # mac dinh Edge. Job web moi set openai trong DB.
+  tts_prefetch_concurrency: 2 # 2 luong an toan, tranh Microsoft Edge rate-limit socket
   openai_model: tts-1
   openai_voice_male: onyx
   openai_voice_female: nova
@@ -100,11 +98,11 @@ voiceover:
   preserve_fx: true
   original_volume: 0.38
   match_original_prosody: true
-  max_atempo_stretch: 1.08    # chi tua NHANH khi TTS dai hon slot (khong keo cham)
+  max_atempo_stretch: 1.15    # tua nhe atempo toi da 1.15x de vua slot, giong van tu nhien
   dub_timing: natural         # natural = toc do 1.0x; fill_slot = keo cham (robot)
   caption_sync_voice: true    # phu de chi hien khi co giong
-  dub_qa_fail_closed: true    # fail neu chong doan sau >20%, chu Han, hoac toc khong an toan
-  qa_max_qua_dai_ratio: 0.20
+  dub_qa_fail_closed: false   # false: canh bao nhung van xuat video; true: huy clip loi
+  qa_max_qua_dai_ratio: 1.01
   qa_max_drift_pct: 50
   auto:
     prefer_platform_subs: true
@@ -118,22 +116,23 @@ voiceover:
     translate_from: zh-CN
     source_lang: zh
     cast_speakers: true       # 1 video: moi nhan vat 1 giong (gioi tinh + tuoi)
-    translate_llm: polish     # polish = chi sua doan loi/Han; off = chi Google; openai = viet lai het
+    translate_llm: off        # web UI: google=off, openai=openai (ghi de qua output_opts)
     dub_chars_per_sec: 18     # goi y do dai (legacy)
     target_chars_per_sec: 14.5  # ngan sach dich/rut gon theo slot (Edge TTS)
-  dub_auto_shorten: true      # LLM rut gon khi rate-fit van lech >15%
-  dub_shorten_max_retries: 2
+  dub_auto_shorten: false     # TAT: dung atempo khop slot 0.01s, khong goi DeepSeek rut gon + khong doc lai TTS
+  dub_shorten_max_retries: 0  # 0: khong doc lai TTS nhieu lan gay cham
   refresh_tts: true           # tao lai TTS moi lan chay
 
 caption:
   enabled: true
   max_lines: 2 # toi da 2 dong tren man hinh moi cue
-  chars_per_line: 28 # so ky tu moi dong (chu nho hon -> dong dai hon 1 chut)
-  font_size: 42
+  chars_per_line: 30 # so ky tu moi dong (chu nho hon -> dong dai hon 1 chut)
+  font_size: 36 # chu vua van, dep tren mobile (giam nhe tu 42)
   primary_color: "&H00FFFFFF" # trang (ASS format: &HAABBGGRR)
   outline_color: "&H00000000" # vien den
   outline: 2
-  margin_v: 120 # thap hon = chu sat day hon (Alignment 2)
+  margin_v: 220 # vua khop chinh giua dai che mo sub goc (tam dai mo 220-240px)
+  blur_burned_subs: true # mac dinh che mo phu de goc cua video
 
 music:
   enabled: false              # tat nhac nen de nghe ro loi goc
@@ -148,7 +147,7 @@ export:
   fit: source # source=giu ty le clip goc | contain=viền đen | cover=cat day khung
   formats: ["source"] # source = xuat dung kich thuoc goc; hoac ["9:16","1:1"]
   crf: 20 # chat luong (thap = net hon, file to hon)
-  preset: "medium"
+  preset: "fast"
 
 upload:
   enabled: false # DOC README truoc khi bat
@@ -169,6 +168,8 @@ web:
   # work/<job> (raw/Demucs/TTS, 3-7GB) xoa ngay khi job xong. Cache tai Douyin:
   dl_cache_days: 2
   dl_cache_max_gb: 8
-  # Disk >= high → xoa MP4 cu nhat cho den target (tranh 500 sqlite disk I/O).
+  # Disk: CHI purge khi GB trong < disk_min_free_gb (KHONG dung % — C: 30GB trong
+  # van co the >80% used). Truoc day disk_high_pct=80 gay xoa nham MP4 vua xong.
+  disk_min_free_gb: 5
   disk_high_pct: 80
   disk_target_pct: 70

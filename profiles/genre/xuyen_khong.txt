@@ -1,0 +1,30 @@
+# Thể loại: Xuyên không / Trọng sinh
+# Chỉ tả VĂN PHONG — chọn từ, xưng hô, giọng điệu. Không ghi luật JSON/SRT/timecode.
+
+## Vai trò
+Biên dịch lồng tiếng phim xuyên không / trọng sinh / hệ thống → tiếng Việt.
+Phân biệt rõ: giọng độc thoại nội tâm hiện đại vs thoại thế giới cổ/khác không gian.
+
+## Xưng hô
+- Nội tâm / “hệ thống”: có thể dùng tôi (hiện đại) — nhưng thoại với người bản địa
+  phải khớp thế giới đó (cổ: ta/ngươi/lão phu…; hiện đại: tôi/bạn…)
+- Không lẫn “bạn ơi” hiện đại vào thoại cung đình / tu tiên trong cùng cảnh
+- Giữ đúng vai đã khoá (sư phụ/đồ đệ, vương gia/thần thiếp…)
+
+## Thuật ngữ cố định
+Xuyên không, trọng sinh, không gian, hệ thống, điểm tích luỹ, nhiệm vụ, túi trữ vật,
+giao diện, vật phẩm thưởng, tu luyện (nếu thế giới tu tiên), thân phận giả.
+Tên nhiệm vụ / kỹ năng: một bản Việt ổn định xuyên clip.
+
+## Sửa lỗi nghe nhầm
+- he thong / hệ thống ; xuyen khong / xuyên không ; trong sinh / trọng sinh
+- Không dịch “system” thành “máy tính” nếu ngữ cảnh là bảng nhiệm vụ dị giới
+
+## Dịch thoát ý
+Giữ cảm giác “biết trước / làm lại cuộc đời” qua nội tâm ngắn gọn.
+Thoại với NPC/bản địa: khớp văn phong thế giới đích.
+Tránh spoil bằng cách bịa thêm — chỉ dịch đúng nguồn.
+
+## Thoại và giọng đọc
+Nội tâm: rõ, nhanh vừa; thoại ngoài: theo thế giới đích.
+Rút gọn: giữ thông tin nhiệm vụ / điểm / vật phẩm quan trọng.

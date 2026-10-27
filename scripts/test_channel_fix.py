@@ -154,19 +154,46 @@ def test_quoted_json_reuse() -> None:
     _assert(len(items2) == 2, items2)
 
 
-def test_channel_normalize_keeps_vid() -> None:
-    from dyflow.pipeline import normalize_douyin_url, extract_douyin_urls
+def test_user_modal_vs_channel() -> None:
+    """modal_id= = 1 video; /user/ ± vid= = kênh."""
+    from dyflow.pipeline import (
+        normalize_douyin_url,
+        is_channel_url,
+        embedded_video_urls,
+    )
 
-    raw = (
+    with_modal = (
         "https://www.douyin.com/user/"
-        "MS4wLjABAAAAr7cM94IrRPrVqd5FcTKOxX2qV2_Z5DCLQI82IZJQYHwJBqVo4RiN4yuH5Gnq11Vq"
+        "MS4wLjABAAAAr7cM94IrRPrVqd5FcTK0xX2qV2_Z5DCLQI82IZjQYHwJBqVo4RiN4yuH5Gnq1IVq"
+        "?from_tab_name=main&modal_id=7679803336194854180&vid=7681234538433964927"
+    )
+    _assert(not is_channel_url(with_modal), "modal = video")
+    _assert(
+        normalize_douyin_url(with_modal)
+        == "https://www.douyin.com/video/7679803336194854180",
+        normalize_douyin_url(with_modal),
+    )
+    _assert(
+        embedded_video_urls(with_modal)
+        == ["https://www.douyin.com/video/7679803336194854180"],
+        embedded_video_urls(with_modal),
+    )
+
+    with_vid = (
+        "https://www.douyin.com/user/"
+        "MS4wLjABAAAAr7cM94IrRPrVqd5FcTK0xX2qV2_Z5DCLQI82IZjQYHwJBqVo4RiN4yuH5Gnq1IVq"
         "?from_tab_name=main&vid=7679803336194854180"
     )
-    got = normalize_douyin_url(raw)
-    _assert("vid=7679803336194854180" in got, got)
-    _assert("/user/" in got, got)
-    urls = extract_douyin_urls(raw)
-    _assert(len(urls) == 1 and "vid=7679803336194854180" in urls[0], urls)
+    _assert(is_channel_url(with_vid), "vid-only = channel")
+    got = normalize_douyin_url(with_vid)
+    _assert("vid=" not in got and "/user/" in got, got)
+    _assert(embedded_video_urls(with_vid) == [], embedded_video_urls(with_vid))
+
+    clean = (
+        "https://www.douyin.com/user/"
+        "MS4wLjABAAAAr7cM94IrRPrVqd5FcTK0xX2qV2_Z5DCLQI82IZjQYHwJBqVo4RiN4yuH5Gnq1IVq"
+    )
+    _assert(is_channel_url(clean), "clean user = channel")
 
 
 def test_vid_from_url_and_author_resolve_helpers() -> None:
@@ -274,7 +301,7 @@ def main() -> int:
     test_looks_like_chromium_argv()
     test_refuse_self_as_browser()
     test_unsigned_aweme_path()
-    test_channel_normalize_keeps_vid()
+    test_user_modal_vs_channel()
     test_vid_from_url_and_author_resolve_helpers()
     test_unfrozen_launch_uses_system_browser()
     test_quoted_json_reuse()

@@ -250,14 +250,18 @@ def test_qa_pause_is_pass() -> None:
             "play": 3.0,
             "speed": 1.0,
             "drift_pct": 150,
-            "flags": ["qua_dai", "chong_doan"],
+            "flags": ["qua_dai", "chong_doan_severe", "tier5_large_overlap"],
+            "tier5_overlap_sec": 1.8,
+            "tier5_crossfade_sec": 0.8,
             "text": "x",
         }
     ]
     code2, summary2, _ = audit_qa_rows(bad, tts_engine="openai")
-    if code2 == 0:
-        _fail(f"chong doan phai fail: {summary2}")
-    print("OK QA: im lang/qua_ngan pass; chong_doan fail")
+    if code2 != 0:
+        _fail(f"chong_doan_severe phai PASS (zero-fail A): {summary2}")
+    if "tang5" not in summary2 and "REVIEW" not in summary2:
+        _fail(f"summary phai canh bao REVIEW tang5: {summary2}")
+    print("OK QA: im lang/qua_ngan pass; chong_doan_severe PASS + REVIEW")
 
 
 def test_semantic_shorten_budget() -> None:
@@ -300,16 +304,18 @@ def test_qa_semantic_fail_still_chong_doan() -> None:
             "hard_limit": 2.2,
             "play": 3.5,
             "speed": 1.0,
-            "flags": ["qua_dai", "chong_doan", "shortened_semantic_fail"],
+            "flags": ["qua_dai", "chong_doan_severe", "tier5_large_overlap", "shortened_semantic_fail"],
+            "tier5_overlap_sec": 1.3,
+            "tier5_crossfade_sec": 0.8,
             "text": "rut gon van dai",
         }
     ]
     code, summary, _ = audit_qa_rows(rows, tts_engine="openai")
-    if code == 0:
-        _fail(f"shortened_semantic_fail van phai fail QA chong_doan: {summary}")
-    if "chong_doan" not in summary:
-        _fail(f"summary thieu chong_doan: {summary}")
-    print("OK QA: semantic fail van chong_doan, khong chap nhan chong am tham")
+    if code != 0:
+        _fail(f"tier5/chong_doan_severe phai PASS (zero-fail): {summary}")
+    if "tang5" not in summary and "REVIEW" not in summary:
+        _fail(f"summary thieu REVIEW tang5: {summary}")
+    print("OK QA: semantic fail + tier5 PASS (REVIEW), khong fail-closed")
 
 
 def test_qa_audio_truncated_is_fail() -> None:
@@ -381,10 +387,51 @@ def test_overlap_close_plan() -> None:
     )
     if g["action"] != "micro_overlap" or not g["fits"] or g.get("trim"):
         _fail(f"leftover <=250ms sau atempo 1.20 phai micro_overlap, got {g}")
+    h = overlap_close_plan(
+        tts_dur=8.0, slot=3.6, atempo_already=1.20, cap=1.20,
+        allow_speech_trim=False, allow_micro_overlap=True, allow_large_overlap=True,
+    )
+    if h["action"] != "large_overlap" or not h["fits"] or not h.get("large_overlap"):
+        _fail(f"tang5 phai large_overlap + fits: {h}")
+    if float(h.get("crossfade_sec") or 0) > 0.80 + 1e-6:
+        _fail(f"crossfade max 0.8s: {h}")
     f = overlap_close_plan(tts_dur=4.0, slot=3.6, atempo_already=1.0, cap=1.20)
     if f["action"] != "atempo" or f["tempo"] > 1.20 + 1e-6 or not f["fits"]:
         _fail(f"4.0/3.6 vua 1.12x: {f}")
-    print("OK overlap_close_plan: atempo / pad / overflow / micro_overlap (khong cat loi)")
+    print("OK overlap_close_plan: atempo / pad / overflow / micro / large_overlap")
+
+
+def test_borrow_time_from_next() -> None:
+    from dyflow.dub_timing import borrow_time_from_next, large_overlap_crossfade
+
+    # Next: speech 10-12, following at 15 -> room to delay = 15-2-10 = 3s (approx)
+    b = borrow_time_from_next(
+        need_sec=1.5,
+        next_source_start=10.0,
+        next_source_end=12.0,
+        next_timeline_start=10.0,
+        following_start=15.0,
+    )
+    if not b["applied"] or abs(b["borrowed_sec"] - 1.5) > 1e-3:
+        _fail(f"muon 1.5s: {b}")
+    if b["new_next_start"] < 10.0 - 1e-6:
+        _fail(f"khong duoc som hon source_start: {b}")
+    # Khong du room
+    c = borrow_time_from_next(
+        need_sec=5.0,
+        next_source_start=10.0,
+        next_source_end=12.0,
+        next_timeline_start=10.0,
+        following_start=12.5,
+    )
+    # max_tl = 12.5 - 2 - 0.04 = 10.46; room ~0.46
+    if c["borrowed_sec"] > 0.5:
+        _fail(f"room nho: {c}")
+    if large_overlap_crossfade(4.52) != 0.8:
+        _fail("crossfade 4.52 -> 0.8")
+    if large_overlap_crossfade(0.3) != 0.3:
+        _fail("crossfade 0.3 -> 0.3")
+    print("OK borrow_time + large_overlap_crossfade")
 
 
 def test_atempo_fitted_hides_actual_overlap() -> None:
@@ -741,6 +788,7 @@ def main() -> int:
     test_qa_semantic_fail_still_chong_doan()
     test_qa_audio_truncated_is_fail()
     test_overlap_close_plan()
+    test_borrow_time_from_next()
     test_atempo_fitted_hides_actual_overlap()
     test_semantic_4776_fits_with_atempo()
     test_tiny_leftover_must_atempo()

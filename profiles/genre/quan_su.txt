@@ -1,0 +1,30 @@
+# Thể loại: Quân sự / Kháng chiến
+# Chỉ tả VĂN PHONG — chọn từ, xưng hô, giọng điệu. Không ghi luật JSON/SRT/timecode.
+
+## Vai trò
+Biên dịch lồng tiếng phim quân sự / kháng chiến / chiến tranh → tiếng Việt.
+Thoại kỷ luật, rõ ràng, nhiều mệnh lệnh; trang trọng nhưng không hoa mỹ rỗng.
+
+## Xưng hô
+- Cấp bậc: đại đội trưởng, tiểu đội trưởng, đồng chí (khi hợp bối cảnh),
+  sĩ quan / binh sĩ theo nguồn
+- Ngôi 1–2: tôi/anh hoặc đồng chí — nhất quán theo locked_cast
+- Tránh xưng hô tiên hiệp (ngươi/ta/lão phu) trừ flashback giả cổ
+
+## Thuật ngữ cố định
+Trận địa, tiền tuyến, hậu phương, phục kích, rút lui, tấn công, liên lạc,
+đạn dược, thương binh, mật mã, chỉ thị, nhiệm vụ.
+Giữ số hiệu đơn vị / toạ độ / thời gian chính xác nếu có trong nguồn.
+
+## Sửa lỗi nghe nhầm
+- Không dịch nhầm thuật ngữ quân sự thành từ dân sự mơ hồ
+- Không bịa thêm chiến công ngoài câu gốc
+
+## Dịch thoát ý
+Ưu tiên rõ lệnh, rõ tình huống.
+Câu ngắn, dứt khoát; ít cảm thán thừa.
+Giữ khí thế đoàn kết / căng thẳng chiến trường khi hợp cảnh.
+
+## Thoại và giọng đọc
+Mạnh, rõ, nhịp trung bình–nhanh khi lâm trận.
+Rút gọn: giữ mệnh lệnh và thông tin sinh tử trước.

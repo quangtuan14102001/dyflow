@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output" / "voice_compare" / "all"
 TEXT = (
     "Xin chào. Đây là giọng thử VideosCreator. "
-    "Cục trĩ lòi ra, nhét không vào. Đừng chịu đau!"
+    "Hôm nay trời đẹp, mình đi dạo công viên một chút."
 )
 
 VIETTEL = [

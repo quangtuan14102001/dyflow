@@ -1,5 +1,4 @@
-# Copy ffmpeg/ffprobe THAT. Chocolatey shim (~400KB, nam trong chocolatey\bin)
-# chi redirect toi ..\lib\ffmpeg\tools\... — copy shim thi exe khach se fail.
+# Copy ffmpeg/ffprobe THAT. Chocolatey shim (~400KB) chi redirect — khong dung.
 param(
   [Parameter(Mandatory = $true)]
   [string]$DestDir
@@ -43,7 +42,7 @@ function Find-FfmpegDir {
   if ($cmd -and (Test-RealFfmpegDir (Split-Path -Parent $cmd.Source))) {
     return (Split-Path -Parent $cmd.Source)
   }
-  throw "Khong tim thay ffmpeg.exe that (>5MB) kem ffprobe. Khong dung Chocolatey shim."
+  throw "Khong tim thay ffmpeg.exe that (>5MB) kem ffprobe."
 }
 
 $src = Find-FfmpegDir
@@ -55,17 +54,7 @@ Get-ChildItem $src -Filter *.dll -ErrorAction SilentlyContinue | ForEach-Object 
 }
 $ffOut = Get-Item (Join-Path $DestDir "ffmpeg.exe")
 $fpOut = Get-Item (Join-Path $DestDir "ffprobe.exe")
-if ($ffOut.Length -lt $MinBytes) { throw "ffmpeg.exe copy van qua nho ($($ffOut.Length) bytes) — van la shim" }
-Write-Host "Copied ffmpeg $($ffOut.Length) bytes + ffprobe $($fpOut.Length) bytes from $src"
-
-$src = Find-FfmpegDir
-New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
-Copy-Item (Join-Path $src "ffmpeg.exe") (Join-Path $DestDir "ffmpeg.exe") -Force
-Copy-Item (Join-Path $src "ffprobe.exe") (Join-Path $DestDir "ffprobe.exe") -Force
-Get-ChildItem $src -Filter *.dll -ErrorAction SilentlyContinue | ForEach-Object {
-  Copy-Item $_.FullName (Join-Path $DestDir $_.Name) -Force
+if ($ffOut.Length -lt $MinBytes) {
+  throw ("ffmpeg.exe copy too small ({0} bytes)" -f $ffOut.Length)
 }
-$ffOut = Get-Item (Join-Path $DestDir "ffmpeg.exe")
-$fpOut = Get-Item (Join-Path $DestDir "ffprobe.exe")
-if ($ffOut.Length -lt 100000) { throw "ffmpeg.exe copy van la shim ($($ffOut.Length) bytes)" }
-Write-Host "Copied ffmpeg $($ffOut.Length) bytes + ffprobe $($fpOut.Length) bytes from $src"
+Write-Host ("Copied ffmpeg {0} bytes + ffprobe {1} bytes from {2}" -f $ffOut.Length, $fpOut.Length, $src)

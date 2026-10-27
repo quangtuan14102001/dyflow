@@ -35,7 +35,12 @@ def main() -> int:
         f"https://www.douyin.com/user/{sec}"
         "?from_tab_name=main&vid=7649978535217614120"
     )
-    _assert(is_channel_url(href), "channel url")
+    _assert(is_channel_url(href), "user+vid (no modal) is channel")
+    _assert(is_channel_url(f"https://www.douyin.com/user/{sec}"), "clean user is channel")
+    _assert(
+        not is_channel_url(f"https://www.douyin.com/user/{sec}?modal_id=7649978535217614120"),
+        "modal = not channel",
+    )
     _assert(sec_uid_from_user_url(href) == sec, "sec uid")
     pc = pc_user_url(href)
     _assert(pc == f"https://www.douyin.com/user/{sec}", pc)

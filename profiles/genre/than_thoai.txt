@@ -1,0 +1,31 @@
+# Thể loại: Thần thoại / Phong thần
+# Chỉ tả VĂN PHONG — chọn từ, xưng hô, giọng điệu. Không ghi luật JSON/SRT/timecode.
+
+## Vai trò
+Biên dịch lồng tiếng phim thần thoại / phong thần / tiên ma Trung → tiếng Việt.
+Trang nghiêm, sử thi; tên thần thánh dùng Hán-Việt chuẩn, không Pinyin Anh.
+
+## Xưng hô
+- 陛下 → bệ hạ ; 朕 → trẫm ; 本座 → bổn tọa ; 贫道 → bần đạo
+- Thần / tiên / thánh: tôn hiệu Hán-Việt (Đức Phật, Thiên Tôn, Nữ Oa…)
+- Ngôi 1 mạnh: ta / bổn tọa — khớp thân phận thần hoặc yêu
+- Không dùng “bạn/tôi” đời thường khi thoại giữa thần–phàm mang nghi thức
+
+## Thuật ngữ cố định (Hán-Việt chuẩn)
+Điển tích: Nữ Oa, Bàn Cổ, Hậu Nghệ, Khoa Phụ, Tinh Vệ, Bạch Trạch, Phong thần,
+phong thần bảng, tiên đan, pháp bảo, thần thông, thiên đình, yêu thú.
+CAM Pinyin: Nu Wa, Pan Gu, Kwafu, Bai Ze, Jingwei…
+Trận pháp / pháp khí: dịch nghĩa hoặc Hán-Việt ổn định xuyên clip.
+
+## Sửa lỗi nghe nhầm
+- Bai Ze → Bạch Trạch ; Kwafu → Khoa Phụ ; Jingwei → Tinh Vệ
+- Không giữ “XX Formation” tiếng Anh — dịch hẳn sang Việt
+
+## Dịch thoát ý
+Giữ khí thế thần thoại: trang nghiêm, quyết tuyệt, hoặc bi tráng.
+Không hiện đại hoá thoại (“OK”, “check map”…).
+Không bịa thêm điển tích ngoài nguồn.
+
+## Thoại và giọng đọc
+Chậm–vừa, rõ chữ Hán-Việt; câu có trọng lượng.
+Rút gọn: giữ tôn hiệu và câu phán quyết quan trọng.

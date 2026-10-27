@@ -1,0 +1,13 @@
+{
+  "genres": [
+    {"id": "tien_hiep", "label": "Tiên Hiệp / Tu Tiên", "file": "tien_hiep.txt"},
+    {"id": "tan_the", "label": "Tận thế / Sinh tồn", "file": "tan_the.txt"},
+    {"id": "xuyen_khong", "label": "Xuyên không / Trọng sinh", "file": "xuyen_khong.txt"},
+    {"id": "kiem_hiep", "label": "Kiếm hiệp / Võ hiệp", "file": "kiem_hiep.txt"},
+    {"id": "do_thi", "label": "Đô thị / Hiện đại", "file": "do_thi.txt"},
+    {"id": "ngon_tinh", "label": "Ngôn tình / Lãng mạn", "file": "ngon_tinh.txt"},
+    {"id": "cung_dau", "label": "Cung đấu / Trạch đấu", "file": "cung_dau.txt"},
+    {"id": "quan_su", "label": "Quân sự / Kháng chiến", "file": "quan_su.txt"},
+    {"id": "than_thoai", "label": "Thần thoại / Phong thần", "file": "than_thoai.txt"}
+  ]
+}

@@ -308,6 +308,122 @@ def test_regression_empty_opts() -> None:
     print("OK regression: khong truyen tham so = output classic/speed 1.0")
 
 
+def test_anti_copyright() -> None:
+    # 1. Default -> Standard (mac dinh bat chong ban quyen + che mo sub goc)
+    n0 = normalize_output_opts({})
+    ac0 = n0.get("anti_copyright", {})
+    if not ac0.get("enabled") or ac0.get("mode") != "standard":
+        _fail(f"Default anti-copyright phai la standard: {ac0}")
+    if not ac0.get("blur_sub"):
+        _fail("Standard mac dinh phai che mo sub goc (blur_sub True)")
+
+    # 2. Explicit Off
+    n_off = normalize_output_opts({"anti_copyright_mode": "off"})
+    ac_off = n_off.get("anti_copyright", {})
+    if ac_off.get("enabled") or ac_off.get("mode") != "off":
+        _fail(f"Off mode phai disabled: {ac_off}")
+
+    # 3. Standard preset filters
+    n_std = normalize_output_opts({"anti_copyright_mode": "standard"})
+    ac_std = n_std.get("anti_copyright", {})
+    if not ac_std.get("noise") or not ac_std.get("color_shift") or not ac_std.get("pitch_shift") or not ac_std.get("blur_sub"):
+        _fail(f"Standard thieu filter: {ac_std}")
+    if ac_std.get("mirror"):
+        _fail("Standard khong duoc lat guong")
+
+    # 4. Advanced preset
+    n_adv = normalize_output_opts({"anti_copyright_mode": "advanced"})
+    ac_adv = n_adv.get("anti_copyright", {})
+    if not ac_adv.get("enabled") or not ac_adv.get("mirror") or not ac_adv.get("vignette") or not ac_adv.get("blur_sub") or not ac_adv.get("micro_zoom"):
+        _fail(f"Advanced thieu filter: {ac_adv}")
+
+    # 4. Job merge & speed auto-apply
+    job = {}
+    apply_opts_to_job(job, {"anti_copyright_mode": "standard"})
+    exp = job.get("export", {})
+    if not exp.get("anti_copyright", {}).get("enabled"):
+        _fail(f"Job export thieu anti_copyright: {exp}")
+    if abs(float(exp.get("video_speed") or 1.0) - 1.03) > 1e-3:
+        _fail(f"Speed phai tu dong = 1.03x cho standard: {exp}")
+
+    # 5. User custom speed overrides anti-copyright default speed
+    job2 = {}
+    apply_opts_to_job(job2, {"anti_copyright_mode": "standard", "video_speed": "1.10"})
+    if abs(float(job2.get("export", {}).get("video_speed") or 1.0) - 1.10) > 1e-3:
+        _fail("User override speed bi de boi anti-copyright")
+
+    # 6. Blur sub mode options: bottom, center, auto_ai
+    n_bot = normalize_output_opts({"ac_blur_sub_mode": "bottom"})
+    if n_bot["anti_copyright"]["blur_sub_mode"] != "bottom":
+        _fail(f"bottom mode: {n_bot}")
+
+    n_cen = normalize_output_opts({"ac_blur_sub_mode": "center"})
+    if n_cen["anti_copyright"]["blur_sub_mode"] != "center":
+        _fail(f"center mode: {n_cen}")
+
+    n_ai = normalize_output_opts({"ac_blur_sub_mode": "auto_ai"})
+    if n_ai["anti_copyright"]["blur_sub_mode"] != "auto_ai":
+        _fail(f"auto_ai mode: {n_ai}")
+
+    print("OK anti-copyright: off, standard (1.03x + noise + color + pitch), advanced (mirror + vignette + blur_sub + zoom), speed override, blur_sub_mode (bottom/center/auto_ai)")
+
+
+def test_compose_anti_copyright(tmp: Path) -> None:
+    if not _have_ffmpeg():
+        return
+    from dyflow.compose import compose
+    src = tmp / "comp_src.mp4"
+    _make_clip(src, 1.5)
+
+    cfg = {
+        "paths": {"work_dir": str(tmp / "work"), "output_dir": str(tmp / "out"), "font_path": ""},
+        "caption": {"enabled": True, "font_size": 36, "margin_v": 160},
+        "voiceover": {"enabled": False, "mute_original": False},
+        "export": {
+            "formats": ["9:16"],
+            "preset": "ultrafast",
+            "anti_copyright": {
+                "enabled": True,
+                "mirror": True,
+                "noise": True,
+                "color_shift": True,
+                "vignette": True,
+                "blur_sub": True,
+                "blur_sub_mode": "center",
+                "pitch_shift": True,
+                "micro_zoom": True,
+            },
+        },
+    }
+    outs = compose(
+        video=src,
+        voice=None,
+        script="Day la phu de thu nghiem cua tool",
+        out_dir=tmp / "out",
+        base_name="test_ac_center",
+        cfg=cfg,
+        music=None,
+    )
+    if not outs or not outs[0].is_file() or outs[0].stat().st_size < 1000:
+        _fail("Compose anti-copyright center that bai")
+    print(f"OK compose anti-copyright center + sub: {outs[0].name} ({outs[0].stat().st_size} bytes)")
+
+    # Test auto_ai compose
+    cfg["export"]["anti_copyright"]["blur_sub_mode"] = "auto_ai"
+    outs_ai = compose(
+        video=src,
+        voice=None,
+        script="Day la phu de thu nghiem auto AI",
+        out_dir=tmp / "out",
+        base_name="test_ac_ai",
+        cfg=cfg,
+        music=None,
+    )
+    if not outs_ai or not outs_ai[0].is_file() or outs_ai[0].stat().st_size < 1000:
+        _fail("Compose anti-copyright auto_ai that bai")
+    print(f"OK compose anti-copyright auto_ai + sub: {outs_ai[0].name} ({outs_ai[0].stat().st_size} bytes)")
+
+
 def main() -> None:
     print("test_export_style")
     test_module1_presets()
@@ -320,8 +436,11 @@ def main() -> None:
         test_module3_ffmpeg(tmp)
         test_module4_sub_pos(tmp)
         test_regression_empty_opts()
+        test_anti_copyright()
+        test_compose_anti_copyright(tmp)
     print("ALL OK")
 
 
 if __name__ == "__main__":
     main()
+

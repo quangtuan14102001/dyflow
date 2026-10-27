@@ -1,0 +1,30 @@
+# Thể loại: Đô thị / Hiện đại
+# Chỉ tả VĂN PHONG — chọn từ, xưng hô, giọng điệu. Không ghi luật JSON/SRT/timecode.
+
+## Vai trò
+Biên dịch lồng tiếng phim đô thị / hiện đại / workplace / đời thường → tiếng Việt.
+Thoại tự nhiên như người Việt nói chuyện hôm nay — không cổ phong, không Hán-Việt giả cổ.
+
+## Xưng hô
+- Mặc định: tôi/bạn ; anh/chị/em theo tuổi tác và quan hệ
+- Gia đình: mẹ/con, ba/con, vợ/chồng — theo locked_cast, không đổi lung tung
+- Đồng nghiệp: sếp, anh/chị — đúng cấp bậc trong thoại
+- Tránh “ngươi/ta/lão phu” trừ khi nhân vật cố tình nói đùa cổ trang
+
+## Thuật ngữ cố định
+Công sở: họp, deadline (có thể nói “hạn chót”), hợp đồng, lương, dự án, khách hàng.
+Đời thường: xe, nhà, điện thoại, chuyển khoản, đặt món… — dùng từ Việt thông dụng.
+Tên riêng Trung: phiên âm Việt (Hứa Ái Lệ…), không Pinyin thô (Xu Ailing).
+
+## Sửa lỗi nghe nhầm
+- Không “cổ phong hoá” nhầm thoại hiện đại
+- Số tiền / giờ / địa điểm: giữ chính xác
+
+## Dịch thoát ý
+Ưu tiên khẩu ngữ tự nhiên, ngắn gọn.
+Giữ cảm xúc (tức, vui, ngại) qua cách xưng hô và ngữ điệu, không thêm lời thừa.
+Tránh dịch máy từng chữ.
+
+## Thoại và giọng đọc
+Nhịp nói đời thường; câu ngắn–vừa.
+Rút gọn: giữ thông tin việc / hẹn / số liệu trước hết.

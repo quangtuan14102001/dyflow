@@ -17,6 +17,18 @@ build/
 dyflow-win.zip
 *.zip
 !dist/patch.zip
-logs/
-
 *.bak*
+
+# Junk & temporary files
+-C
+*.log
+*.db
+*.db-shm
+*.db-wal
+*.mp3
+scratch/
+_tmp_*
+_rerun_*
+stderr.txt
+stdout.txt
+packaging/*.exe

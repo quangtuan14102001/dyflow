@@ -13,9 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output" / "voice_compare" / "five"
 
 TEXT = (
-    "Cục trĩ lòi ra, nhét mãi không vào. Bạn ngồi lâu, mê đồ cay — "
-    "đừng chịu đau nữa. Gel Hoa Hướng Dương này thấm nhanh, không nhầy. "
-    "Bôi mỏng buổi sáng tối là được."
+    "Xin chào. Đây là mẫu thử giọng VideosCreator. "
+    "Hôm nay trời đẹp, mình đi dạo công viên một chút rồi về nhà pha trà."
 )
 
 # Rachel — nu, multilingual (goi tra phi). Free tier se tu chon voice hop le.
