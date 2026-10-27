@@ -33,7 +33,8 @@ from .dub_constants import (
     TTS_RATE_MATCH_TOLERANCE,
     TTS_RATE_MAX_ITERS,
 )
-from .utils import log, probe_duration, run
+from .utils import log, probe_duration, run, win_hidden_kwargs
+from .tts_file_io import atomic_replace, unique_tmp
 
 
 @dataclass
@@ -300,6 +301,8 @@ def _finite_loudness(val) -> bool:
 
 def loudnorm_twopass(path: Path) -> float | None:
     """Two-pass loudnorm -> target LUFS. Tra mean_volume uoc luong (dB) neu do duoc."""
+    from .utils import ffmpeg_path
+
     path = Path(path)
     if not path.exists() or path.stat().st_size < 100:
         return None
@@ -307,16 +310,18 @@ def loudnorm_twopass(path: Path) -> float | None:
     if dur > 0 and dur < LOUDNORM_MIN_DUR:
         log.info("Bo qua loudnorm %s (%.2fs < %.2fs)", path.name, dur, LOUDNORM_MIN_DUR)
         return None
-    tmp = path.with_name(path.stem + "._ln2.mp3")
+    tmp = unique_tmp(path, tag="ln2")
+    ff = ffmpeg_path()
     try:
         p1 = subprocess.run(
             [
-                "ffmpeg", "-hide_banner", "-i", str(path),
+                ff, "-hide_banner", "-i", str(path),
                 "-af", f"loudnorm=I={LOUDNORM_TARGET_I}:TP={LOUDNORM_TRUE_PEAK}:"
                        f"LRA={LOUDNORM_LRA}:print_format=json",
                 "-f", "null", "-",
             ],
             capture_output=True, text=True, check=False,
+            **win_hidden_kwargs(),
         )
         blob = (p1.stderr or "") + (p1.stdout or "")
         m = re.search(r'\{\s*"input_i"\s*:[\s\S]*?\}\s*', blob)
@@ -328,7 +333,6 @@ def loudnorm_twopass(path: Path) -> float | None:
                 "Bo qua loudnorm %s (measured_I=%s)",
                 path.name, stats.get("input_i"),
             )
-            tmp.unlink(missing_ok=True)
             return None
         run([
             "ffmpeg", "-y", "-i", str(path),
@@ -342,15 +346,16 @@ def loudnorm_twopass(path: Path) -> float | None:
             str(tmp),
         ])
         if tmp.exists() and tmp.stat().st_size > 100:
-            tmp.replace(path)
+            atomic_replace(tmp, path)
         p2 = subprocess.run(
             [
-                "ffmpeg", "-hide_banner", "-i", str(path),
+                ff, "-hide_banner", "-i", str(path),
                 "-af", f"loudnorm=I={LOUDNORM_TARGET_I}:TP={LOUDNORM_TRUE_PEAK}:"
                        f"LRA={LOUDNORM_LRA}:print_format=json",
                 "-f", "null", "-",
             ],
             capture_output=True, text=True, check=False,
+            **win_hidden_kwargs(),
         )
         blob2 = (p2.stderr or "") + (p2.stdout or "")
         m2 = re.search(r'\{\s*"input_i"\s*:[\s\S]*?\}\s*', blob2)
@@ -363,24 +368,28 @@ def loudnorm_twopass(path: Path) -> float | None:
         return LOUDNORM_TARGET_I
     except Exception as e:  # noqa: BLE001
         log.warning("loudnorm 2-pass %s loi: %s", path.name, e)
-        tmp.unlink(missing_ok=True)
         return None
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def apply_atempo_file(path: Path, tempo: float) -> None:
     if abs(tempo - 1.0) < 0.005:
         return
     path = Path(path)
-    tmp = path.with_name(path.stem + "._at.mp3")
+    tmp = unique_tmp(path, tag="at")
     chain = _atempo_chain(tempo)
-    run([
-        "ffmpeg", "-y", "-i", str(path),
-        "-af", chain,
-        "-c:a", "libmp3lame", "-b:a", "192k",
-        str(tmp),
-    ])
-    if tmp.exists() and tmp.stat().st_size > 100:
-        tmp.replace(path)
+    try:
+        run([
+            "ffmpeg", "-y", "-i", str(path),
+            "-af", chain,
+            "-c:a", "libmp3lame", "-b:a", "192k",
+            str(tmp),
+        ])
+        if tmp.exists() and tmp.stat().st_size > 100:
+            atomic_replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def trim_audio_to_dur(path: Path, dur: float) -> None:
@@ -394,16 +403,19 @@ def trim_audio_to_dur(path: Path, dur: float) -> None:
         return
     fade = min(0.08, limit * 0.12)
     start_fade = max(0.0, limit - fade)
-    tmp = path.with_name(path.stem + "._tr.mp3")
-    run([
-        "ffmpeg", "-y", "-i", str(path),
-        "-t", f"{limit:.3f}",
-        "-af", f"afade=t=out:st={start_fade:.3f}:d={fade:.3f}",
-        "-c:a", "libmp3lame", "-b:a", "192k",
-        str(tmp),
-    ])
-    if tmp.exists() and tmp.stat().st_size > 100:
-        tmp.replace(path)
+    tmp = unique_tmp(path, tag="tr")
+    try:
+        run([
+            "ffmpeg", "-y", "-i", str(path),
+            "-t", f"{limit:.3f}",
+            "-af", f"afade=t=out:st={start_fade:.3f}:d={fade:.3f}",
+            "-c:a", "libmp3lame", "-b:a", "192k",
+            str(tmp),
+        ])
+        if tmp.exists() and tmp.stat().st_size > 100:
+            atomic_replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def strip_edge_silence(path: Path) -> None:
@@ -413,7 +425,7 @@ def strip_edge_silence(path: Path) -> None:
         return
     before = probe_duration(path)
     backup = path.read_bytes()
-    tmp = path.with_name(path.stem + "._sil.mp3")
+    tmp = unique_tmp(path, tag="sil")
     try:
         # areverse + start_periods = chi cat duoi file, khong an khoang lang giua cau.
         run([
@@ -427,7 +439,7 @@ def strip_edge_silence(path: Path) -> None:
             str(tmp),
         ])
         if tmp.exists() and tmp.stat().st_size > 100:
-            tmp.replace(path)
+            atomic_replace(tmp, path)
             after = probe_duration(path) if path.exists() else 0.0
             # Neu an mat >0.5s (loi noi, khong phai pad), tra file goc.
             if after + 0.5 < before:
@@ -438,9 +450,10 @@ def strip_edge_silence(path: Path) -> None:
                 path.write_bytes(backup)
     except Exception as e:  # noqa: BLE001
         log.warning("Cat im lang %s loi: %s", path.name, e)
-        tmp.unlink(missing_ok=True)
         if not path.exists() or path.stat().st_size < 100:
             path.write_bytes(backup)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def close_file_to_slot(
@@ -453,11 +466,13 @@ def close_file_to_slot(
     cap: float = TTS_ATEMPO_SEVERE_MAX,
     allow_speech_trim: bool = False,
     allow_micro_overlap: bool = False,
+    allow_large_overlap: bool = False,
     label: str = "",
 ) -> dict:
     """Khong de TTS de cau sau: im lang cuoi -> atempo toi cap -> cat pad encoder.
 
-    Khong cat loi noi. Neu van tran: micro-overlap <=250ms (neu bat) hoac overflow.
+    Khong cat loi noi. Neu van tran: micro-overlap <=250ms, large_overlap (tang 5),
+    hoac overflow.
     """
     from .dub_timing import overlap_close_plan, plan_placement
 
@@ -476,6 +491,7 @@ def close_file_to_slot(
         allow_speech_trim=False,
         allow_micro_overlap=allow_micro_overlap,
         micro_overlap_sec=DUB_MICRO_OVERLAP_SEC,
+        allow_large_overlap=allow_large_overlap,
     )
     tempo = float(plan.get("tempo") or 1.0)
     if tempo > 1.005:
@@ -499,13 +515,15 @@ def close_file_to_slot(
     )
     still = bool(place["would_overlap"])
     micro = bool(plan.get("micro_overlap"))
+    large = bool(plan.get("large_overlap"))
     tag = f"{label} " if label else ""
     log.info(
-        "%sclose_slot %s action=%s tempo=%.3f pad_trim=%s micro=%s dur=%.2fs "
+        "%sclose_slot %s action=%s tempo=%.3f pad_trim=%s micro=%s large=%s dur=%.2fs "
         "hard=%.2fs overlap=%s",
         tag, path.name, plan.get("action"), tempo, plan.get("pad_trim"),
-        micro, dur, hard, still,
+        micro, large, dur, hard, still,
     )
+    accepted = micro or large
     return {
         "dur": dur,
         "tempo_applied": tempo if tempo > 1.005 else 1.0,
@@ -513,8 +531,11 @@ def close_file_to_slot(
         "pad_trim": bool(plan.get("pad_trim")),
         "speech_trim": False,
         "micro_overlap": micro,
-        "still_overlap": still and not micro,
-        "fits": (not still) or micro,
+        "large_overlap": large,
+        "overlap_sec": float(plan.get("overlap_sec") or 0.0),
+        "crossfade_sec": float(plan.get("crossfade_sec") or 0.0),
+        "still_overlap": still and not accepted,
+        "fits": (not still) or accepted,
     }
 
 

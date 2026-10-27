@@ -12,7 +12,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from .utils import log, probe_duration, probe_has_audio, probe_video_size, run
+from .utils import log, probe_duration, probe_has_audio, probe_video_size, run, win_hidden_kwargs
 
 LAYOUT_NAME = "editor_layout.json"
 LOGO_NAME = "editor_logo.png"
@@ -500,8 +500,17 @@ def _is_noop(layout: dict[str, Any], has_logo: bool) -> bool:
 
 def _run_editor_ffmpeg(cmd: list[str]) -> None:
     import subprocess
+    from .utils import _resolve_media_cmd, ensure_media_bins
 
-    proc = subprocess.run([str(c) for c in cmd], capture_output=True, text=True)
+    ensure_media_bins()
+    resolved_cmd = _resolve_media_cmd(cmd)
+
+    proc = subprocess.run(
+        [str(c) for c in resolved_cmd],
+        capture_output=True,
+        text=True,
+        **win_hidden_kwargs(),
+    )
     if proc.returncode == 0:
         return
     err = proc.stderr or ""

@@ -1,0 +1,15 @@
+{# Duong dan luu MP4 — hien o trang tao video + trang job. #}
+<div class="save-path-row" id="save-path-row">
+  <label for="save-path-input">{{ t('save_folder_label') }}</label>
+  <div class="save-path-controls">
+    <input type="text" id="save-path-input"
+           value="{{ export_dir|default('', true) | e }}"
+           placeholder="{{ export_dir|default('Downloads', true) | e }}"
+           title="{{ export_dir|default('', true) | e }}"
+           autocomplete="off"
+           spellcheck="false" />
+    <button type="button" class="btn ghost" id="save-path-browse"{% if not desktop %} hidden{% endif %}>{{ t('save_folder_browse') }}</button>
+  </div>
+  <p class="hint left" id="save-path-hint">{{ t('save_folder_hint') }}</p>
+  <p class="hint left" id="save-path-status" hidden></p>
+</div>

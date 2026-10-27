@@ -464,16 +464,7 @@ const DyflowEditor = {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || _("editor_apply_fail"));
       this.setMsg(_("editor_apply_ok"), false);
-      if (window.DYFLOW_DESKTOP) {
-        await fetch(`/api/jobs/${this.jobId}/export-local`, { method: "POST" });
-      } else {
-        const a = document.createElement("a");
-        a.href = `/api/jobs/${this.jobId}/download?dl=1`;
-        a.download = `videoscreator_${this.jobId.slice(0, 12)}_edit.mp4`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      }
+      // Khong tu dong luu ra Downloads — user bam Download MP4 tren trang job.
     } catch (e) {
       this.setMsg(e.message || _("editor_apply_fail"), true);
     } finally {

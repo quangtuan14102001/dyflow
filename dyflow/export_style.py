@@ -28,7 +28,7 @@ PRESETS: dict[str, dict[str, Any]] = {
     },
     "neon": {
         "fontname": "",
-        "fontsize": 44,
+        "fontsize": 36,
         "primary_color": "&H0000FFCC",
         "outline_color": "&H00FF00AA",
         "back_color": "&H80000000",
@@ -39,7 +39,7 @@ PRESETS: dict[str, dict[str, Any]] = {
     },
     "minimal": {
         "fontname": "",
-        "fontsize": 38,
+        "fontsize": 32,
         "primary_color": "&H00F2F2F2",
         "outline_color": "&H66000000",
         "back_color": "&H00000000",
@@ -50,7 +50,7 @@ PRESETS: dict[str, dict[str, Any]] = {
     },
     "bold": {
         "fontname": "",
-        "fontsize": 48,
+        "fontsize": 38,
         "primary_color": "&H00FFFFFF",
         "outline_color": "&H00000000",
         "back_color": "&H90000000",
@@ -61,7 +61,7 @@ PRESETS: dict[str, dict[str, Any]] = {
     },
     "mint": {
         "fontname": "",
-        "fontsize": 42,
+        "fontsize": 34,
         "primary_color": "&H00CCFFCC",
         "outline_color": "&H00335533",
         "back_color": "&H66003322",
@@ -72,7 +72,7 @@ PRESETS: dict[str, dict[str, Any]] = {
     },
     "rose": {
         "fontname": "",
-        "fontsize": 42,
+        "fontsize": 34,
         "primary_color": "&H00E8D0FF",
         "outline_color": "&H00440055",
         "back_color": "&H66002244",
@@ -83,7 +83,7 @@ PRESETS: dict[str, dict[str, Any]] = {
     },
     "sky": {
         "fontname": "",
-        "fontsize": 42,
+        "fontsize": 34,
         "primary_color": "&H00FFE8AA",
         "outline_color": "&H00884400",
         "back_color": "&H66221100",
@@ -94,7 +94,7 @@ PRESETS: dict[str, dict[str, Any]] = {
     },
     "sunset": {
         "fontname": "",
-        "fontsize": 44,
+        "fontsize": 36,
         "primary_color": "&H0000E0FF",
         "outline_color": "&H00003388",
         "back_color": "&H66001144",
@@ -105,7 +105,7 @@ PRESETS: dict[str, dict[str, Any]] = {
     },
     "lavender": {
         "fontname": "",
-        "fontsize": 42,
+        "fontsize": 34,
         "primary_color": "&H00FFD0E8",
         "outline_color": "&H00662255",
         "back_color": "&H66331144",
@@ -116,7 +116,7 @@ PRESETS: dict[str, dict[str, Any]] = {
     },
     "hop_den": {
         "fontname": "",
-        "fontsize": 40,
+        "fontsize": 34,
         "primary_color": "&H00FFFFFF",
         "outline_color": "&H00000000",
         "back_color": "&H00000000",
@@ -127,7 +127,7 @@ PRESETS: dict[str, dict[str, Any]] = {
     },
     "hop_trang": {
         "fontname": "",
-        "fontsize": 40,
+        "fontsize": 34,
         "primary_color": "&H00000000",
         "outline_color": "&H00FFFFFF",
         "back_color": "&H00FFFFFF",
@@ -138,7 +138,7 @@ PRESETS: dict[str, dict[str, Any]] = {
     },
     "hop_vang": {
         "fontname": "",
-        "fontsize": 40,
+        "fontsize": 34,
         "primary_color": "&H00000000",
         "outline_color": "&H0000E8FF",
         "back_color": "&H0000E8FF",
@@ -149,7 +149,7 @@ PRESETS: dict[str, dict[str, Any]] = {
     },
     "hop_tim": {
         "fontname": "",
-        "fontsize": 40,
+        "fontsize": 34,
         "primary_color": "&H00FFFFFF",
         "outline_color": "&H00882266",
         "back_color": "&H00882266",
@@ -160,7 +160,7 @@ PRESETS: dict[str, dict[str, Any]] = {
     },
     "hop_xam": {
         "fontname": "",
-        "fontsize": 40,
+        "fontsize": 34,
         "primary_color": "&H00FFFFFF",
         "outline_color": "&H00333333",
         "back_color": "&H00333333",
@@ -171,7 +171,7 @@ PRESETS: dict[str, dict[str, Any]] = {
     },
     "hop_hong": {
         "fontname": "",
-        "fontsize": 40,
+        "fontsize": 34,
         "primary_color": "&H00000000",
         "outline_color": "&H00CC88FF",
         "back_color": "&H00CC88FF",
@@ -182,7 +182,7 @@ PRESETS: dict[str, dict[str, Any]] = {
     },
     "khong_vien": {
         "fontname": "",
-        "fontsize": 42,
+        "fontsize": 34,
         "primary_color": "&H00FFFFFF",
         "outline_color": "&H00000000",
         "back_color": "&H00000000",
@@ -225,6 +225,69 @@ def _opt_float(v: Any) -> float | None:
         return None
 
 
+def _opt_bool(v: Any) -> bool:
+    if isinstance(v, bool):
+        return v
+    return str(v or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+ANTI_COPYRIGHT_MODES = ("off", "standard", "advanced", "custom")
+
+BLUR_SUB_MODES = (
+    "bottom",
+    "bottom_medium",
+    "bottom_large",
+    "bottom_full",
+    "full",
+    "center",
+    "auto_ai",
+    "ocr",
+    "off",
+)
+
+ANTI_COPYRIGHT_PRESETS: dict[str, dict[str, Any]] = {
+    "off": {
+        "enabled": False,
+        "mode": "off",
+        "mirror": False,
+        "noise": False,
+        "color_shift": False,
+        "vignette": False,
+        "blur_sub": False,
+        "blur_sub_mode": "bottom",
+        "pitch_shift": False,
+        "micro_zoom": False,
+        "speed": 1.0,
+    },
+    "standard": {
+        "enabled": True,
+        "mode": "standard",
+        "mirror": False,
+        "noise": True,         # Phu hat film grain sieu min 2/100 doi pHash/MD5
+        "color_shift": True,   # Tinh chinh contrast=1.04, saturation=1.06, gamma=0.98
+        "vignette": False,
+        "blur_sub": True,      # Che mo chu phu de goc o day clip (BAT MAC DINH theo yeu cau user)
+        "blur_sub_mode": "bottom",
+        "pitch_shift": True,   # Dich tone am thanh nen +2.5% tranh acoustic fingerprint
+        "micro_zoom": False,
+        "speed": 1.03,         # Tang toc nhe 1.03x
+    },
+    "advanced": {
+        "enabled": True,
+        "mode": "advanced",
+        "mirror": True,        # Lat guong video
+        "noise": True,         # Phu hat film grain
+        "color_shift": True,   # Chinh mau vi mo
+        "vignette": True,      # Vien toi 4 goc
+        "blur_sub": True,      # Che mo dai phu de goc o chan video
+        "blur_sub_mode": "bottom",
+        "pitch_shift": True,   # Dich tone am thanh nen
+        "micro_zoom": True,    # Micro zoom 1.04x
+        "speed": 1.04,         # Tang toc 1.04x
+    },
+}
+
+
 def normalize_output_opts(raw: dict[str, Any] | None) -> dict[str, Any]:
     raw = raw or {}
     speed = _opt_float(raw.get("video_speed"))
@@ -247,6 +310,46 @@ def normalize_output_opts(raw: dict[str, Any] | None) -> dict[str, Any]:
         sy = max(0.0, min(1.0, sy))
     if ss is not None:
         ss = max(0.01, min(0.4, ss))
+
+    # Anti-copyright mode normalization: mac dinh standard (chong ban quyen + che mo sub goc)
+    ac_mode = str(raw.get("anti_copyright_mode") or "standard").strip().lower()
+    if ac_mode not in ANTI_COPYRIGHT_MODES:
+        ac_mode = "standard"
+
+    # blur_sub_mode: bottom (mac dinh) | center | auto_ai | ocr | off
+    bs_mode = str(raw.get("ac_blur_sub_mode") or raw.get("blur_sub_mode") or "bottom").strip().lower()
+    if bs_mode not in BLUR_SUB_MODES:
+        bs_mode = "bottom"
+
+    if "ac_blur_sub" in raw and raw.get("ac_blur_sub") is not None and str(raw.get("ac_blur_sub")).strip() != "":
+        blur_sub_explicit = _opt_bool(raw.get("ac_blur_sub"))
+    else:
+        blur_sub_explicit = None
+
+    if ac_mode in ANTI_COPYRIGHT_PRESETS:
+        ac_cfg = dict(ANTI_COPYRIGHT_PRESETS[ac_mode])
+        if blur_sub_explicit is not None:
+            ac_cfg["blur_sub"] = blur_sub_explicit
+        ac_cfg["blur_sub_mode"] = bs_mode
+    else:  # custom
+        ac_speed = _opt_float(raw.get("ac_speed"))
+        if ac_speed is None:
+            ac_speed = 1.03
+        ac_speed = max(0.5, min(1.5, ac_speed))
+        ac_cfg = {
+            "enabled": True,
+            "mode": "custom",
+            "mirror": _opt_bool(raw.get("ac_mirror")),
+            "noise": _opt_bool(raw.get("ac_noise")),
+            "color_shift": _opt_bool(raw.get("ac_color")),
+            "vignette": _opt_bool(raw.get("ac_vignette")),
+            "blur_sub": bool(blur_sub_explicit if blur_sub_explicit is not None else True),
+            "blur_sub_mode": bs_mode,
+            "pitch_shift": _opt_bool(raw.get("ac_pitch")),
+            "micro_zoom": _opt_bool(raw.get("ac_zoom")),
+            "speed": ac_speed,
+        }
+
     return {
         "preset_name": normalize_preset_name(raw.get("preset_name")),
         "video_speed": round(speed, 4),
@@ -256,14 +359,34 @@ def normalize_output_opts(raw: dict[str, Any] | None) -> dict[str, Any]:
         "sub_pos_x": sx,
         "sub_pos_y": sy,
         "sub_scale": ss,
+        "translate_engine": (
+            te_raw
+            if (
+                te_raw := str(raw.get("translate_engine") or "").strip().lower()
+            ) in ("openai", "deepseek", "qwen", "google")
+            else ""  # de trong → resolve sau khi co key
+        ),
+        "genre_id": str(raw.get("genre_id") or "").strip()[:64],
+        "genre_prompt": str(raw.get("genre_prompt") or "").strip()[:12000],
+        "voice_mode": (
+            vm
+            if (vm := str(raw.get("voice_mode") or "single").strip().lower()) in ("single", "multi")
+            else "single"
+        ),
+        "anti_copyright": ac_cfg,
+        "export_dir": str(raw.get("export_dir") or "").strip(),
     }
 
 
 def apply_opts_to_job(job: dict, opts: dict[str, Any] | None) -> dict:
     """Ghi caption/export tren job dict — process_job merge vao cfg."""
-    n = normalize_output_opts(opts)
+    # Giu chrome_fallback / translate_engine tu opts goc (normalize co translate).
+    raw = opts or {}
+    n = normalize_output_opts(raw)
     cap = job.setdefault("caption", {})
     exp = job.setdefault("export", {})
+    vo = job.setdefault("voiceover", {})
+    auto = vo.setdefault("auto", {})
     cap["preset_name"] = n["preset_name"]
     if n["sub_pos_x"] is not None and n["sub_pos_y"] is not None:
         cap["sub_pos_x"] = n["sub_pos_x"]
@@ -274,6 +397,49 @@ def apply_opts_to_job(job: dict, opts: dict[str, Any] | None) -> dict:
     exp["logo_path"] = n["logo_path"]
     exp["logo_position"] = n["logo_position"]
     exp["logo_size_percent"] = n["logo_size_percent"]
+    if n.get("export_dir"):
+        exp["export_dir"] = n["export_dir"]
+
+    # Gan anti_copyright
+    ac = n.get("anti_copyright")
+    if ac:
+        exp["anti_copyright"] = ac
+        if "blur_sub" in ac:
+            cap["blur_sub"] = ac["blur_sub"]
+        if "blur_sub_mode" in ac:
+            cap["blur_sub_mode"] = ac["blur_sub_mode"]
+        if ac.get("enabled"):
+            # Neu nguoi dung chua tu tay doi toc do (van de 1.0), ap dung toc do chong ban quyen
+            if abs(float(exp.get("video_speed") or 1.0) - 1.0) <= 1e-3:
+                ac_spd = float(ac.get("speed") or 1.0)
+                if abs(ac_spd - 1.0) > 1e-3:
+                    exp["video_speed"] = ac_spd
+
+    te = n.get("translate_engine") or ""
+    if te not in ("google", "openai", "deepseek", "qwen"):
+        from .translate_llm import resolve_translate_engine
+
+        te = resolve_translate_engine(te)
+    auto["translate_engine"] = te
+    if te in ("openai", "deepseek", "qwen"):
+        auto["translate_llm"] = te
+    else:
+        auto["translate_llm"] = "off"
+    from .genre_profiles import resolve_genre_prompt
+
+    gid, gprompt = resolve_genre_prompt(
+        n.get("genre_id") or raw.get("genre_id"),
+        n.get("genre_prompt") if "genre_prompt" in n else raw.get("genre_prompt"),
+    )
+    auto["genre_id"] = gid
+    auto["genre_prompt"] = gprompt
+    auto["topic_context"] = gprompt
+    vm = n.get("voice_mode") or "single"
+    cast_on = (vm == "multi")
+    auto["voice_mode"] = vm
+    auto["cast_speakers"] = cast_on
+    vo["voice_mode"] = vm
+    vo["cast_speakers"] = cast_on
     return n
 
 
@@ -299,7 +465,7 @@ def resolve_ass_style(
         and cfg_cap.get("sub_pos_y") is not None
     )
     if name == "classic":
-        fs = int(cfg_cap.get("font_size", 56))
+        fs = int(cfg_cap.get("font_size") or 36)
         outline = int(cfg_cap.get("outline", 3))
         primary = str(cfg_cap.get("primary_color", "&H00FFFFFF"))
         outline_c = str(cfg_cap.get("outline_color", "&H00000000"))
@@ -308,7 +474,7 @@ def resolve_ass_style(
         border = int(cfg_cap.get("border_style", 1))
         bold = int(cfg_cap.get("bold", 1))
     else:
-        fs = int(preset.get("fontsize") or cfg_cap.get("font_size") or 42)
+        fs = int(preset.get("fontsize") or cfg_cap.get("font_size") or 36)
         outline = int(preset.get("outline") if preset.get("outline") is not None else 3)
         primary = str(preset["primary_color"])
         outline_c = str(preset["outline_color"])
@@ -325,7 +491,15 @@ def resolve_ass_style(
             pass
 
     align = 7 if custom_pos else 2
-    margin_v = 0 if custom_pos else int(cfg_cap.get("margin_v", 220))
+    if custom_pos:
+        margin_v = 0
+    elif "margin_v" in cfg_cap and cfg_cap.get("margin_v") is not None and str(cfg_cap.get("margin_v")).strip() != "":
+        margin_v = int(cfg_cap.get("margin_v"))
+    elif play_w >= play_h or play_h <= 1080:
+        # Video ngang (16:9, source 1080p/720p): MarginV ~7.5% chieu cao de nam gon chinh giua dai mo
+        margin_v = max(35, int(round(float(play_h) * 0.075)))
+    else:
+        margin_v = int(cfg_cap.get("margin_v", 220))
     return {
         "preset_name": name,
         "fontname": font_name,

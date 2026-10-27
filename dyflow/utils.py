@@ -7,6 +7,7 @@ import random
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import yaml
@@ -23,8 +24,14 @@ def setup_logging(verbose: bool = False) -> None:
 
 
 def load_config(path: str | Path) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    raw = Path(path).read_bytes()
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raw = raw[3:]
+    text = raw.decode("utf-8", errors="replace")
+    # PyYAML tu choi C1 controls (vd \x81 tu mojibake comment Tieng Viet).
+    text = "".join(ch for ch in text if not (0x80 <= ord(ch) <= 0x9F))
+    data = yaml.safe_load(text)
+    return data if isinstance(data, dict) else {}
 
 
 def load_jobs(path: str | Path) -> list[dict]:
@@ -54,7 +61,9 @@ def media_bin_dir() -> Path | None:
     names = (_bin_name("ffmpeg"),)
     cands: list[Path] = []
     if getattr(sys, "frozen", False):
-        cands.append(Path(sys.executable).resolve().parent)
+        exe_dir = Path(sys.executable).resolve().parent
+        cands.append(exe_dir)
+        cands.append(exe_dir / "_internal")
         meipass = getattr(sys, "_MEIPASS", None)
         if meipass:
             cands.append(Path(meipass))
@@ -150,9 +159,71 @@ def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
         **kw,
     )
     if proc.returncode != 0:
-        log.error("Command failed (%s):\n%s", cmd[0], proc.stderr[-2000:])
-        raise RuntimeError(f"{cmd[0]} that bai (code {proc.returncode})")
+        err = (proc.stderr or proc.stdout or "").strip()
+        log.error("Command failed (%s):\n%s", cmd[0], err[-2000:])
+        # Goi y file input (arg cuoi neu la path) de UI khong chi bao "ffprobe code 1".
+        hint = ""
+        for a in reversed(cmd[1:]):
+            s = str(a)
+            if s.startswith("-"):
+                continue
+            if any(s.lower().endswith(ext) for ext in (
+                ".mp3", ".mp4", ".wav", ".m4a", ".aac", ".mov", ".mkv",
+            )) or ("\\" in s or "/" in s):
+                hint = f" | file={s}"
+                break
+        tail = ""
+        if err:
+            line = err.strip().splitlines()[-1].strip()
+            if line:
+                tail = f" | {line[:180]}"
+        raise RuntimeError(
+            f"{cmd[0]} that bai (code {proc.returncode}){hint}{tail}"
+        )
     return proc
+
+
+def win_hidden_kwargs(below_normal: bool = False) -> dict:
+    """An cua so console ffmpeg/ffprobe tren Windows (tranh nhay man hinh)."""
+    if sys.platform != "win32":
+        return {}
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    if below_normal:
+        flags |= getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0x00004000)
+    return {"creationflags": flags}
+
+
+# MP4 hop le toi thieu — duoi nguong nay coi nhu ffmpeg "thanh cong" ao / o dia day.
+MIN_OUTPUT_MP4_BYTES = 10_000
+
+
+def verify_output_mp4(
+    path: Path | str,
+    *,
+    min_bytes: int = MIN_OUTPUT_MP4_BYTES,
+    label: str = "output",
+) -> Path:
+    """Bat buoc file MP4 ton tai + size hop ly. Raise RuntimeError neu khong.
+
+    Dung SAU ffmpeg/compose, TRUOC khi mark_completed / danh dau DONE.
+    """
+    p = Path(path)
+    if not p.is_file():
+        raise RuntimeError(
+            f"{label}: khong co file sau khi xuat — path={p}. "
+            f"Kiem tra o dia / quyen ghi / duong dan."
+        )
+    try:
+        size = int(p.stat().st_size)
+    except OSError as e:
+        raise RuntimeError(f"{label}: khong doc duoc file {p}: {e}") from e
+    if size < int(min_bytes):
+        raise RuntimeError(
+            f"{label}: file qua nho ({size} byte, can >= {min_bytes}) — path={p}. "
+            f"Co the o dia day hoac ffmpeg khong ghi duoc noi dung."
+        )
+    log.info("%s OK: %s (%d byte)", label, p, size)
+    return p.resolve()
 
 
 def ensure_dirs(*dirs: str | Path) -> None:
@@ -189,6 +260,46 @@ def probe_duration(path: str | Path) -> float:
         return float(proc.stdout.strip())
     except ValueError:
         return 0.0
+
+
+def probe_duration_retry(
+    path: str | Path,
+    *,
+    fallback: float | None = None,
+    retries: int = 4,
+) -> float:
+    """Probe co retry — Windows/AV hay lock file vua ghi xong.
+
+    Delay 120–200ms * attempt (toi da ~5 lan). Neu van loi va co fallback
+    (vd play_end-start da tinh) thi dung fallback, khong pha ca job.
+    """
+    path = Path(path)
+    last_err: Exception | None = None
+    n = max(1, int(retries) + 1)
+    for attempt in range(n):
+        try:
+            if not path.exists() or path.stat().st_size < 50:
+                raise RuntimeError(f"file thieu/rong: {path}")
+            dur = probe_duration(path)
+            if dur > 0.05:
+                return dur
+            raise RuntimeError(f"duration={dur}")
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            if attempt + 1 < n:
+                # 0.12, 0.24, 0.36... — AV scan thuong <200ms
+                time.sleep(0.12 * (attempt + 1))
+                continue
+            break
+    if fallback is not None and float(fallback) > 0.05:
+        log.warning(
+            "ffprobe loi tren %s (%s) — dung fallback %.2fs",
+            path.name, last_err, float(fallback),
+        )
+        return float(fallback)
+    raise RuntimeError(
+        f"ffprobe that bai | file={path} | {last_err}"
+    ) from last_err
 
 
 def probe_has_audio(path: str | Path) -> bool:

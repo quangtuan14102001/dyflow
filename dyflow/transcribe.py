@@ -717,7 +717,11 @@ def translate_segments(
             "translated_text": vi,
         })
         if vi.strip() and not _has_cjk(vi):
-            row = {**seg, "text": vi, "source_text": seg.get("source_text") or src}
+            from .google_polish import polish_google_vi
+
+            src0 = seg.get("source_text") or src
+            vi = polish_google_vi(vi, source_zh=str(src0))
+            row = {**seg, "text": vi, "source_text": src0}
             out.append(row)
         if i % 50 == 0 or i == n:
             log.info("Dang dich: %d/%d doan...", i, n)

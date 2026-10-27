@@ -54,9 +54,12 @@ def default_font() -> str:
 
 
 def extra_bin_dir() -> Path | None:
-    """ffmpeg.exe di kem .exe (cung thu muc)."""
+    """ffmpeg.exe di kem .exe (cung thu muc hoac trong _internal)."""
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
+        exe_dir = Path(sys.executable).resolve().parent
+        if (exe_dir / "_internal" / "ffmpeg.exe").is_file():
+            return exe_dir / "_internal"
+        return exe_dir
     return None
 
 
@@ -150,11 +153,17 @@ def prepare() -> Path:
     example = resource_root() / ".env.example"
     bundled_env = _bundled_env_file()
     if not env_path.exists():
-        if bundled_env and bundled_env.exists():
+        # Chi copy bundled co key that — tranh .env.example (OPENAI_API_KEY= rong).
+        if bundled_env and _read_openai_key(bundled_env):
+            shutil.copy2(bundled_env, env_path)
+        elif bundled_env and bundled_env.exists():
             shutil.copy2(bundled_env, env_path)
         elif example.exists():
             shutil.copy2(example, env_path)
     _seed_openai_key(env_path, bundled_env)
+    # Neu AppData dang de key rong ma exe co key — seed lai ngay.
+    if not _read_openai_key(env_path) and bundled_env:
+        _seed_openai_key(env_path, bundled_env)
     try:
         from dotenv import load_dotenv
 
@@ -174,7 +183,13 @@ def prepare() -> Path:
             flush=True,
         )
 
-    os.environ["DYFLOW_WEB_WORKERS"] = "1"
+    # Desktop: mac dinh 2 worker song song tren may >= 4 core de xu ly hang cho nhanh
+    w_default = "2" if (os.cpu_count() or 4) >= 4 else "1"
+    env_w = os.getenv("DYFLOW_WEB_WORKERS", "").strip()
+    if not (env_w.isdigit() and 1 <= int(env_w) <= 4):
+        os.environ["DYFLOW_WEB_WORKERS"] = w_default
+    if not os.getenv("DYFLOW_MAX_CONCURRENT_PER_USER"):
+        os.environ["DYFLOW_MAX_CONCURRENT_PER_USER"] = os.environ["DYFLOW_WEB_WORKERS"]
     os.environ.pop("DYFLOW_WEB_NO_WORKER", None)
     # Desktop Win: ffmpeg Transform encode rat cham (ARM VM 1h+) — tat de job di tiep.
     if sys.platform == "win32":
@@ -219,9 +234,13 @@ def _rewrite_paths(
         elif line.startswith("  chrome_headless:"):
             line = "  chrome_headless: true\n"
         elif line.startswith("  ytdlp_first:"):
-            line = "  ytdlp_first: true\n"
+            line = "  ytdlp_first: false\n"
+        elif line.startswith("  chrome_fallback:"):
+            line = "  chrome_fallback: false\n"
+        elif line.startswith("  backend:"):
+            line = '  backend: "yt-dlp"\n'
         elif line.startswith("  dub_qa_fail_closed:"):
-            line = "  dub_qa_fail_closed: true\n"
+            line = "  dub_qa_fail_closed: false\n"
         elif line.startswith("  workers:"):
             line = "  workers: 1\n"
         elif sys.platform == "win32" and line.lstrip().startswith("whisper_model:"):

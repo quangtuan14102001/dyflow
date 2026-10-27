@@ -27,11 +27,12 @@
       </div>
     </div>
     <div class="result-actions" id="result-actions" hidden>
-      <a class="btn primary" id="download-btn" href="#">{{ t('download_mp4') }}</a>
+      {% include "_save_path.html" %}
+      <button type="button" class="btn primary" id="download-btn">{{ t('download_mp4') }}</button>
       <a class="btn ghost" id="editor-btn" href="/jobs/{{ job_id }}/editor">{{ t('open_editor') }}</a>
       <a class="btn ghost" href="/">{{ t('new_video') }}</a>
     </div>
-    <p class="hint left" id="auto-dl-note" hidden>{{ t('auto_download_note') }}</p>
+    <p class="hint left" id="auto-dl-note" hidden></p>
     <div class="studio-log">
       <div class="studio-log-h">
         <strong>{{ t('studio_log') }}</strong>

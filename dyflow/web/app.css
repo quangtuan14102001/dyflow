@@ -732,18 +732,42 @@ h2 { font-size: 18px; margin: 0 0 16px; }
 .quote-list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 2px 6px 2px 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
+  max-height: 280px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.quote-list::-webkit-scrollbar {
+  width: 6px;
+}
+.quote-list::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 4px;
+}
+.quote-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+.quote-list::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
 }
 .quote-list li {
   display: grid;
-  grid-template-columns: 22px 1fr auto;
+  grid-template-columns: 28px 1fr auto;
   gap: 8px;
-  align-items: start;
-  font-size: 13px;
+  align-items: center;
+  font-size: 12.5px;
   line-height: 1.35;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  transition: background 0.15s ease;
+}
+.quote-list li:hover {
+  background: rgba(255, 255, 255, 0.05);
 }
 .quote-idx {
   width: 22px;

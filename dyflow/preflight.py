@@ -15,9 +15,10 @@ from .utils import log
 _DEV_ENVS = {"dev", "development", "local"}
 
 MISSING_OPENAI = (
-    "Thieu OPENAI_API_KEY. Job dung o pre-flight — chua tai video. "
-    "Ban Windows: key nam trong file .env canh VideosCreator.exe "
-    "hoac %LOCALAPPDATA%\\VideosCreator\\.env."
+    "Thieu OPENAI_API_KEY (can khi dung OpenAI TTS hoac dich LLM full). "
+    "Edge TTS + dich Google khong bat buoc key nay. "
+    "Neu can: dien key rieng cua ban trong app / %LOCALAPPDATA%\\VideosCreator\\.env "
+    "(khong dung key chung trong zip)."
 )
 
 MISSING_TTS_OPENAI = (
@@ -103,6 +104,15 @@ def hydrate_openai_key() -> str:
 
 
 def openai_key() -> str:
+    """Key dich/LLM: uu tien key khach da dan (OPENAI_TTS_API_KEY), roi moi .env vendor."""
+    try:
+        from .user_openai import load_tts_key
+
+        user = (load_tts_key() or "").strip()
+        if user:
+            return user
+    except Exception:  # noqa: BLE001
+        pass
     return hydrate_openai_key()
 
 
@@ -134,16 +144,40 @@ def require_openai(*, kind: str = "draft_mode", job_id: str = "") -> str:
 
 
 def _required_keys(cfg: dict | None, job: dict | None) -> list[tuple[str, str]]:
-    """(env_name, human_msg) cac key pipeline can cho job nay."""
-    keys = [("OPENAI_API_KEY", MISSING_OPENAI)]
-    vo = {}
+    """(env_name, human_msg) cac key pipeline can cho job nay.
+
+    Edge TTS + dich Google/polish (tuy chon): KHONG bat buoc OPENAI_API_KEY.
+    Chi bat khi user chon OpenAI TTS hoac translate_llm=openai/deepseek/qwen (viet lai het).
+    """
+    keys: list[tuple[str, str]] = []
+    vo: dict = {}
     if cfg:
         vo.update(cfg.get("voiceover") or {})
     if job:
         vo.update(job.get("voiceover") or {})
     engine = str(vo.get("tts_engine") or "edge").strip().lower()
+    auto = {}
+    if isinstance(vo.get("auto"), dict):
+        auto.update(vo.get("auto") or {})
+    if job and isinstance(job.get("auto"), dict):
+        auto.update(job.get("auto") or {})
+    translate_mode = str(auto.get("translate_llm") or "polish").strip().lower()
+
     if engine in ("openai", "tts-1", "tts-1-hd", "gpt-4o-mini-tts", "openai_tts"):
+        keys.append(("OPENAI_API_KEY", MISSING_OPENAI))
         keys.append(("OPENAI_TTS_API_KEY", MISSING_TTS_OPENAI))
+    elif translate_mode in ("openai", "full", "rewrite"):
+        keys.append(("OPENAI_API_KEY", MISSING_OPENAI))
+    elif translate_mode == "deepseek":
+        keys.append((
+            "DEEPSEEK_API_KEY",
+            "Thieu DEEPSEEK_API_KEY (dich DeepSeek). Dan key trong app.",
+        ))
+    elif translate_mode == "qwen":
+        keys.append((
+            "QWEN_API_KEY",
+            "Thieu QWEN_API_KEY / DASHSCOPE_API_KEY (dich Qwen). Dan key trong app.",
+        ))
     if engine in ("eleven", "elevenlabs"):
         keys.append((
             "ELEVENLABS_API_KEY",
@@ -165,6 +199,18 @@ def missing_keys(cfg: dict | None = None, job: dict | None = None) -> list[str]:
             from .user_openai import has_tts_key
 
             if not has_tts_key():
+                out.append(name)
+            continue
+        if name == "DEEPSEEK_API_KEY":
+            from .user_deepseek import has_deepseek_key
+
+            if not has_deepseek_key():
+                out.append(name)
+            continue
+        if name == "QWEN_API_KEY":
+            from .user_qwen import has_qwen_key
+
+            if not has_qwen_key():
                 out.append(name)
             continue
         aliases = env_alias.get(name, (name,))

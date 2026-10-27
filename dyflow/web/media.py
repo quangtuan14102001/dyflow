@@ -72,10 +72,24 @@ def enrich_library_item(job: dict) -> dict:
     out["duration_label"] = format_duration(dur)
     out["has_file"] = bool(p and p.exists())
     out["expired"] = (job.get("status") == "completed") and not out["has_file"]
-    # Tieu de ngan tu URL Douyin
-    src = (job.get("source_url") or "").rstrip("/")
-    out["title"] = src.split("/")[-1] or job.get("id", "video")
-    if len(out["title"]) > 48:
-        out["title"] = out["title"][:45] + "…"
+    # Tieu de ro rang cho video (xu ly Windows backslash + strip prefix upload)
+    clean_title = ""
+    src = str(job.get("source_url") or "").strip()
+    if src:
+        try:
+            from .export_delivery import title_from_source_path
+            clean_title = title_from_source_path(src)
+        except Exception:
+            clean_title = ""
+    if not clean_title and job.get("source_title"):
+        clean_title = str(job["source_title"]).strip()
+    if not clean_title and src:
+        fname = src.replace("\\", "/").rstrip("/").split("/")[-1]
+        if fname.lower().startswith("local_") and len(fname) > 15 and fname[14] == "_":
+            fname = fname[15:]
+        clean_title = fname
+    out["title"] = clean_title or job.get("id", "video")
+    if len(out["title"]) > 55:
+        out["title"] = out["title"][:52] + "…"
     out["rel_key"] = relative_time(job.get("finished_at") or job.get("created_at"))
     return out

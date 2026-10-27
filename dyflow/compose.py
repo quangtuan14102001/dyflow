@@ -8,7 +8,7 @@ import re
 import textwrap
 from pathlib import Path
 
-from .utils import log, run, probe_duration, probe_video_size
+from .utils import log, run, probe_duration, probe_video_size, verify_output_mp4
 from . import audio_fx
 from .export_style import (
     apply_video_speed,
@@ -238,6 +238,8 @@ def _speech_gate_volume_expr(
 
     windows: list[tuple[float, float]] = []
     for seg in segments:
+        if seg.get("tts_silence_fallback") or "tts_silence_fallback" in (seg.get("qa_flags") or []):
+            continue
         try:
             s = max(0.0, float(seg["start"]) - pad_b)
             e = float(seg.get("display_end") or seg["end"]) + pad_a
@@ -323,15 +325,71 @@ def compose(video: str | Path, voice: str | Path | None, script: str,
             from .job_timing import note as timing_note
             timing_note("Demucs reused (chay song song sau Download)", path=str(ambient_bed))
 
+    # Che mo chu phu de goc cua clip:
+    # Neu anti_copyright bat: lay theo ac_cfg.get("blur_sub", True) (mac dinh True).
+    ac_cfg = cfg_exp.get("anti_copyright") or {}
+    ac_enabled = bool(ac_cfg.get("enabled", False))
+
+    if ac_enabled:
+        blur_sub_on = bool(ac_cfg.get("blur_sub", True))
+        blur_sub_mode = str(ac_cfg.get("blur_sub_mode") or "bottom").lower()
+    elif "blur_sub" in ac_cfg:
+        blur_sub_on = bool(ac_cfg.get("blur_sub"))
+        blur_sub_mode = str(ac_cfg.get("blur_sub_mode") or "bottom").lower()
+    else:
+        blur_sub_on = bool(
+            cfg.get("caption", {}).get(
+                "blur_burned_subs",
+                cfg.get("transform", {}).get("blur_burned_subs", {}).get("enabled", True),
+            )
+        )
+        blur_sub_mode = str(
+            cfg.get("caption", {}).get("blur_sub_mode")
+            or cfg.get("transform", {}).get("blur_burned_subs", {}).get("mode")
+            or "bottom"
+        ).lower()
+
+    active_video = video
+    ocr_done = False
+    ocr_meta: dict = {}
+    if blur_sub_on and blur_sub_mode in ("ocr", "auto_ai", "ai"):
+        from .hardsub import blur_hardsubs_ocr
+        from .job_timing import step as timing_step
+        ocr_out = Path(video).resolve().parent / f"{Path(video).stem}_ocrblur.mp4"
+        try:
+            with timing_step("OCR Blur"):
+                ocr_cfg = dict(cfg.get("transform", {}).get("blur_burned_subs", {}) or {})
+                active_video = blur_hardsubs_ocr(video, ocr_out, ocr_cfg, meta_out=ocr_meta)
+                ocr_done = True
+                log.info(
+                    "AI OCR da tu dong tim va che mo phu de: %s (y_center=%s, margin_v=%s)",
+                    active_video.name, ocr_meta.get("y_center"), ocr_meta.get("margin_v"),
+                )
+        except Exception as e:
+            log.warning("AI OCR che phu de gap loi (%s), fallback ve che dai duoi day: %s", blur_sub_mode, e)
+            blur_sub_mode = "bottom"
+
+    # Xac dinh do phan giai canvas cho caption ASS
+    if export_fit == "source":
+        cap_w, cap_h = src_w, src_h
+    else:
+        cap_w, cap_h = ASPECT.get(cfg_exp.get("formats", ["9:16"])[0], (1080, 1920))
+
+    # Neu AI OCR phat hien dong chu phu de goc -> can vi tri Sub tieng Viet vao dung tam vet mo!
+    if ocr_done and ocr_meta.get("detected") and ocr_meta.get("margin_v"):
+        scale_y = cap_h / max(1, src_h)
+        detected_mv = int(ocr_meta["margin_v"] * scale_y)
+        cfg_cap["margin_v"] = max(40, detected_mv - 10)
+        log.info(
+            "AI OCR can toa do Sub tieng Viet: MarginV=%d (y_center=%d canvas=%dx%d)",
+            cfg_cap["margin_v"], ocr_meta.get("y_center", 0), cap_w, cap_h,
+        )
+
     # tao caption ASS 1 lan (PlayRes khop khung hinh xuat)
     ass_path = None
     if cfg_cap.get("enabled") and script and script != "AUTO":
         ass_path = out_dir / f"{base_name}.ass"
         chars_per_line, max_lines = _caption_layout(cfg_cap)
-        if export_fit == "source":
-            cap_w, cap_h = src_w, src_h
-        else:
-            cap_w, cap_h = ASPECT.get(cfg_exp.get("formats", ["9:16"])[0], (1080, 1920))
         if segment_cues:
             cues = _segments_to_ass_cues(segment_cues, chars_per_line, max_lines)
             _write_ass_cues(cues, ass_path, cfg_cap, font_path, cap_w, cap_h)
@@ -356,6 +414,80 @@ def compose(video: str | Path, voice: str | Path | None, script: str,
         # --- build filter_complex ---
         vfilters = [_video_fit_filter(fit, W, H)]
         last_v = "[base]"
+
+        # Anti-copyright: bien doi hinh anh goc (truoc khi burn-in sub/logo)
+        if ac_enabled:
+            if ac_cfg.get("mirror"):
+                vfilters.append(f"{last_v}hflip[vac_flip]")
+                last_v = "[vac_flip]"
+            if ac_cfg.get("micro_zoom"):
+                vfilters.append(
+                    f"{last_v}crop=w=iw/1.04:h=ih/1.04:x=(iw-ow)/2:y=(ih-oh)/2,"
+                    f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
+                    f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:black,setsar=1[vac_zoom]"
+                )
+                last_v = "[vac_zoom]"
+
+        # 1. Che mo chu phu de goc cua clip (boxblur + nhe mau toi de chu Trung khong bi lo)
+        if blur_sub_on:
+            if ocr_done:
+                # Da duoc AI OCR phat hien va che mo dung toa do tren active_video
+                pass
+            elif blur_sub_mode == "center":
+                # Che mo vung chu o giua man hinh (gon vung chu, khong keo dai tu trai sang phai)
+                is_landscape = W >= H
+                w_ratio = 0.55 if is_landscape else 0.70
+                vfilters.append(
+                    f"{last_v}split=2[vac_main][vac_crop];"
+                    f"[vac_crop]crop=w=iw*{w_ratio:.3f}:h=ih*0.11:x=(iw-ow)/2:y=ih*0.43,gblur=sigma=12,drawbox=y=0:h=ih:color=black@0.25:t=fill[vac_blur];"
+                    f"[vac_main][vac_blur]overlay=(W-w)/2:H*0.43[vac_sub_blurred]"
+                )
+                last_v = "[vac_sub_blurred]"
+            else:
+                # Che mo vung phu de o day clip:
+                is_landscape = W >= H
+                if blur_sub_mode in ("bottom_full", "full"):
+                    # Dai ngang toan man hinh (tu trai sang phai)
+                    w_ratio = 1.0
+                    h_ratio = 0.085 if is_landscape else 0.095
+                    y_ratio = 0.875 if is_landscape else 0.815
+                elif blur_sub_mode in ("bottom_large", "large"):
+                    w_ratio = 0.65 if is_landscape else 0.80
+                    h_ratio = 0.14 if is_landscape else 0.15
+                    y_ratio = 0.81 if is_landscape else 0.78
+                elif blur_sub_mode in ("bottom_medium", "medium"):
+                    w_ratio = 0.58 if is_landscape else 0.72
+                    h_ratio = 0.11 if is_landscape else 0.12
+                    y_ratio = 0.84 if is_landscape else 0.80
+                else:
+                    # Mac dinh (bottom): Chi che dung vung chu phu de o giua, khong che dai tu mep trai sang mep phai
+                    w_ratio = 0.52 if is_landscape else 0.65
+                    h_ratio = 0.085 if is_landscape else 0.095
+                    y_ratio = 0.875 if is_landscape else 0.815
+
+                if w_ratio >= 0.999:
+                    crop_flt = f"crop=iw:ih*{h_ratio:.3f}:0:ih*{y_ratio:.3f}"
+                    over_flt = f"overlay=0:H*{y_ratio:.3f}"
+                else:
+                    crop_flt = f"crop=w=iw*{w_ratio:.3f}:h=ih*{h_ratio:.3f}:x=(iw-ow)/2:y=ih*{y_ratio:.3f}"
+                    over_flt = f"overlay=(W-w)/2:H*{y_ratio:.3f}"
+
+                vfilters.append(
+                    f"{last_v}split=2[vac_main][vac_crop];"
+                    f"[vac_crop]{crop_flt},gblur=sigma=12,drawbox=y=0:h=ih:color=black@0.25:t=fill[vac_blur];"
+                    f"[vac_main][vac_blur]{over_flt}[vac_sub_blurred]"
+                )
+                last_v = "[vac_sub_blurred]"
+
+        if ac_enabled:
+            if ac_cfg.get("color_shift"):
+                vfilters.append(f"{last_v}eq=contrast=1.04:saturation=1.06:gamma=0.98[vac_col]")
+                last_v = "[vac_col]"
+            if ac_cfg.get("vignette"):
+                vfilters.append(f"{last_v}vignette=PI/4[vac_vig]")
+                last_v = "[vac_vig]"
+
+        # 2. Sau khi che mo chu phu de goc xong -> moi them phu de tieng cua tool vao de tren
         if ass_path:
             esc = _ffmpeg_filter_path(ass_path)
             font_dir = str(Path(font_path).resolve().parent) if font_path else ""
@@ -370,7 +502,7 @@ def compose(video: str | Path, voice: str | Path | None, script: str,
         # mode lien tuc: loop video cho du narration; mode segment: giu video goc
         if voice and not sync_to_video:
             cmd += ["-stream_loop", "-1"]
-        cmd += ["-i", str(video)]
+        cmd += ["-i", str(active_video)]
         ai = 1
         voice_idx = music_idx = ambient_idx = None
         if ambient_bed is not None:
@@ -400,6 +532,11 @@ def compose(video: str | Path, voice: str | Path | None, script: str,
             last_v = "[vlogo]"
             log.info("Logo overlay %s size=%dpx pos=%s", logo_file.name, lw, xy)
 
+        # Anti-copyright: phu hat film grain sau cung (doi 100% hash toan bo khung hinh)
+        if ac_enabled and ac_cfg.get("noise"):
+            vfilters.append(f"{last_v}noise=alls=2:allf=t+u[vac_noise]")
+            last_v = "[vac_noise]"
+
         # --- audio mix ---
         # UU TIEN: ambient_bed (da bo giong Trung). Fallback: gate theo segment.
         afilters = []
@@ -414,6 +551,15 @@ def compose(video: str | Path, voice: str | Path | None, script: str,
 
         bed_label = f"[{ambient_idx}:a]" if ambient_idx is not None else "[0:a]"
 
+        # Anti-copyright audio: dich pitch + EQ am thanh nen de pha vo acoustic fingerprint
+        if ac_enabled and ac_cfg.get("pitch_shift") and has_orig:
+            pitch_flt = (
+                "asetrate=44100*1.025,aresample=44100,atempo=0.975609756,"
+                "highpass=f=40,equalizer=f=3500:t=q:w=1:g=1.5"
+            )
+            afilters.append(f"{bed_label}{pitch_flt}[abed_pitch]")
+            bed_label = "[abed_pitch]"
+
         if voice_idx is not None and has_orig:
             if ambient_idx is not None:
                 afilters.append(f"{bed_label}volume={ambient}[ao]")
@@ -426,13 +572,13 @@ def compose(video: str | Path, voice: str | Path | None, script: str,
                     pad_before=pad_before,
                     pad_after=pad_after,
                 )
-                afilters.append(f"[0:a]volume='{vol_expr}':eval=frame[ao]")
+                afilters.append(f"{bed_label}volume='{vol_expr}':eval=frame[ao]")
                 log.info(
                     "Fallback gate thoai (vol nen=%.2f, pad -%.2f/+%.2fs) %d khung",
                     ambient, pad_before, pad_after, len(segment_cues),
                 )
             else:
-                afilters.append(f"[0:a]volume={ambient}[ao]")
+                afilters.append(f"{bed_label}volume={ambient}[ao]")
             # Tang ro giong noi + nhe limit de khong bi BGM Douyin at
             afilters.append(
                 f"[{voice_idx}:a]volume={dub_vol},alimiter=limit=0.95:attack=5:release=50[vo]"
@@ -453,7 +599,7 @@ def compose(video: str | Path, voice: str | Path | None, script: str,
             )
             audio_out = "[vo]"
         elif has_orig:
-            src = bed_label if ambient_idx is not None else "[0:a]"
+            src = bed_label
             afilters.append(f"{src}volume={ambient}[ao]")
             audio_out = "[ao]"
 
@@ -471,15 +617,47 @@ def compose(video: str | Path, voice: str | Path | None, script: str,
         cmd += ["-filter_complex", ";".join(filter_parts)]
         cmd += map_args
         cmd += ["-t", f"{dur:.2f}"]
-        cmd += [
-            "-c:v", "libx264",
-            "-preset", cfg_exp.get("preset", "medium"),
-            "-crf", str(cfg_exp.get("crf", 20)),
+        from .hardware import probe_best_h264_encoder, get_cpu_fallback_encoder_args
+
+        cpu_preset = str(cfg_exp.get("preset", "medium"))
+        cpu_crf = int(cfg_exp.get("crf", 20))
+        cpu_args = get_cpu_fallback_encoder_args(preset=cpu_preset, crf=cpu_crf)
+
+        enc_name, enc_args = probe_best_h264_encoder()
+        base_cmd = list(cmd)
+        clean_meta_args = [
+            "-map_metadata", "-1",
+            "-metadata", "title=Video",
+            "-metadata", "comment=Dyflow Video Engine",
+            "-movflags", "+faststart",
+        ]
+        cmd_run = base_cmd + enc_args + clean_meta_args + [
             "-c:a", "aac", "-b:a", "160k",
             "-pix_fmt", "yuv420p",
             str(out_path),
         ]
-        run(cmd)
+        log.info(
+            "Compose+export START [%s fit=%s %dx%d encoder=%s] -> %s",
+            fmt, fit, W, H, enc_name, out_path.resolve(),
+        )
+        try:
+            run(cmd_run)
+        except Exception as e:
+            if enc_name != "libx264":
+                log.warning(
+                    "Compose encoder %s that bai: %s -> tu dong fallback ve CPU libx264",
+                    enc_name, e,
+                )
+                out_path.unlink(missing_ok=True)
+                cmd_cpu = base_cmd + cpu_args + clean_meta_args + [
+                    "-c:a", "aac", "-b:a", "160k",
+                    "-pix_fmt", "yuv420p",
+                    str(out_path),
+                ]
+                run(cmd_cpu)
+            else:
+                raise
+        verify_output_mp4(out_path, label=f"Compose ffmpeg [{fmt}]")
         # video_speed: pass 2 SAU mix/QA/burn-in. Khong dung atempo per-segment.
         try:
             spd = float(cfg_exp.get("video_speed") or 1.0)
@@ -487,7 +665,13 @@ def compose(video: str | Path, voice: str | Path | None, script: str,
             spd = 1.0
         if abs(spd - 1.0) > 1e-3:
             apply_video_speed(out_path, out_path, spd)
-        log.info("Export [%s, fit=%s, %dx%d]: %s", fmt, fit, W, H, out_path.name)
+            verify_output_mp4(out_path, label=f"Compose video_speed [{fmt}]")
+        log.info(
+            "Compose+export OK [%s, fit=%s, %dx%d]: %s (%d byte)",
+            fmt, fit, W, H, out_path.name, out_path.stat().st_size,
+        )
         outputs.append(out_path)
 
+    if not outputs:
+        raise RuntimeError("Compose+export: khong tao duoc file output nao")
     return outputs

@@ -9,6 +9,7 @@ import json
 import math
 import os
 import struct
+import sys
 import wave
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -415,6 +416,9 @@ def _profile_pitch_offsets(info_by_sid: dict[str, dict]) -> dict[str, int]:
 
 
 def _pyin_available() -> bool:
+    # PyInstaller frozen tren Windows: numba JIT / llvmlite bi NULL pointer segfault 0xc0000005.
+    if sys.platform == "win32" and getattr(sys, "frozen", False):
+        return False
     try:
         import librosa  # noqa: F401
         import numpy  # noqa: F401
@@ -543,9 +547,15 @@ def _pyin_frames(wav_path: Path, start: float, end: float) -> list[float]:
     return [float(x) for x in voiced if 80.0 <= float(x) <= 400.0]
 
 
-def warmup_pyin() -> None:
-    """JIT-compile librosa.pyin / numba truoc job dau — tranh ~115s lan goi dau."""
+def warmup_pyin(*, timeout_sec: float = 45.0) -> None:
+    """JIT-compile librosa.pyin / numba truoc job dau — tranh ~115s lan goi dau.
+
+    Co timeout: neu treo, bo qua — worker van nhan job binh thuong.
+    """
     import time as _time
+
+    if sys.platform == "win32" and getattr(sys, "frozen", False):
+        return
 
     if not _pyin_available():
         log.info("pyin warmup: bo qua (chua cai librosa)")
@@ -555,15 +565,30 @@ def warmup_pyin() -> None:
         import numpy as np
     except ImportError:
         return
-    sr = 16000
-    y = (np.random.default_rng(0).standard_normal(sr * 2) * 0.02).astype(np.float32)
+
+    done = {"ok": False, "err": None}
+
+    def _run() -> None:
+        try:
+            sr = 16000
+            y = (np.random.default_rng(0).standard_normal(sr * 2) * 0.02).astype(np.float32)
+            librosa.pyin(y, fmin=80.0, fmax=400.0, sr=sr)
+            done["ok"] = True
+        except Exception as e:  # noqa: BLE001
+            done["err"] = e
+
     t0 = _time.perf_counter()
-    try:
-        librosa.pyin(y, fmin=80.0, fmax=400.0, sr=sr)
-    except Exception as e:  # noqa: BLE001
-        log.warning("pyin warmup that bai: %s", e)
+    th = __import__("threading").Thread(target=_run, name="pyin-warmup", daemon=True)
+    th.start()
+    th.join(timeout=max(5.0, float(timeout_sec)))
+    if th.is_alive():
+        log.warning("pyin warmup timeout %.0fs — bo qua, worker van chay", timeout_sec)
         return
-    log.info("pyin warmup xong %.2fs (JIT da compile)", _time.perf_counter() - t0)
+    if done["err"] is not None:
+        log.warning("pyin warmup that bai: %s", done["err"])
+        return
+    if done["ok"]:
+        log.info("pyin warmup xong %.2fs (JIT da compile)", _time.perf_counter() - t0)
 
 
 def _write_voice_profile_files(
@@ -814,27 +839,37 @@ def _llm_cast(
     *,
     lang: str,
 ) -> list[dict] | None:
-    key = _load_key()
-    if not key:
-        from .preflight import allow_degraded, alert_ops, require_openai
-        if not allow_degraded():
-            require_openai(kind="f0_fallback")
-        alert_ops("f0_fallback", "Cast: thieu OPENAI_API_KEY — dung F0 (DYFLOW_ENV=dev)")
-        log.warning("Cast: thieu OPENAI_API_KEY — dung F0 (DYFLOW_ENV=dev)")
+    from .llm_provider import (
+        current_llm_provider,
+        has_llm_key,
+        llm_model,
+        make_llm_client,
+        preferred_chat_provider,
+        set_llm_provider,
+    )
+
+    provider = current_llm_provider()
+    if not (provider in ("deepseek", "qwen", "openai") and has_llm_key(provider)):
+        provider = preferred_chat_provider()
+    set_llm_provider(provider)
+    if not has_llm_key(provider):
+        from .preflight import alert_ops
+
+        alert_ops("f0_fallback", "Cast: thieu key LLM — dung F0/acoustic")
+        log.warning("Cast: thieu key LLM — dung F0/acoustic")
         return None
     try:
-        from openai import OpenAI
+        import openai  # noqa: F401
     except ImportError:
-        from .preflight import allow_degraded, alert_ops
-        msg = "Cast: chua cai openai"
+        from .preflight import alert_ops
+
+        msg = "Cast: chua cai openai — dung F0/acoustic"
         alert_ops("f0_fallback", msg)
-        if not allow_degraded():
-            raise RuntimeError(msg) from None
         log.warning(msg)
         return None
 
-    client = OpenAI(api_key=key)
-    model = os.getenv("OPENAI_TRANSLATE_MODEL") or "gpt-4o-mini"
+    client = make_llm_client()
+    model = llm_model()
     assigned: list[dict | None] = [None] * len(segments)
     known: list[dict] = []
 
@@ -857,9 +892,15 @@ def _llm_cast(
             "Do NOT guess gender or age from pitch. Dialogue ABOUT a child can be adult speech.\n"
             "Narrator / voice-over is usually adult, even if the story is about a child.\n"
             "Keep the same speaker_id, gender, and age for that person throughout the clip.\n"
-            "speaker_id: short ascii slug (boy, dad, aunt, narrator).\n"
-            "Return JSON: {\"cast\":[{\"id\":\"boy\",\"gender\":\"male\",\"age\":\"child\","
-            "\"role\":\"young boy\"}], \"lines\":[{\"i\":1,\"speaker\":\"boy\"}, ...]} "
+            "speaker_id: short ascii slug (heroine, roommate, dad, landlord, boss, "
+            "boy, narrator…). "
+            "KINSHIP slugs (aunt/mom/dad/uncle) ONLY if Chinese kinship words appear "
+            "(阿姨/妈妈/爸爸/姑姑…). "
+            "Two young women who are peers/roommates/classmates MUST be different "
+            "speaker_ids — NEVER merge them into one 'aunt'. "
+            "Modern 你/您/我 between equals is NOT aunt/niece.\n"
+            "Return JSON: {\"cast\":[{\"id\":\"heroine\",\"gender\":\"female\",\"age\":\"young\","
+            "\"role\":\"young woman\"}], \"lines\":[{\"i\":1,\"speaker\":\"heroine\"}, ...]} "
             "lines must cover every i in the input, same count."
         )
         user: dict[str, Any] = {"lines": payload}
@@ -980,5 +1021,6 @@ def _parse_cast(
 
 
 def _load_key() -> str:
-    from .preflight import hydrate_openai_key
-    return hydrate_openai_key()
+    from .llm_provider import llm_api_key
+
+    return llm_api_key()

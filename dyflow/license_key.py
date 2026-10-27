@@ -582,12 +582,26 @@ def public_status(now: float | None = None, user: dict | None = None) -> dict[st
         has_oa = has_tts_key()
     except Exception:  # noqa: BLE001
         has_oa = False
+    try:
+        from .user_deepseek import has_deepseek_key
+
+        has_ds = has_deepseek_key()
+    except Exception:  # noqa: BLE001
+        has_ds = False
+    try:
+        from .user_qwen import has_qwen_key
+
+        has_qw = has_qwen_key()
+    except Exception:  # noqa: BLE001
+        has_qw = False
     extra = {
         "machine_code": format_machine_code(),
         "key_machine_code": "",
         "kid": "",
         "bound": False,
         "has_openai_tts_key": has_oa,
+        "has_deepseek_key": has_ds,
+        "has_qwen_key": has_qw,
         "perpetual": False,
     }
     empty = {

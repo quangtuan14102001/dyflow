@@ -9,10 +9,12 @@ from __future__ import annotations
 
 from .dub_constants import (
     DUB_ENCODER_PAD_SEC,
+    DUB_LARGE_OVERLAP_CROSSFADE_MAX,
     DUB_MICRO_OVERLAP_SEC,
     DUB_OVERFLOW_SEMANTIC_MAX_TRIES,
     DUB_OVERFLOW_SEVERE_COV,
     DUB_OVERFLOW_SEVERE_EXTRA_TRIES,
+    DUB_OVERFLOW_TIER4_EXTRA_TRIES,
     DUB_SHORTEN_MIN_ABS_SEC,
     DUB_SHORTEN_MIN_DEFICIT_RATIO,
     DUB_SHORTEN_TINY_ABS_SEC,
@@ -159,7 +161,12 @@ def semantic_shorten_budget(
     cps = measured if 4.0 <= measured <= 30.0 else cfg_cps
     deficit_sec = tts - slot
     target_chars = max(1, int(round(cps * slot)))
-    if int(attempt) >= 3:
+    if int(attempt) >= 4:
+        # Tang 4: siet manh — muc tieu bo ~1 menh de phu.
+        overflow_ratio = min(1.0, slot / tts)
+        tighter = int(round(min(target_chars, n * overflow_ratio) * 0.55))
+        target_chars = max(1, tighter)
+    elif int(attempt) >= 3:
         overflow_ratio = min(1.0, slot / tts)
         tighter = int(round(min(target_chars, n * overflow_ratio) * 0.70))
         target_chars = max(1, tighter)
@@ -176,6 +183,7 @@ def semantic_shorten_budget(
         "tts_dur": round(tts, 3),
         "available_slot": round(slot, 3),
         "attempt": int(attempt),
+        "tier4": int(attempt) >= 4,
     }
 
 
@@ -195,11 +203,63 @@ def shorten_attempt_closes_enough(
 
 
 def overflow_semantic_try_budget(cov_ratio: float, attempt_done: int) -> int:
-    """Sau N lan co so: neu van severe (cov > 120%) cho them 1 lan cat manh."""
+    """Sau N lan co so: severe +1; tang 4 them 1 lan bo menh de phu neu van tran."""
     base = int(DUB_OVERFLOW_SEMANTIC_MAX_TRIES)
+    budget = base
     if int(attempt_done) >= base and float(cov_ratio) > float(DUB_OVERFLOW_SEVERE_COV):
-        return base + int(DUB_OVERFLOW_SEVERE_EXTRA_TRIES)
-    return base
+        budget = base + int(DUB_OVERFLOW_SEVERE_EXTRA_TRIES)
+    # Tang 4: luon cho them 1 lan aggressive sau khi da het severe budget.
+    severe_cap = base + int(DUB_OVERFLOW_SEVERE_EXTRA_TRIES)
+    if int(attempt_done) >= severe_cap and float(cov_ratio) > 1.0:
+        budget = max(budget, severe_cap + int(DUB_OVERFLOW_TIER4_EXTRA_TRIES))
+    return budget
+
+
+def borrow_time_from_next(
+    *,
+    need_sec: float,
+    next_source_start: float,
+    next_source_end: float,
+    next_timeline_start: float,
+    following_start: float,
+) -> dict:
+    """Tang 3: muon thoi gian bang cach lui (tre) timeline_start doan sau.
+
+    Chi muon vao khoang cho SAU khi doan sau ket thuc noi (toi following_start).
+    Khong bao gio dat timeline_start < source_start (khong bat dau som hon mieng mo).
+    """
+    need = max(0.0, float(need_sec))
+    src_start = float(next_source_start)
+    src_end = max(src_start + 0.12, float(next_source_end))
+    cur_tl = max(src_start, float(next_timeline_start))
+    after = float(following_start)
+    speech = max(0.12, src_end - src_start)
+    # Doan sau van can cho speech; moc start tre nhat = after - speech.
+    max_tl = max(src_start, after - speech - 0.04)
+    room = max(0.0, max_tl - cur_tl)
+    borrowed = min(need, room)
+    if borrowed < 0.02:
+        return {
+            "borrowed_sec": 0.0,
+            "new_next_start": round(cur_tl, 4),
+            "room_sec": round(room, 4),
+            "applied": False,
+        }
+    new_tl = cur_tl + borrowed
+    return {
+        "borrowed_sec": round(borrowed, 4),
+        "new_next_start": round(new_tl, 4),
+        "room_sec": round(room, 4),
+        "applied": True,
+    }
+
+
+def large_overlap_crossfade(overlap_sec: float) -> float:
+    """Tang 5: crossfade = min(overlap, 0.8s) — khong tran overlap."""
+    ov = max(0.0, float(overlap_sec))
+    if ov <= 0.01:
+        return 0.0
+    return round(min(ov, float(DUB_LARGE_OVERLAP_CROSSFADE_MAX)), 4)
 
 
 def atempo_cap_for_attempt(attempt: int, *, shorten_effective: bool) -> float:
@@ -239,11 +299,13 @@ def overlap_close_plan(
     allow_speech_trim: bool = False,
     allow_micro_overlap: bool = False,
     micro_overlap_sec: float = DUB_MICRO_OVERLAP_SEC,
+    allow_large_overlap: bool = False,
 ) -> dict:
     """Ke hoach khop file TTS vao hard_limit ma khong de cau sau.
 
     Thu tu: atempo con lai (toi cap) -> cat pad encoder -> micro-overlap
-    (neu bat, <=250ms) -> overflow. Khong cat loi noi (speech_trim da cam).
+    (neu bat, <=250ms) -> large_overlap (tang 5, neu bat) -> overflow.
+    Khong cat loi noi (speech_trim da cam).
     """
     hard = max(0.12, float(slot))
     tts = max(0.0, float(tts_dur))
@@ -259,6 +321,7 @@ def overlap_close_plan(
             "pad_trim": False,
             "speech_trim": False,
             "micro_overlap": False,
+            "large_overlap": False,
             "fits": True,
             "leftover": 0.0,
         }
@@ -275,6 +338,7 @@ def overlap_close_plan(
         "room": round(room, 4),
         "speech_trim": False,
         "micro_overlap": False,
+        "large_overlap": False,
     }
     if leftover <= 0.02:
         return {
@@ -301,6 +365,19 @@ def overlap_close_plan(
             "micro_overlap": True,
             "fits": True,
             "overlap_sec": round(leftover, 4),
+            "crossfade_sec": round(leftover, 4),
+        }
+    if allow_large_overlap and leftover > 0.02:
+        xfade = large_overlap_crossfade(leftover)
+        return {
+            **base,
+            "action": "large_overlap",
+            "trim": False,
+            "pad_trim": False,
+            "large_overlap": True,
+            "fits": True,
+            "overlap_sec": round(leftover, 4),
+            "crossfade_sec": xfade,
         }
     return {
         **base,

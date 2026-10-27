@@ -63,6 +63,19 @@
       <p class="error" id="openai-tts-error"></p>
     </form>
 
+    <form id="deepseek-key-form" class="auth-form openai-tts-form">
+      <label class="field">
+        <span>{{ t('deepseek_key_label') }}</span>
+        <p class="hint left">{{ t('deepseek_key_hint') }}</p>
+        <input class="input" type="password" name="key" id="deepseek-key" placeholder="sk-…" autocomplete="off" spellcheck="false" />
+      </label>
+      <button type="submit" class="btn ghost" id="deepseek-key-btn">{{ t('deepseek_key_save') }}</button>
+      <p class="ok-banner license-ok" id="deepseek-key-ok" hidden>
+        {% if license and license.has_deepseek_key %}{{ t('deepseek_key_ok') }}{% endif %}
+      </p>
+      <p class="error" id="deepseek-key-error"></p>
+    </form>
+
     {% include "_license_mint.html" %}
   </section>
 </div>

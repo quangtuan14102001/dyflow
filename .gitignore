@@ -10,10 +10,13 @@ output/
 .DS_Store
 bin/
 dist/
+!dist/patch.zip
+!dist/version.json
 build/
 *.spec.bak
 dyflow-win.zip
 *.zip
+!dist/patch.zip
 logs/
 
 *.bak*

@@ -1,11 +1,11 @@
-"""Buoc 1: Tai video tu Douyin — uu tien on dinh cho san pham.
+"""Buoc 1: Tai video tu Douyin — uu tien khong cookie.
 
 Thu tu:
 1) Resolve id + dung cache / ban raw cu co audio
-2) yt-dlp (neu backend cho phep)
-3) Chrome sniff video+audio (bat buoc co audio truoc khi tai nang)
-4) yt-dlp full fallback (cookie Chrome)
-5) Cache ket qua thanh cong
+2) f2 guest (ttwid/msToken) + CDN HTTP — khong login Douyin / Chrome
+3) iesdouyin share/iteminfo guest (fallback may moi khong cookie)
+4) yt-dlp CHI khi co cookies_file that / chrome_fallback
+5) Chrome sniff chi khi chrome_fallback=true (mac dinh tat)
 """
 from __future__ import annotations
 import json
@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 
 from . import cookies as cookie_util
+from .dl_errors import DyDownloadError, classify_download_error, empty_channel_error
 from . import dl_cache
 from .utils import log, run, check_tool, probe_has_audio, probe_duration, ytdlp_argv, ytdlp_ffmpeg_args
 
@@ -493,6 +494,465 @@ def _http_ies_aweme_post(sec_uid: str, limit: int) -> list[str]:
     return ids
 
 
+def _run_asyncio(coro, *, timeout: float = 90):
+    """Chay coroutine tu thread sync (FastAPI co the dang co event loop)."""
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        # Van boc timeout — tranh TokenManager/CDN treo vo han tren may user.
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, coro).result(timeout=timeout)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result(timeout=timeout)
+
+
+def _call_timeout(fn, *, timeout: float, label: str):
+    """Chay ham sync co timeout (TokenManager hay treo tren mang cham/chan)."""
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutTimeout
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        fut = pool.submit(fn)
+        try:
+            return fut.result(timeout=timeout)
+        except FutTimeout as e:
+            raise RuntimeError(f"{label} timeout {timeout:.0f}s") from e
+
+
+def _f2_guest_kwargs(path: str | None = None) -> dict:
+    from f2.apps.douyin.utils import TokenManager
+
+    # Tat Bark push cua f2 (mac dinh hay bat → spam loi api.day.app).
+    try:
+        from f2.apps.bark.utils import ClientConfManager as _BarkCM
+
+        _BarkCM.enable_bark = classmethod(lambda cls: False)  # type: ignore[method-assign]
+    except Exception:
+        pass
+
+    # Timeout rieng — neu thieu, UI dung "Dang tai video..." mai.
+    ttwid = _call_timeout(TokenManager.gen_ttwid, timeout=20, label="ttwid")
+    ms = _call_timeout(TokenManager.gen_real_msToken, timeout=25, label="msToken")
+    ua = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
+    )
+    out: dict = {
+        "headers": {
+            "User-Agent": ua,
+            "Referer": "https://www.douyin.com/",
+        },
+        "proxies": {"http://": None, "https://": None},
+        "cookie": f"ttwid={ttwid}; msToken={ms}",
+    }
+    if path:
+        out["path"] = path
+    return out
+
+
+def _http_get_bytes(url: str, *, timeout: float = 120, referer: str = "https://www.douyin.com/") -> bytes:
+    """Tai CDN bang curl_cffi (guest) — khong can cookie dang nhap."""
+    from curl_cffi import requests as creq
+
+    r = creq.get(
+        url,
+        impersonate="chrome131",
+        timeout=timeout,
+        headers={
+            "Referer": referer,
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            ),
+        },
+    )
+    if r.status_code != 200 or not r.content or len(r.content) < 10_000:
+        raise RuntimeError(f"CDN HTTP {r.status_code} size={len(r.content or b'')}")
+    return r.content
+
+
+_CDN_HINTS = ("douyinvod", "bytevcloud", "zjcdn", "snssdk", "tos-cn", "vlabvod", ".mp4")
+
+
+def _play_urls_from_obj(obj) -> list[str]:
+    """Nhat URL CDN tu JSON RENDER_DATA / iteminfo."""
+    found: list[str] = []
+    seen: set[str] = set()
+
+    def _add(u: str) -> None:
+        u = str(u or "").strip()
+        if not u.startswith("http") or u in seen:
+            return
+        low = u.lower()
+        if not any(h in low for h in _CDN_HINTS):
+            return
+        seen.add(u)
+        found.append(u)
+
+    def _walk(node) -> None:
+        if isinstance(node, dict):
+            for key in ("url_list", "urlList", "play_addr", "playAddr", "download_addr"):
+                val = node.get(key)
+                if isinstance(val, list):
+                    for u in val:
+                        _add(u if isinstance(u, str) else str(u.get("url") or "") if isinstance(u, dict) else "")
+                elif isinstance(val, dict):
+                    for u in val.get("url_list") or val.get("urlList") or []:
+                        _add(str(u))
+                elif isinstance(val, str):
+                    _add(val)
+            for v in node.values():
+                _walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                _walk(v)
+        elif isinstance(node, str) and node.startswith("http"):
+            _add(node)
+
+    _walk(obj)
+    return found
+
+
+def _ies_share_play_urls(aweme_id: str) -> list[str]:
+    """Lay play URL cong khai tu iesdouyin (khong cookie login)."""
+    from curl_cffi import requests as creq
+    from urllib.parse import unquote
+
+    aweme_id = str(aweme_id or "").strip()
+    if not aweme_id.isdigit():
+        return []
+    ua = (
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 "
+        "Mobile/15E148 Safari/604.1"
+    )
+    headers = {"User-Agent": ua, "Referer": "https://www.iesdouyin.com/"}
+    urls: list[str] = []
+
+    # 1) iteminfo API
+    try:
+        r = creq.get(
+            f"https://www.iesdouyin.com/web/api/v2/aweme/iteminfo/?item_ids={aweme_id}",
+            impersonate="chrome131",
+            timeout=25,
+            headers=headers,
+        )
+        if r.status_code == 200 and r.content:
+            data = r.json()
+            urls.extend(_play_urls_from_obj(data))
+    except Exception as e:  # noqa: BLE001
+        log.debug("ies iteminfo: %s", e)
+
+    # 2) share HTML RENDER_DATA
+    if not urls:
+        try:
+            r = creq.get(
+                f"https://www.iesdouyin.com/share/video/{aweme_id}",
+                impersonate="chrome131",
+                timeout=25,
+                headers=headers,
+            )
+            html = r.text or ""
+            m = re.search(
+                r'<script[^>]+id="RENDER_DATA"[^>]*>([^<]+)</script>',
+                html,
+            )
+            if m:
+                raw = unquote(m.group(1))
+                data = json.loads(raw)
+                urls.extend(_play_urls_from_obj(data))
+            if not urls:
+                urls.extend(
+                    re.findall(
+                        r"https://[^\s\"'<>]+(?:douyinvod|bytevcloud|zjcdn|snssdk|tos-cn)[^\s\"'<>]*",
+                        html,
+                    )
+                )
+        except Exception as e:  # noqa: BLE001
+            log.debug("ies share html: %s", e)
+
+    # unique keep order
+    out: list[str] = []
+    seen: set[str] = set()
+    for u in urls:
+        u = u.replace("\\u002F", "/").replace("\\/", "/")
+        if u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
+def download_ies_share_guest(aweme_id: str, dest: Path) -> Path:
+    """Fallback cookieless: iesdouyin share/iteminfo + CDN HTTP."""
+    aweme_id = str(aweme_id or "").strip()
+    if not aweme_id.isdigit():
+        raise RuntimeError(f"aweme_id khong hop le: {aweme_id}")
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    play_urls = _ies_share_play_urls(aweme_id)
+    if not play_urls:
+        raise RuntimeError(f"ies guest: khong co play_addr cho {aweme_id}")
+    last_err: Exception | None = None
+    raw: bytes | None = None
+    for u in play_urls[:8]:
+        try:
+            raw = _http_get_bytes(str(u), timeout=90, referer="https://www.iesdouyin.com/")
+            break
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            log.debug("ies CDN fail: %s", e)
+    if not raw:
+        raise RuntimeError(f"ies guest: tai CDN that bai ({last_err})") from last_err
+    tmp = dest.with_suffix(".iespart.mp4")
+    tmp.write_bytes(raw)
+    if not probe_has_audio(tmp):
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(f"ies guest: file khong co audio ({aweme_id})")
+    tmp.replace(dest)
+    log.info("Tai ies guest (khong cookie): %s (%.1f MB)", dest.name, dest.stat().st_size / 1e6)
+    return dest
+
+
+def download_f2_guest(aweme_id: str, dest: Path) -> Path:
+    """Tai 1 video bang f2 + guest token (ttwid/msToken) — KHONG cookie login / browser.
+
+    Lay play_addr tu aweme/detail da ky, tai CDN bang HTTP.
+    """
+    aweme_id = str(aweme_id or "").strip()
+    if not aweme_id.isdigit():
+        raise RuntimeError(f"aweme_id khong hop le: {aweme_id}")
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        from f2.apps.douyin.handler import DouyinHandler
+    except Exception as e:  # noqa: BLE001
+        raise RuntimeError(f"Chua cai f2 (pip install f2): {e}") from e
+
+    last_meta_err: Exception | None = None
+    detail = None
+    for attempt in range(1, 4):
+        try:
+            async def _meta():
+                h = DouyinHandler(_f2_guest_kwargs(path=str(dest.parent)))
+                return await h.fetch_one_video(aweme_id)
+
+            detail = _run_asyncio(_meta(), timeout=60)
+            break
+        except Exception as e:  # noqa: BLE001
+            last_meta_err = e
+            log.warning("f2 guest meta attempt %d fail: %s", attempt, e)
+            time.sleep(0.6 * attempt)
+    if detail is None:
+        raise RuntimeError(f"f2 guest: meta fail ({last_meta_err})") from last_meta_err
+
+    play_urls = list(detail.video_play_addr or [])
+    if not play_urls:
+        raise RuntimeError(f"f2 guest: khong co play_addr cho {aweme_id}")
+
+    # Luu title clip de dat ten file khi user bam Download MP4.
+    try:
+        title = ""
+        for attr in ("desc", "share_title", "image_desc", "caption", "title"):
+            val = getattr(detail, attr, None)
+            if val:
+                title = str(val).strip()
+                break
+        if title:
+            dest.with_suffix(".meta.json").write_text(
+                json.dumps(
+                    {"title": title[:300], "aweme_id": aweme_id},
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+    except Exception as e:  # noqa: BLE001
+        log.debug("f2 meta title: %s", e)
+
+    last_err: Exception | None = None
+    raw: bytes | None = None
+    for u in play_urls:
+        try:
+            raw = _http_get_bytes(str(u), timeout=90)
+            break
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            log.debug("f2 CDN fail: %s", e)
+    if not raw:
+        raise RuntimeError(f"f2 guest: tai CDN that bai ({last_err})") from last_err
+
+    tmp = dest.with_suffix(".f2part.mp4")
+    tmp.write_bytes(raw)
+    # Neu mp4 thieu audio — ghep music_play_url (mot so clip tach stream).
+    if not probe_has_audio(tmp):
+        music = getattr(detail, "music_play_url", None) or ""
+        if isinstance(music, (list, tuple)):
+            music = music[0] if music else ""
+        music = str(music or "").strip()
+        if music:
+            try:
+                mbytes = _http_get_bytes(music, timeout=120)
+                mpath = dest.with_suffix(".f2music.mp3")
+                mpath.write_bytes(mbytes)
+                muxed = dest.with_suffix(".f2mux.mp4")
+                run([
+                    "ffmpeg", "-y",
+                    "-i", str(tmp), "-i", str(mpath),
+                    "-c:v", "copy", "-c:a", "aac", "-shortest",
+                    str(muxed),
+                ])
+                if muxed.exists() and muxed.stat().st_size > 10_000 and probe_has_audio(muxed):
+                    tmp.unlink(missing_ok=True)
+                    mpath.unlink(missing_ok=True)
+                    muxed.replace(dest)
+                    log.info("Tai f2 guest + mux audio: %s (%.1f MB)", dest.name, dest.stat().st_size / 1e6)
+                    return dest
+                muxed.unlink(missing_ok=True)
+                mpath.unlink(missing_ok=True)
+            except Exception as e:  # noqa: BLE001
+                log.warning("f2 mux audio loi: %s", e)
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(f"f2 guest: file khong co audio ({aweme_id})")
+
+    tmp.replace(dest)
+    log.info("Tai f2 guest (khong cookie): %s (%.1f MB)", dest.name, dest.stat().st_size / 1e6)
+    return dest
+
+
+def _thumb_from_aweme(item: dict) -> str:
+    video = item.get("video") if isinstance(item.get("video"), dict) else {}
+    for src in (
+        video.get("cover"),
+        video.get("origin_cover"),
+        video.get("dynamic_cover"),
+        item.get("cover"),
+        item.get("video"),
+    ):
+        if isinstance(src, dict):
+            urls = src.get("url_list") or src.get("urlList") or []
+            if urls:
+                return str(urls[0]).strip()
+        elif isinstance(src, str) and src.startswith("http"):
+            return src.strip()
+    return ""
+
+
+def _duration_sec_from_aweme(item: dict) -> float | None:
+    video = item.get("video") if isinstance(item.get("video"), dict) else {}
+    raw = item.get("duration")
+    if raw is None:
+        raw = video.get("duration")
+    try:
+        n = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if n <= 0:
+        return None
+    # Douyin aweme_list: duration thuong la ms (>1000).
+    if n > 1000:
+        n = n / 1000.0
+    return n
+
+
+def _meta_from_aweme(item: dict) -> dict | None:
+    if not isinstance(item, dict):
+        return None
+    aid = str(item.get("aweme_id") or item.get("awemeId") or "").strip()
+    if not aid.isdigit():
+        return None
+    title = str(item.get("desc") or item.get("desc_raw") or "").strip()
+    if len(title) > 120:
+        title = title[:117] + "..."
+    dur = _duration_sec_from_aweme(item)
+    return {
+        "id": aid,
+        "url": f"https://www.douyin.com/video/{aid}",
+        "title": title,
+        "thumb": _thumb_from_aweme(item),
+        "duration_sec": round(dur, 1) if dur is not None else None,
+    }
+
+
+def _http_f2_aweme_items(sec_uid: str, limit: int) -> list[dict]:
+    """Liet ke 作品 + meta (title/thumb) bang f2 guest — KHONG Chrome/cookie login."""
+    if not sec_uid:
+        return []
+    try:
+        from f2.apps.douyin.crawler import DouyinCrawler
+        from f2.apps.douyin.model import UserPost
+    except Exception as e:  # noqa: BLE001
+        log.warning("f2 chua cai (pip install f2): %s", e)
+        return []
+
+    limit = max(1, min(int(limit or 40), 100_000))
+
+    async def _fetch() -> list[dict]:
+        kwargs = _f2_guest_kwargs()
+        out: list[dict] = []
+        seen: set[str] = set()
+        cursor = 0
+        pages = 0
+        while len(out) < limit and pages < max(25, (limit // 18) + 10):
+            pages += 1
+            need = min(18, limit - len(out))
+            async with DouyinCrawler(kwargs) as crawler:
+                params = UserPost(
+                    max_cursor=cursor,
+                    count=need,
+                    sec_user_id=sec_uid,
+                )
+                data = await crawler.fetch_user_post(params)
+            if not isinstance(data, dict):
+                break
+            if data.get("status_code") not in (0, None, "0"):
+                log.debug(
+                    "f2 aweme/post status=%s msg=%s",
+                    data.get("status_code"),
+                    data.get("status_msg"),
+                )
+                break
+            chunk = 0
+            for item in data.get("aweme_list") or []:
+                meta = _meta_from_aweme(item)
+                if not meta or meta["id"] in seen:
+                    continue
+                seen.add(meta["id"])
+                out.append(meta)
+                chunk += 1
+                if len(out) >= limit:
+                    break
+            try:
+                nxt = int(data.get("max_cursor") or 0)
+            except (TypeError, ValueError):
+                nxt = 0
+            more = data.get("has_more")
+            if chunk == 0:
+                break
+            if nxt <= cursor:
+                break
+            if more in (0, False, "0", "false") and chunk < 10:
+                break
+            cursor = nxt
+        return out
+
+    try:
+        rows = _run_asyncio(_fetch(), timeout=90)
+    except Exception as e:  # noqa: BLE001
+        log.warning("f2 aweme/post fail: %s", e)
+        return []
+    if rows:
+        log.info("Kenh f2 HTTP liet ke %d video (khong browser)", len(rows))
+    return rows
+
+
+def _http_f2_aweme_post(sec_uid: str, limit: int) -> list[str]:
+    """Wrapper cu: chi tra aweme_id."""
+    return [str(r["id"]) for r in _http_f2_aweme_items(sec_uid, limit)]
+
 def _http_aweme_post(opener, sec_uid: str, limit: int) -> list[str]:
     """Goi API 作品 bang cookie — khong mo Chrome."""
     import urllib.parse
@@ -607,17 +1067,14 @@ def _http_scrape_channel(url: str, cookies_path: str | None, limit: int) -> list
     return _newest_urls(rows, limit=limit)
 
 
-def list_channel_videos(
+def list_channel_video_items(
     url: str,
     cfg: dict | None = None,
     *,
     limit: int = 40,
     allow_chrome: bool = False,
-) -> list[str]:
-    """Liet ke video kenh Douyin: HTTP truoc, Chromium headless neu can.
-
-    Khong mo cua so Chrome/Edge. allow_chrome giu chu ky cu (bo qua headed).
-    """
+) -> list[dict]:
+    """Liet ke video kenh + meta (id, title, thumb). Guest HTTP — khong cookie login."""
     from .chrome_dl import pc_user_url, sec_uid_from_user_url
 
     global _CHANNEL_LIST_GEN
@@ -631,100 +1088,131 @@ def list_channel_videos(
     raw = resolve_share_url(extract_url(url))
     pc = pc_user_url(raw) or raw
     sec = sec_uid_from_user_url(pc) or sec_uid_from_user_url(raw)
-    from .chrome_dl import vid_from_url
-
-    hint_vid = vid_from_url(raw) or vid_from_url(url)
     cfg = cfg or {}
-    limit = max(1, min(int(limit or 40), 200))
-    # Sai sec_uid + HTTP timeout lam Preview quay 5+ phut — skip khi co vid=.
-    expected = 0 if hint_vid else (_http_user_aweme_count(sec) if sec else 0)
+    limit = max(1, min(int(limit or 40), 100_000))
+    expected = _http_user_aweme_count(sec) if sec else 0
     if expected:
         log.info("Kenh %s: profile 作品=%d", pc[:70], expected)
     errors: list[str] = []
-    merged: list[str] = []
-    seen: set[str] = set()
+    by_id: dict[str, dict] = {}
+    order: list[str] = []
 
-    def _absorb(chunk: list[str]) -> None:
-        for href in chunk or []:
-            if href in seen:
+    def _absorb_meta(rows: list[dict]) -> None:
+        for row in rows or []:
+            aid = str((row or {}).get("id") or "").strip()
+            if not aid.isdigit():
                 continue
-            seen.add(href)
-            merged.append(href)
+            if aid not in by_id:
+                order.append(aid)
+                by_id[aid] = {
+                    "id": aid,
+                    "url": str(row.get("url") or f"https://www.douyin.com/video/{aid}"),
+                    "title": str(row.get("title") or "").strip(),
+                    "thumb": str(row.get("thumb") or "").strip(),
+                    "duration_sec": row.get("duration_sec"),
+                }
+            else:
+                cur = by_id[aid]
+                if not cur.get("title") and row.get("title"):
+                    cur["title"] = str(row["title"]).strip()
+                if not cur.get("thumb") and row.get("thumb"):
+                    cur["thumb"] = str(row["thumb"]).strip()
+                if cur.get("duration_sec") is None and row.get("duration_sec") is not None:
+                    cur["duration_sec"] = row.get("duration_sec")
 
-    cookies_path, _from_browser = _ytdlp_cookies(cfg)
+    def _absorb_ids(vids: list[str]) -> None:
+        _absorb_meta([
+            {
+                "id": v,
+                "url": f"https://www.douyin.com/video/{v}",
+                "title": "",
+                "thumb": "",
+                "duration_sec": None,
+            }
+            for v in (vids or [])
+            if str(v).isdigit()
+        ])
+
+    if allow_chrome:
+        log.debug("list_channel: allow_chrome ignored (khong dung browser)")
+
+    if not sec:
+        raise classify_download_error(
+            "Khong doc duoc sec_uid tu link kenh",
+            default_message="Khong tim thay kenh (link khong hop le).",
+        )
+
     try:
-        # Co vid= → uu tien headless resolve author (HTTP voi SEC sai chi mat thoi gian).
-        if sec and not hint_vid:
-            for vid in _http_ies_aweme_post(sec, limit):
-                href = f"https://www.douyin.com/video/{vid}"
-                _absorb([href])
-            if len(merged) < limit and cookies_path:
-                from http.cookiejar import MozillaCookieJar
-                import urllib.request
-
-                jar = MozillaCookieJar()
-                try:
-                    jar.load(cookies_path, ignore_discard=True, ignore_expires=True)
-                except Exception:  # noqa: BLE001
-                    jar = MozillaCookieJar()
-                opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
-                for vid in _http_aweme_post(opener, sec, limit):
-                    href = f"https://www.douyin.com/video/{vid}"
-                    _absorb([href])
-        if merged:
-            log.info("Kenh %s: HTTP liet ke %d video", pc[:70], len(merged))
+        _absorb_ids(_http_ies_aweme_post(sec, limit))
+        if len(order) < limit and not _stale():
+            _absorb_meta(_http_f2_aweme_items(sec, limit))
+        if len(order) < max(3, min(limit, 10)) and not _stale():
+            cookies_path = None
+            try:
+                from pathlib import Path
+                import os
+                cands: list[Path] = []
+                ck = str((cfg or {}).get("cookies_file") or "").strip()
+                if ck:
+                    cands.append(Path(ck))
+                cands.append(
+                    Path(os.path.expandvars(r"%LOCALAPPDATA%\VideosCreator\cookies_douyin.txt"))
+                )
+                cands.append(Path("cookies_douyin.txt"))
+                for cand in cands:
+                    if cand.is_file() and cand.stat().st_size > 50:
+                        cookies_path = str(cand)
+                        break
+            except Exception:  # noqa: BLE001
+                cookies_path = None
+            for href in _http_scrape_channel(pc, cookies_path, limit) or []:
+                aid = _aweme_id_from_url(href) or ""
+                if aid:
+                    _absorb_ids([aid])
+        if order:
+            log.info("Kenh %s: HTTP liet ke %d video", pc[:70], len(order))
         else:
-            errors.append("API kenh khong tra video")
+            errors.append("API kenh khong tra video (can: pip install f2)")
+    except DyDownloadError:
+        raise
     except Exception as e:  # noqa: BLE001
         errors.append(f"scrape: {e}")
         log.warning("list_channel scrape: %s", e)
 
-    if not merged and _stale():
-        raise RuntimeError("cancelled")
+    if not order and _stale():
+        raise classify_download_error("cancelled", default_message="Da huy lay danh sach kenh.")
 
-    # HTTP (ies/cookie) thuong tra rong. Chi dung Chromium HEADLESS — khong mo cua so.
-    need_browser = (not merged) or (
-        expected and len(merged) < min(limit, expected) and len(merged) <= 1
-    ) or (len(merged) <= 1 and limit > 1)
-    if need_browser and not _stale():
-        try:
-            from .chrome_dl import list_user_videos_with_chrome
+    if not order:
+        raise empty_channel_error(
+            " | ".join(errors) or "API kenh khong tra video",
+        )
 
-            # Giữ ?vid= — sec_uid trên path đôi khi sai; headless resolve author từ clip.
-            browser_url = raw if ("vid=" in (raw or "").lower() or "modal_id=" in (raw or "").lower()) else pc
-            # Cap — Edge treo khong quay 400s; van du cho resolve vid= + paginate.
-            list_timeout = 40
-            got = list_user_videos_with_chrome(
-                browser_url,
-                cfg,
-                limit=limit,
-                timeout_sec=list_timeout,
-                headed_fallback=False,
-                expected=expected,
-            )
-            if got:
-                log.info("Kenh %s: headless liet ke %d video", pc[:70], len(got))
-                _absorb(got)
-            else:
-                errors.append("headless khong thay video")
-        except Exception as e:  # noqa: BLE001
-            errors.append(f"browser: {e}")
-            log.warning("list_channel browser: %s", e)
-
-    if allow_chrome:
-        log.debug("list_channel: allow_chrome ignored (headed disabled)")
-
-    if not merged:
-        raise RuntimeError(" | ".join(errors) or "Khong liet ke duoc kenh")
-    rows = [(_aweme_id_from_url(h) or i, h) for i, h in enumerate(merged)]
-    out = _newest_urls(rows, limit=limit)
+    ranked = sorted(order, key=lambda a: int(a), reverse=True)[:limit]
+    out = [by_id[a] for a in ranked if a in by_id]
     log.info(
-        "Kenh %s: tong %d video (HTTP/headless, 作品=%s)",
+        "Kenh %s: tong %d video (HTTP f2, 作品=%s)",
         pc[:70],
         len(out),
         expected or "?",
     )
     return out
+
+
+def list_channel_videos(
+    url: str,
+    cfg: dict | None = None,
+    *,
+    limit: int = 40,
+    allow_chrome: bool = False,
+) -> list[str]:
+    """Liet ke URL video kenh (tuong thich cu)."""
+    return [
+        str(r["url"])
+        for r in list_channel_video_items(
+            url, cfg, limit=limit, allow_chrome=allow_chrome
+        )
+    ]
+
 
 
 def _build_ytdlp_cmd(
@@ -812,7 +1300,11 @@ def _accept(path: Path | None, video_id: str | None, source_url: str = "") -> Pa
 
 
 def download_one(url: str, out_dir: str | Path, cfg: dict) -> Path:
-    """Tai 1 video Douyin -> tra ve duong dan file mp4 (bat buoc co audio)."""
+    """Tai 1 video Douyin -> tra ve duong dan file mp4 (bat buoc co audio).
+
+    Mac dinh cookieless: f2 guest -> ies share. yt-dlp/Chrome chi khi co cookie
+    hoac chrome_fallback (may developer) — may user moi khong can Chrome.
+    """
     url = extract_url(url)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -835,33 +1327,69 @@ def download_one(url: str, out_dir: str | Path, cfg: dict) -> Path:
 
     backend = str(cfg.get("backend", "yt-dlp")).lower()
     last_err = ""
+    guest_err: Exception | None = None
+
+    aweme = video_id or dl_cache.video_id_from_text(public_url) or ""
+    if not str(aweme).isdigit():
+        m = re.search(r"/video/(\d{10,})", public_url or url or "")
+        aweme = m.group(1) if m else ""
+
+    # 2) f2 guest — khong can cookie dang nhap / Chrome / Edge
+    if str(aweme).isdigit():
+        dest = out_dir / f"{aweme}.mp4"
+        try:
+            got = download_f2_guest(str(aweme), dest)
+            ok = _accept(got, str(aweme), url)
+            if ok:
+                return ok
+            last_err = "f2 guest: file khong hop le / thieu audio"
+            guest_err = RuntimeError(last_err)
+        except Exception as e:  # noqa: BLE001
+            guest_err = e
+            last_err = str(e)
+            log.warning("f2 guest download that bai: %s", e)
+
+        # 3) iesdouyin share — fallback cho may moi khong cookie AppData
+        try:
+            got = download_ies_share_guest(str(aweme), dest)
+            ok = _accept(got, str(aweme), url)
+            if ok:
+                return ok
+            last_err = "ies guest: file khong hop le / thieu audio"
+            guest_err = RuntimeError(last_err)
+        except Exception as e:  # noqa: BLE001
+            guest_err = e
+            last_err = str(e)
+            log.warning("ies guest download that bai: %s", e)
+
+    cookies_path, from_browser = _ytdlp_cookies(cfg)
+    has_cookies = bool(cookies_path) or bool(from_browser)
+    allow_chrome = bool(cfg.get("chrome_fallback", False))
 
     def _try_ytdlp(label: str) -> Path | None:
         nonlocal last_err
         if not check_tool("yt-dlp"):
             return None
         out_tmpl = str(out_dir / "%(id)s.%(ext)s")
-        cookies_path, from_browser = _ytdlp_cookies(cfg)
+        ck, br = _ytdlp_cookies(cfg)
         chrome_ck = out_dir / "_chrome_cookies.txt"
         if chrome_ck.exists() and chrome_ck.stat().st_size > 50:
-            cookies_path = str(chrome_ck)
-        if not cookies_path and not from_browser:
-            # Douyin extractor bat cookie — khong doi yt-dlp fail.
-            return None
-
+            ck = str(chrome_ck)
         cmd = _build_ytdlp_cmd(
             public_url, out_tmpl, cfg,
-            cookies_file=cookies_path,
-            cookies_from_browser=None if cookies_path else from_browser,
+            cookies_file=ck,
+            cookies_from_browser=None if ck else br,
         )
         proc = _run_ytdlp(cmd)
         if proc.returncode != 0 and cookie_util.is_cookie_error(proc.stderr or ""):
             log.warning("yt-dlp bao can cookie -> force refresh...")
-            if cfg.get("auto_refresh_cookies", True):
+            if cfg.get("auto_refresh_cookies", False) and (
+                cfg.get("cookies_from_browser") or ""
+            ).strip():
                 try:
-                    cookies_path = str(cookie_util.force_refresh(cfg))
+                    ck = str(cookie_util.force_refresh(cfg))
                     proc = _run_ytdlp(
-                        _build_ytdlp_cmd(url, out_tmpl, cfg, cookies_file=cookies_path)
+                        _build_ytdlp_cmd(url, out_tmpl, cfg, cookies_file=ck)
                     )
                 except Exception as e:  # noqa: BLE001
                     log.warning("Force refresh cookie that bai: %s", e)
@@ -875,18 +1403,21 @@ def download_one(url: str, out_dir: str | Path, cfg: dict) -> Path:
         last_err = (proc.stderr or "")[-800:]
         return None
 
-    # 2) yt-dlp soft/first — ke ca backend=chrome (cookie tot thi xong nhanh)
-    if cfg.get("ytdlp_first", True) or backend not in {"chrome", "playwright"}:
-        got = _try_ytdlp("yt-dlp")
-        if got:
-            return got
-        if backend not in {"chrome", "playwright"}:
-            log.warning("yt-dlp fail -> fallback Chrome.\n%s", last_err)
-        else:
-            log.info("yt-dlp soft-fail -> Chrome sniff")
+    # 4) yt-dlp — CHI khi co cookie that. May user moi: bo qua de khong bao Chrome oan.
+    if has_cookies or allow_chrome:
+        if cfg.get("ytdlp_first", True) or backend not in {"chrome", "playwright"}:
+            got = _try_ytdlp("yt-dlp")
+            if got:
+                return got
+            if backend not in {"chrome", "playwright"}:
+                log.warning("yt-dlp fail.\n%s", last_err)
+            else:
+                log.info("yt-dlp soft-fail")
+    else:
+        log.info("Bo qua yt-dlp (khong cookie) — giu che do khach")
 
-    # 3) Chrome sniff + authenticated CDN fetch
-    if backend in {"chrome", "playwright"} or cfg.get("chrome_fallback", True):
+    # 5) Chrome sniff — CHI khi chrome_fallback=true
+    if allow_chrome:
         from .chrome_dl import download_with_chrome
 
         try:
@@ -903,15 +1434,68 @@ def download_one(url: str, out_dir: str | Path, cfg: dict) -> Path:
             last_err = str(e)
             log.warning("Chrome download that bai: %s", e)
 
-        # 4) yt-dlp full lan cuoi (uu tien cookie vua export tu Chrome)
         got = _try_ytdlp("yt-dlp fallback")
         if got:
             return got
 
-    raise RuntimeError(
-        "Khong tai duoc video Douyin co audio sau moi lop fallback. "
-        f"Chi tiet: {last_err or 'unknown'}"
+    if guest_err is not None:
+        # Ghep them last_err (yt-dlp/Chrome) de user/support thay nguyen nhan that
+        detail = str(guest_err)
+        if last_err and last_err not in detail:
+            detail = f"{detail} | {last_err[-400:]}"
+        raise classify_download_error(
+            detail,
+            default_message=(
+                "Khong tai duoc video o che do khach. "
+                "Thu lai sau, doi link cong khai, hoac thu video khac."
+            ),
+        )
+
+    raise classify_download_error(
+        last_err or "unknown",
+        default_message="Khong tai duoc video Douyin co audio (f2 / ies guest).",
     )
+
+
+def check_aweme_guest(aweme_id: str) -> dict:
+    """Kiem tra video ton tai bang f2 guest (khong tai file). Tra meta nhe."""
+    aweme_id = str(aweme_id or "").strip()
+    if not aweme_id.isdigit():
+        raise classify_download_error(
+            f"aweme_id khong hop le: {aweme_id}",
+            default_message="Khong tim thay video (ID khong hop le).",
+        )
+    try:
+        from f2.apps.douyin.handler import DouyinHandler
+    except Exception as e:  # noqa: BLE001
+        raise classify_download_error(e, default_message="Chua cai f2.") from e
+
+    async def _meta():
+        h = DouyinHandler(_f2_guest_kwargs())
+        return await h.fetch_one_video(aweme_id)
+
+    try:
+        detail = _run_asyncio(_meta(), timeout=60)
+    except Exception as e:  # noqa: BLE001
+        raise classify_download_error(e) from e
+
+    play = list(getattr(detail, "video_play_addr", None) or [])
+    if not play:
+        # Mot so video rieng tu / bi xoa van tra detail rong
+        raise classify_download_error(
+            "Khong co play_addr",
+            default_message="Khong tim thay video (da xoa hoac khong cong khai).",
+        )
+    title = str(getattr(detail, "desc", None) or "").strip()
+    if len(title) > 120:
+        title = title[:117] + "..."
+    cover = str(getattr(detail, "cover", None) or "").strip()
+    return {
+        "id": aweme_id,
+        "url": f"https://www.douyin.com/video/{aweme_id}",
+        "title": title,
+        "thumb": cover if cover.startswith("http") else "",
+    }
 
 
 def download_profile_f2(profile_url: str, out_dir: str | Path) -> list[Path]:

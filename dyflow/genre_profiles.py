@@ -1,0 +1,166 @@
+"""Genre profile prompts — van phong dich theo the loai (topic_context)."""
+from __future__ import annotations
+
+import json
+import logging
+import re
+from pathlib import Path
+
+log = logging.getLogger("dyflow.genre")
+
+# Dong user hay dan nham vao o van phong — bo bot truoc khi dua vao prompt.
+_FORMAT_LEAK_RE = re.compile(
+    r"(?i)^\s*(?:"
+    r"xuất\s*ra\s*srt|xuat\s*ra\s*srt|giữ\s*nguyên\s*timecode|giu\s*nguyen\s*timecode|"
+    r"return\s*json|tra\s*json|output\s*json|định\s*dạng\s*json|dinh\s*dang\s*json|"
+    r"mỗi\s*câu\s*một\s*dòng\s*srt|moi\s*cau\s*mot\s*dong\s*srt|"
+    r"timecode|hh:mm:ss|whisper\s*format"
+    r").*$",
+    re.M,
+)
+
+
+def _profiles_root() -> Path:
+    """Dev: repo/profiles/genre. Frozen: _MEIPASS/profiles/genre."""
+    import sys
+
+    if getattr(sys, "frozen", False):
+        base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+        cand = base / "profiles" / "genre"
+        if cand.is_dir():
+            return cand
+        # onedir: profiles canh exe
+        beside = Path(sys.executable).resolve().parent / "profiles" / "genre"
+        if beside.is_dir():
+            return beside
+    # dyflow/genre_profiles.py -> repo root
+    return Path(__file__).resolve().parents[1] / "profiles" / "genre"
+
+
+def list_genres() -> list[dict]:
+    """[{id, label, file, chars}] — doc manifest neu co, else quet *.txt."""
+    root = _profiles_root()
+    manifest = root / "manifest.json"
+    items: list[dict] = []
+    if manifest.is_file():
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+            raw = data.get("genres") if isinstance(data, dict) else data
+            if isinstance(raw, list):
+                for row in raw:
+                    if not isinstance(row, dict):
+                        continue
+                    gid = str(row.get("id") or "").strip()
+                    if not gid:
+                        continue
+                    fname = str(row.get("file") or f"{gid}.txt").strip()
+                    path = root / fname
+                    text = ""
+                    if path.is_file():
+                        text = path.read_text(encoding="utf-8")
+                    items.append({
+                        "id": gid,
+                        "label": str(row.get("label") or gid).strip(),
+                        "file": fname,
+                        "chars": len(text),
+                        "ready": bool(text.strip()) and "(điền sau)" not in text[:200],
+                    })
+        except Exception:  # noqa: BLE001
+            log.exception("Doc genre manifest loi")
+    if items:
+        return items
+    # Fallback: moi file .txt
+    if not root.is_dir():
+        return []
+    for path in sorted(root.glob("*.txt")):
+        text = path.read_text(encoding="utf-8")
+        gid = path.stem
+        items.append({
+            "id": gid,
+            "label": gid.replace("_", " ").title(),
+            "file": path.name,
+            "chars": len(text),
+            "ready": bool(text.strip()),
+        })
+    return items
+
+
+def load_genre_template(genre_id: str) -> str:
+    """Noi dung mau goc tu file profile."""
+    gid = str(genre_id or "").strip()
+    if not gid or gid in {"", "none", "auto", "default"}:
+        return ""
+    root = _profiles_root()
+    for g in list_genres():
+        if g["id"] == gid:
+            path = root / g["file"]
+            if path.is_file():
+                return path.read_text(encoding="utf-8").strip()
+            break
+    # direct file
+    path = root / f"{gid}.txt"
+    if path.is_file():
+        return path.read_text(encoding="utf-8").strip()
+    return ""
+
+
+def sanitize_genre_prompt(text: str) -> str:
+    """Bo bot dong dinh dang user go nham; giu van phong."""
+    t = (text or "").strip()
+    if not t:
+        return ""
+    cleaned = _FORMAT_LEAK_RE.sub("", t)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned
+
+
+def resolve_genre_prompt(
+    genre_id: str | None = None,
+    genre_prompt: str | None = None,
+) -> tuple[str, str]:
+    """Tra (genre_id, prompt_sanitized). Prompt user uu tien; khong co thi load mau."""
+    gid = str(genre_id or "").strip()
+    if gid in {"none", "auto", "default"}:
+        gid = ""
+    custom = (genre_prompt or "").strip()
+    if custom:
+        return gid, sanitize_genre_prompt(custom)
+    if gid:
+        return gid, sanitize_genre_prompt(load_genre_template(gid))
+    return "", ""
+
+
+def save_genre_lock(
+    work_dir: Path | str,
+    *,
+    genre_id: str,
+    genre_prompt: str,
+) -> Path:
+    wp = Path(work_dir)
+    wp.mkdir(parents=True, exist_ok=True)
+    out = wp / "genre_lock.json"
+    payload = {
+        "genre_id": genre_id or "",
+        "genre_prompt": genre_prompt or "",
+        "chars": len(genre_prompt or ""),
+    }
+    out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return out
+
+
+def load_genre_lock(work_dir: Path | str | None) -> tuple[str, str]:
+    if not work_dir:
+        return "", ""
+    path = Path(work_dir) / "genre_lock.json"
+    if not path.is_file():
+        return "", ""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return "", ""
+        return (
+            str(data.get("genre_id") or "").strip(),
+            str(data.get("genre_prompt") or "").strip(),
+        )
+    except Exception:  # noqa: BLE001
+        return "", ""

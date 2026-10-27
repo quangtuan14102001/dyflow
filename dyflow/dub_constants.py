@@ -21,11 +21,11 @@ TRANSLATE_MIN_CHAR_RATIO = {
     "default": 0.30,
 }
 TRANSLATE_RETRY_SLEEP_SEC = 0.6
-DUB_CHARS_PER_SEC = 12.0
-# Ngân sách ký tự khi dịch/rút gọn (tiếng Việt nói tự nhiên ~12 ký tự/s, không tua)
-TARGET_CHARS_PER_SEC = 12.0
-DUB_SHORTEN_MAX_RETRIES = 2
-DUB_SHORTEN_CHAR_MARGIN = 0.90
+DUB_CHARS_PER_SEC = 14.5
+# Ngân sách ký tự khi dịch/rút gọn (tiếng Việt nói tự nhiên ~14–15 ký tự/s)
+TARGET_CHARS_PER_SEC = 14.5
+DUB_SHORTEN_MAX_RETRIES = 0
+DUB_SHORTEN_CHAR_MARGIN = 0.95
 DUB_MIN_SHORTEN_CHARS = 32  # khong cat thanh manh "Ban nghi."
 DUB_TINY_SLOT_SEC = 0.95
 DUB_TINY_GAP_SEC = 0.45
@@ -45,6 +45,8 @@ DUB_OVERFLOW_MAX_MERGES = 3
 DUB_OVERFLOW_SEMANTIC_MAX_TRIES = 2
 DUB_OVERFLOW_SEVERE_COV = 1.20
 DUB_OVERFLOW_SEVERE_EXTRA_TRIES = 1
+# Tang 4 (zero-fail): them 1 lan rut manh (bo menh de phu) sau tang 1-3.
+DUB_OVERFLOW_TIER4_EXTRA_TRIES = 1
 # Lan rut dat neu TTS giam >= max(abs, deficit * ratio). Hoi hot ("that su") = khong dat.
 DUB_SHORTEN_MIN_DEFICIT_RATIO = 0.25
 DUB_SHORTEN_MIN_ABS_SEC = 0.15
@@ -79,6 +81,8 @@ DUB_ENCODER_PAD_SEC = 0.12
 # Sau rut + atempo max: chap nhan de len cau sau toi da bay, co crossfade.
 # Tuyet doi khong cat bot audio TTS de ep khung (giu phu de dai + file ngan = loi).
 DUB_MICRO_OVERLAP_SEC = 0.25
+# Tang 5 (zero-fail): overlap lon khong tran; crossfade = min(overlap, max nay).
+DUB_LARGE_OVERLAP_CROSSFADE_MAX = 0.80
 # tts_dur < tts_dur_raw/atempo - slack => audio bi cat vat ly (QA audio_truncated).
 QA_AUDIO_TRUNC_SLACK_SEC = 0.5
 TTS_ATEMPO_ONLY_IF_DRIFT_RATIO = 0.08
@@ -98,6 +102,21 @@ VOLUME_WARN_DB = 2.0
 CUMULATIVE_WARN_MS = 500
 QA_MIN_SEGMENT_COVERAGE = 0.55  # chi canh bao im_lang, KHONG fail-closed
 QA_MIN_TOTAL_COVERAGE = 0.75    # chi canh bao; clip goc co nghi thi cov <75% la binh thuong
-QA_MAX_QUA_DAI_RATIO = 0.20   # fail-closed neu >20% doan chong doan sau
-QA_MAX_DRIFT_PCT = 50.0       # chi ap dung khi TTS de len cau sau (hard_limit)
+# Phuong an A zero-fail: chong_doan_severe KHONG fail; chi canh bao review.
+QA_MAX_QUA_DAI_RATIO = 1.01   # khong fail theo ty le qua_dai (tang 5 chap nhan)
+QA_MAX_DRIFT_PCT = 999.0      # khong fail drift khi da chap nhan overlap lon
+
+# --- Content QA (source_zh vs ban dich) ---
+# Sau dich, truoc TTS. "sai" → dich lai; van sai → CHI flag, KHONG chan giao clip.
+# User yeu cau: 100% clip phai dich xong / giao duoc — fail-closed TAT.
+CONTENT_QA_FAIL_CLOSED = False
+CONTENT_QA_RETRY_MAX = 1  # so lan dich lai sau cham "sai" (them 1 neu source_suspect)
+CONTENT_QA_SUSPECT_EXTRA_RETRY = 1
+# (Giu hang soft neu bat lai FAIL_CLOSED=True tren desktop)
+CONTENT_QA_DESKTOP_SOFT_MAX_ABS = 9999
+CONTENT_QA_DESKTOP_SOFT_MAX_RATIO = 1.0
+# Nguon Whisper nghi ngo: slot dai ma transcript qua thua / qua dac
+SOURCE_SUSPECT_MIN_SLOT_SEC = 1.5
+SOURCE_SUSPECT_MIN_CPS = 1.0   # < 1 ky tu ZH / giay cho slot dai → nghi rac/trong
+SOURCE_SUSPECT_MAX_CPS = 28.0  # > 28 ky tu ZH / giay → nghi dump rac
 SEGMENT_CROSSFADE_MS = 15

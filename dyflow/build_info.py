@@ -1,12 +1,13 @@
-"""Nhan ban build — de biet chac dang chay zip nao (CI ghi de khi dong goi)."""
+"""Nhan ban build â€” de biet chac dang chay zip nao (CI ghi de khi dong goi)."""
 from __future__ import annotations
 
 import os
 import sys
 from pathlib import Path
 
-# CI ghi de dong duoi khi build Windows.
-BUILD_TAG = "dev"
+# CI / build_windows.ps1 ghi de dong duoi + file build.txt canh .exe
+BUILD_TAG = "260921-1035.local"
+
 
 
 def build_tag() -> str:
@@ -22,3 +23,6 @@ def build_tag() -> str:
         except OSError:
             pass
     return BUILD_TAG
+
+
+

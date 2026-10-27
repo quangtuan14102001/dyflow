@@ -37,22 +37,38 @@ def _is_douyin_non_video(url: str) -> bool:
 
 
 def is_channel_url(url: str) -> bool:
-    """Link user/kênh Douyin — expand thanh danh sach video, khong tai 1 clip."""
-    return bool(_CHANNEL_RE.search(url or ""))
+    """Link kênh /user|channel/...
+
+    - /user/SEC thuần → kênh
+    - /user/SEC?vid=… (không modal_id) → vẫn kênh (Douyin hay gắn vid khi copy trang kênh)
+    - /user/SEC?modal_id=… → KHÔNG phải kênh — đang mở 1 clip (1 video)
+    """
+    raw = url or ""
+    if not _CHANNEL_RE.search(raw):
+        return False
+    if _MODAL_ID_RE.search(raw):
+        return False
+    return True
 
 
 def embedded_video_urls(text: str) -> list[str]:
-    """Video id di kem link kenh (vid= / modal_id= / /video/).
+    """Rút clip từ URL.
 
-    Tren link /user/...&vid= thi vid chi la modal dang mo — khong phai
-    "chi 1 video cua kenh". Bo qua de expand_sources liet ke ca kenh.
+    - /video/ID → clip đó
+    - /user/...?modal_id=ID → đúng 1 clip đang mở trong modal
+    - /user/...?vid= (không modal_id) → [] — coi là kênh, không rút 1 clip
     """
-    if is_channel_url(text or ""):
+    raw = text or ""
+    if _CHANNEL_RE.search(raw):
+        # Chỉ modal_id mới = đang xem 1 video trên trang kênh.
+        modal = _MODAL_ID_RE.search(raw)
+        if modal:
+            return [f"https://www.douyin.com/video/{modal.group(1)}"]
         return []
     out: list[str] = []
     seen: set[str] = set()
     for rx in (_VIDEO_ID_RE, _MODAL_ID_RE, _VID_QUERY_RE):
-        for m in rx.finditer(text or ""):
+        for m in rx.finditer(raw):
             href = f"https://www.douyin.com/video/{m.group(1)}"
             if href in seen:
                 continue
@@ -128,18 +144,17 @@ def normalize_douyin_url(text: str) -> str:
     url = m.group(0) if m else text
     # bo ky tu thua cuoi (dau cau khi copy)
     url = url.rstrip(".,;:!?)】」』\"'")
-    # Kênh trước — giữ ?vid= để recover sec_uid sai (không đổi thành 1 clip).
+    # /user/...?modal_id= → 1 clip; /user/ (±?vid=) → giữ kênh (bỏ query).
     ch = _CHANNEL_RE.search(url)
     if ch:
-        base = ch.group(0).rstrip("/")
-        hint = _VID_QUERY_RE.search(url) or _MODAL_ID_RE.search(url)
-        if hint:
-            return f"{base}?vid={hint.group(1)}"
-        return base
+        modal = _MODAL_ID_RE.search(url)
+        if modal:
+            return f"https://www.douyin.com/video/{modal.group(1)}"
+        return ch.group(0).rstrip("/")
     modal = _MODAL_ID_RE.search(url)
     if modal:
         return f"https://www.douyin.com/video/{modal.group(1)}"
-    vid = _VIDEO_ID_RE.search(url)
+    vid = _VIDEO_ID_RE.search(url) or _VID_QUERY_RE.search(url)
     if vid:
         return f"https://www.douyin.com/video/{vid.group(1)}"
     if _is_douyin_non_video(url):

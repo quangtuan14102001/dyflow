@@ -6,7 +6,7 @@
 {% block container_class %}container-studio{% endblock %}
 
 {% block content %}
-<form id="job-form" class="studio-desk" novalidate>
+<form id="job-form" class="studio-desk" novalidate onsubmit="return false;">
   <section class="studio-center">
     <div class="studio-tab">
       <span class="studio-tab-on">{{ t('studio_batch_title') if batch_mode else t('studio_tab') }}</span>
@@ -26,6 +26,16 @@
     {% endif %}
     {% endif %}
 
+    <div class="active-jobs-banner" id="active-jobs-banner" style="display:none; align-items:center; justify-content:space-between; background:rgba(56,189,248,0.1); border:1px solid rgba(56,189,248,0.3); border-radius:10px; padding:12px 16px; margin-bottom:16px;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span class="active-pulse-dot" style="display:inline-block; width:10px; height:10px; border-radius:50%; background:#38bdf8; box-shadow:0 0 8px #38bdf8; flex-shrink:0;"></span>
+        <span id="active-banner-text" style="font-size:13.5px; color:#e2e8f0;">Đang có video trong hàng chờ...</span>
+      </div>
+      <div style="display:flex; gap:8px; flex-shrink:0;">
+        <a href="/queue" class="btn btn-sm primary" style="text-decoration:none; white-space:nowrap; padding:6px 14px; font-weight:600;">Xem hàng chờ chi tiết →</a>
+      </div>
+    </div>
+
     <label class="studio-src{% if batch_mode %} is-batch{% endif %}">
       <span>{{ t('studio_src') }}</span>
       <textarea name="url" id="url" rows="{{ 10 if batch_mode else 2 }}" placeholder="{{ t('studio_batch_ph') if batch_mode else t('url_ph') }}" autocomplete="off"{% if batch_mode %} data-batch="1"{% endif %}></textarea>
@@ -33,14 +43,15 @@
     </label>
     <div class="studio-channel" id="channel-opts" hidden>
       <label class="studio-channel-opt">
-        <input type="radio" name="channel_mode" value="count" />
+        <input type="radio" name="channel_mode" value="count" checked />
         <span>{{ t('channel_newest') }}</span>
-        <input type="number" name="channel_count" id="channel-count" min="1" max="{{ 200 if desktop else 40 }}" value="10" />
+        <input type="number" name="channel_count" id="channel-count" min="1" max="{{ 100000 if desktop else 40 }}" value="40" />
       </label>
       <label class="studio-channel-opt">
-        <input type="radio" name="channel_mode" value="full" checked />
+        <input type="radio" name="channel_mode" value="full" />
         <span>{{ t('channel_full') }}</span>
       </label>
+      <p class="hint left" id="channel-pick-hint">{{ t('channel_pick_hint') }}</p>
     </div>
     <div class="studio-local">
       <div class="studio-local-btns">
@@ -49,10 +60,11 @@
         <span class="studio-local-count" id="local-count"></span>
         <button type="button" class="btn ghost btn-sm" id="local-clear-btn" hidden>{{ t('studio_local_clear') }}</button>
       </div>
-      <ul class="local-file-list" id="local-file-list" hidden></ul>
       <input type="file" id="local-files" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.mkv,.webm,.avi" multiple hidden />
       <input type="file" id="local-folder" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.mkv,.webm,.avi" multiple webkitdirectory hidden />
     </div>
+
+    {% include "_save_path.html" %}
 
     <div class="studio-actions">
       <button type="button" class="btn ghost" id="preview-quote-btn">{{ t('studio_preview') }}</button>
@@ -73,8 +85,16 @@
         </span>
         <strong id="quote-total"></strong>
       </div>
+      <div class="quote-toolbar" id="quote-toolbar" hidden>
+        <button type="button" class="btn ghost btn-sm" id="quote-select-all">{{ t('channel_select_all') }}</button>
+        <button type="button" class="btn ghost btn-sm" id="quote-select-none">{{ t('channel_select_none') }}</button>
+        <span class="quote-selected" id="quote-selected"></span>
+      </div>
       <ul class="quote-list" id="quote-list"></ul>
       <p class="quote-note" id="quote-note">{{ t('quote_rule') }}</p>
+      <p class="quote-chrome" id="quote-chrome" hidden>
+        <button type="button" class="btn ghost btn-sm" id="quote-chrome-btn">{{ t('err_try_chrome') }}</button>
+      </p>
     </div>
 
     <ol class="studio-steps" aria-label="{{ t('studio_tab') }}">
@@ -85,17 +105,14 @@
       <li><b>5</b>{{ t('studio_step5') }}</li>
     </ol>
 
-    <div class="studio-preview">
-      <div class="studio-preview-frame" id="studio-preview-frame">
-        <i class="quote-spin quote-spin-lg" id="studio-preview-spin" hidden></i>
-        <p id="studio-preview-text">{{ t('studio_preview_empty') }}</p>
-      </div>
-    </div>
 
     <div class="studio-log">
       <div class="studio-log-h">
         <strong>{{ t('studio_log') }}</strong>
-        <a href="/library">{{ t('your_videos') }}{% if total_jobs %} · {{ total_jobs }}{% endif %}</a>
+        <div class="studio-log-actions">
+          <button type="button" class="btn ghost danger btn-sm" id="cancel-all-log-btn" hidden>{{ t('queue_cancel_all') }}</button>
+          <a href="/library">{{ t('your_videos') }}{% if total_jobs %} · {{ total_jobs }}{% endif %}</a>
+        </div>
       </div>
       <ul class="live-log" id="live-log">
         <li class="empty">{{ t('studio_log_empty') }}</li>
@@ -172,31 +189,181 @@
       </label>
     </section>
 
+    <section class="st-sec st-sec-anticopyright" id="sec-anticopyright">
+      <div class="st-sec-header-row">
+        <h2>{{ t('studio_sec_anticopyright') }}</h2>
+        <span class="ac-badge">{{ t('anticopyright_badge') }}</span>
+      </div>
+      <p class="hint left">{{ t('anticopyright_hint') }}</p>
+
+      <div class="ac-preset-group">
+        <label class="ac-preset-card">
+          <input type="radio" name="anti_copyright_mode" value="off" />
+          <div class="ac-card-body">
+            <div class="ac-card-title">{{ t('ac_mode_off') }}</div>
+            <div class="ac-card-desc">{{ t('ac_mode_off_desc') }}</div>
+          </div>
+        </label>
+        <label class="ac-preset-card ac-recommended">
+          <input type="radio" name="anti_copyright_mode" value="standard" checked />
+          <div class="ac-card-body">
+            <div class="ac-card-title">
+              <span>{{ t('ac_mode_standard') }}</span>
+              <span class="ac-recom-pill">{{ t('ac_recom') }}</span>
+            </div>
+            <div class="ac-card-desc">{{ t('ac_mode_standard_desc') }}</div>
+          </div>
+        </label>
+        <label class="ac-preset-card">
+          <input type="radio" name="anti_copyright_mode" value="advanced" />
+          <div class="ac-card-body">
+            <div class="ac-card-title">{{ t('ac_mode_advanced') }}</div>
+            <div class="ac-card-desc">{{ t('ac_mode_advanced_desc') }}</div>
+          </div>
+        </label>
+        <label class="ac-preset-card">
+          <input type="radio" name="anti_copyright_mode" value="custom" />
+          <div class="ac-card-body">
+            <div class="ac-card-title">{{ t('ac_mode_custom') }}</div>
+            <div class="ac-card-desc">{{ t('ac_mode_custom_desc') }}</div>
+          </div>
+        </label>
+      </div>
+
+      <div class="ac-blur-sub-settings" id="ac-blur-sub-settings" style="margin-top: 14px; padding: 12px 14px; background: rgba(255,255,255,0.03); border: 1px solid var(--border, #2a2e39); border-radius: 8px;">
+        <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;">
+          <label class="st-check" style="margin: 0;">
+            <input type="checkbox" id="ac_blur_sub" name="ac_blur_sub" checked />
+            <span style="font-weight: 500;">{{ t('ac_opt_blur_sub') }}</span>
+          </label>
+          <div class="ac-blur-sub-mode-row" id="ac-blur-sub-mode-row" style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 13px; color: var(--muted, #8b949e);">{{ t('ac_blur_mode_label') }}:</span>
+            <select name="ac_blur_sub_mode" id="ac_blur_sub_mode" class="select" style="padding: 4px 10px; font-size: 13px; width: auto; min-width: 175px;">
+              <option value="bottom" selected>{{ t('ac_blur_mode_bottom') }}</option>
+              <option value="bottom_medium">{{ t('ac_blur_mode_bottom_medium') }}</option>
+              <option value="center">{{ t('ac_blur_mode_center') }}</option>
+              <option value="auto_ai">{{ t('ac_blur_mode_auto_ai') }}</option>
+              <option value="bottom_full">{{ t('ac_blur_mode_bottom_full') }}</option>
+            </select>
+          </div>
+        </div>
+        <p class="hint left" id="ac-blur-mode-hint" style="margin: 6px 0 0 0; font-size: 12px; color: var(--muted, #8b949e);">{{ t('ac_blur_mode_hint') }}</p>
+      </div>
+
+      <div id="ac-custom-panel" class="ac-custom-panel" hidden>
+        <div class="ac-custom-grid">
+          <label class="st-check">
+            <input type="checkbox" id="ac_mirror" name="ac_mirror" />
+            <span>{{ t('ac_opt_mirror') }}</span>
+          </label>
+          <label class="st-check">
+            <input type="checkbox" id="ac_noise" name="ac_noise" />
+            <span>{{ t('ac_opt_noise') }}</span>
+          </label>
+          <label class="st-check">
+            <input type="checkbox" id="ac_color" name="ac_color" />
+            <span>{{ t('ac_opt_color') }}</span>
+          </label>
+          <label class="st-check">
+            <input type="checkbox" id="ac_vignette" name="ac_vignette" />
+            <span>{{ t('ac_opt_vignette') }}</span>
+          </label>
+          <label class="st-check">
+            <input type="checkbox" id="ac_pitch" name="ac_pitch" />
+            <span>{{ t('ac_opt_pitch') }}</span>
+          </label>
+          <label class="st-check">
+            <input type="checkbox" id="ac_zoom" name="ac_zoom" />
+            <span>{{ t('ac_opt_zoom') }}</span>
+          </label>
+        </div>
+      </div>
+    </section>
+
     <section class="st-sec st-sec-teal">
       <h2>{{ t('studio_sec_voice') }}</h2>
       <label class="field">
         <span>{{ t('dub_lang') }}</span>
         <select name="lang" id="lang" class="select" required>
-          <option value="" selected disabled>{{ t('lang_pick') }}</option>
+          <option value="" disabled>{{ t('lang_pick') }}</option>
           {% for lang in languages %}
-          <option value="{{ lang.id }}">{{ lang.label }}</option>
+          <option value="{{ lang.id }}" {% if lang.id == default_dub_lang or (not default_dub_lang and lang.id == 'vi') %}selected{% endif %}>{{ lang.label }}</option>
           {% endfor %}
         </select>
       </label>
+        <div class="field" id="translate-engine-field">
+        <span>{{ t('translate_engine_label') }}</span>
+        <p class="hint left">{{ t('translate_engine_hint') }}</p>
+        <label class="st-check">
+          <input type="radio" name="translate_engine" value="deepseek" {% if license and license.has_deepseek_key %}checked{% endif %} />
+          <span>{{ t('translate_engine_deepseek') }}</span>
+        </label>
+        <label class="st-check">
+          <input type="radio" name="translate_engine" value="google" {% if not (license and license.has_deepseek_key) %}checked{% endif %} />
+          <span>{{ t('translate_engine_google') }}</span>
+        </label>
+        <label class="field openai-tts-inline" id="deepseek-key-box" hidden>
+          <span>{{ t('deepseek_key_label') }}</span>
+          <p class="hint left">{{ t('deepseek_key_hint') }}</p>
+          <input class="input" type="password" id="home-deepseek-key" placeholder="sk-…" autocomplete="off" spellcheck="false" />
+          <button type="button" class="btn ghost btn-sm" id="home-deepseek-save">{{ t('deepseek_key_save') }}</button>
+          <p class="hint left" id="home-deepseek-status">{% if license and license.has_deepseek_key %}{{ t('deepseek_key_ok') }}{% else %}{{ t('deepseek_key_needed') }}{% endif %}</p>
+        </label>
+      </div>
+      <div class="field" id="genre-field">
+        <label for="genre_id">{{ t('genre_label') }} <span style="color: var(--accent); font-weight: 700;">*</span></label>
+        <p class="hint left">{{ t('genre_hint') }}</p>
+        <select name="genre_id" id="genre_id" class="select" required>
+          {% for g in genres or [] %}
+          <option value="{{ g.id }}" {% if g.id == 'do_thi' or (loop.first and not (genres|selectattr('id', 'equalto', 'do_thi')|list)) %}selected{% endif %}>{{ g.label }}</option>
+          {% endfor %}
+        </select>
+        <p class="hint left" id="genre-status" hidden></p>
+        <div class="genre-actions">
+          <button type="button" class="btn ghost btn-sm" id="genre-prompt-toggle" hidden>
+            {{ t('genre_prompt_edit') }}
+          </button>
+        </div>
+        <div id="genre-prompt-panel" class="genre-prompt-panel" hidden>
+          <div class="genre-prompt-head">
+            <span id="genre-prompt-title">{{ t('genre_prompt_label') }}</span>
+            <button type="button" class="btn ghost btn-sm" id="genre-prompt-reset">{{ t('genre_prompt_reset') }}</button>
+          </div>
+          <p class="hint left genre-warn" id="genre-prompt-warn">{{ t('genre_prompt_warn') }}</p>
+          <textarea
+            name="genre_prompt"
+            id="genre_prompt"
+            class="input genre-prompt"
+            rows="8"
+            placeholder="{{ t('genre_prompt_placeholder') }}"
+            spellcheck="false"
+          ></textarea>
+          <p class="hint left" id="genre-prompt-meta"></p>
+          <p class="hint left genre-flash" id="genre-prompt-flash" hidden></p>
+        </div>
+      </div>
       <div class="field">
         <span>{{ t('voice_label') }}</span>
         <p class="hint left voice-hint" id="voice-hint"></p>
         <div class="voices" id="voice-options"></div>
       </div>
+      <div class="field voice-mode-field" id="voice-mode-field">
+        <span>{{ t('voice_mode_label') }}</span>
+        <p class="hint left">{{ t('voice_mode_hint') }}</p>
+        <div class="radio-row" style="display: flex; gap: 16px; margin-top: 6px;">
+          <label class="st-check" style="cursor: pointer; display: flex; align-items: center; gap: 6px;">
+            <input type="radio" name="voice_mode" value="single" checked />
+            <span>{{ t('voice_mode_single') }}</span>
+          </label>
+          <label class="st-check" style="cursor: pointer; display: flex; align-items: center; gap: 6px;">
+            <input type="radio" name="voice_mode" value="multi" />
+            <span>{{ t('voice_mode_multi') }}</span>
+          </label>
+        </div>
+      </div>
       <div class="field tts-field" id="tts-field">
         <span>{{ t('tts_label') }}</span>
         <p class="hint left">{{ t('tts_hint') }}</p>
-        <label class="field openai-tts-inline" id="openai-tts-box">
-          <span>{{ t('openai_tts_key_label') }}</span>
-          <input class="input" type="password" id="home-openai-tts-key" placeholder="sk-…" autocomplete="off" spellcheck="false" />
-          <button type="button" class="btn ghost btn-sm" id="home-openai-tts-save">{{ t('openai_tts_key_save') }}</button>
-          <p class="hint left" id="home-openai-tts-status">{% if license and license.has_openai_tts_key %}{{ t('openai_tts_key_ok') }}{% else %}{{ t('openai_tts_key_needed') }}{% endif %}</p>
-        </label>
         <div class="voices voices-tts" id="tts-options"></div>
         <p class="error field-msg" id="tts-error" hidden></p>
       </div>
@@ -209,8 +376,12 @@
 <script>
   window.DYFLOW_LANGUAGES = {{ languages | tojson }};
   window.DYFLOW_TTS = {{ tts_choices | tojson }};
+  window.DYFLOW_GENRES = {{ (genres or []) | tojson }};
+  window.DYFLOW_GENRE_TEMPLATES = {{ (genre_templates or {}) | tojson }};
   window.DYFLOW_HAS_OPENAI_TTS = {{ (license.has_openai_tts_key if license else false) | tojson }};
-  window.DYFLOW_CHANNEL_MAX = {{ 200 if desktop else 40 }};
+  window.DYFLOW_HAS_DEEPSEEK = {{ (license.has_deepseek_key if license else false) | tojson }};
+  window.DYFLOW_HAS_QWEN = {{ (license.has_qwen_key if license else false) | tojson }};
+  window.DYFLOW_CHANNEL_MAX = {{ 100000 if desktop else 40 }};
   DyflowHome.init();
   DyflowTrial.init();
 </script>

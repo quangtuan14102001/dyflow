@@ -5,6 +5,8 @@ de so du + so cai (ledger) luon nhat quan.
 """
 from __future__ import annotations
 
+import json
+import logging
 import os
 import secrets
 import sqlite3
@@ -13,7 +15,33 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
+log = logging.getLogger(__name__)
+
 DB_PATH = Path("work") / "dyflow.db"
+
+
+def _resolve_db_path() -> Path:
+    """Desktop: luon dung AppData/work/dyflow.db (khong phu thuoc cwd)."""
+    try:
+        from ..desktop_mode import data_dir, enabled
+
+        if enabled():
+            return data_dir() / "work" / "dyflow.db"
+    except Exception:  # noqa: BLE001
+        pass
+    return Path("work") / "dyflow.db"
+
+
+def _connect() -> sqlite3.Connection:
+    global DB_PATH
+    DB_PATH = _resolve_db_path()
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA foreign_keys=ON;")
+    return conn
+
 
 # Trang thai job
 STATUS_QUEUED = "queued"
@@ -81,6 +109,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     credits_cost INTEGER NOT NULL DEFAULT 0,
     refunded     INTEGER NOT NULL DEFAULT 0,
     output_path  TEXT,
+    downloaded   INTEGER NOT NULL DEFAULT 0,
     error        TEXT,
     created_at   REAL NOT NULL,
     started_at   REAL,
@@ -115,6 +144,8 @@ CREATE TABLE IF NOT EXISTS payments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_user ON jobs(user_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_status_created ON jobs(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_jobs_user_status ON jobs(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_tx_user ON credit_tx(user_id);
 CREATE INDEX IF NOT EXISTS idx_pay_user ON payments(user_id);
 
@@ -126,15 +157,6 @@ CREATE TABLE IF NOT EXISTS telegram_link_tokens (
     used_at     REAL
 );
 """
-
-
-def _connect() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA foreign_keys=ON;")
-    return conn
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
@@ -155,6 +177,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE jobs ADD COLUMN qa_json TEXT")
     if "output_opts_json" not in job_cols:
         conn.execute("ALTER TABLE jobs ADD COLUMN output_opts_json TEXT NOT NULL DEFAULT '{}'")
+    if "source_title" not in job_cols:
+        conn.execute("ALTER TABLE jobs ADD COLUMN source_title TEXT NOT NULL DEFAULT ''")
+    if "downloaded" not in job_cols:
+        conn.execute("ALTER TABLE jobs ADD COLUMN downloaded INTEGER NOT NULL DEFAULT 0")
 
     user_cols = {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
     if "telegram_id" not in user_cols:
@@ -171,6 +197,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_telegram "
         "ON users(telegram_id) WHERE telegram_id IS NOT NULL"
     )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status_created ON jobs(status, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_user_status ON jobs(user_id, status)")
 
 
 def init_db() -> None:
@@ -1020,19 +1048,21 @@ def create_jobs_with_trial(
             (user_id, STATUS_RUNNING),
         ).fetchone()["n"]
         lim = max_concurrent_per_user(2)
-        for source, cost in zip(sources, costs):
+        for idx, (source, cost) in enumerate(zip(sources, costs)):
             job_id = f"web_{uuid.uuid4().hex}"
             # Job moi luon queued; worker chi start khi user con slot (< lim running)
             msg = "Dang cho xu ly..."
             if int(running_now) >= lim:
                 msg = f"Cho slot (toi da {lim} job song song / user)..."
+            # Tang nhe created_at theo thu tu danh sach de dam bao FIFO tuyet doi
+            job_created_at = now + (idx * 0.001)
             conn.execute(
                 "INSERT INTO jobs (id, user_id, source_url, voice, target_lang, tts_engine, openai_model, status, stage, "
                 "progress, message, credits_cost, created_at, output_opts_json) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     job_id, user_id, source, voice, target_lang or "vi", engine, model,
-                    STATUS_QUEUED, "queued", 0, msg, cost, now, output_opts_json or "{}",
+                    STATUS_QUEUED, "queued", 0, msg, cost, job_created_at, output_opts_json or "{}",
                 ),
             )
             job_ids.append(job_id)
@@ -1073,7 +1103,7 @@ def list_jobs(
     statuses: Optional[tuple[str, ...]] = None,
 ) -> list[dict[str, Any]]:
     offset = max(0, int(offset))
-    limit = max(1, min(100, int(limit)))
+    limit = max(1, min(100_000, int(limit)))
     with _connect() as conn:
         clauses: list[str] = []
         args: list[Any] = []
@@ -1093,8 +1123,12 @@ def list_jobs(
         rows = conn.execute(
             f"SELECT * FROM jobs {where} "
             "ORDER BY CASE status "
-            "WHEN 'running' THEN 0 WHEN 'queued' THEN 1 "
-            "WHEN 'completed' THEN 2 ELSE 3 END, "
+            "WHEN 'running' THEN 0 "
+            "WHEN 'queued' THEN 1 "
+            "WHEN 'completed' THEN 2 "
+            "ELSE 3 END, "
+            "CASE WHEN status = 'queued' THEN created_at END ASC, "
+            "CASE WHEN status = 'queued' THEN rowid END ASC, "
             "created_at DESC LIMIT ? OFFSET ?",
             args,
         ).fetchall()
@@ -1202,7 +1236,7 @@ def claim_next_job(max_concurrent_per_user: int = 2) -> Optional[dict[str, Any]]
             "  SELECT COUNT(*) FROM jobs r "
             "  WHERE r.user_id = j.user_id AND r.status=?"
             ") < ? "
-            "ORDER BY j.created_at ASC LIMIT 1",
+            "ORDER BY j.created_at ASC, j.rowid ASC LIMIT 1",
             (STATUS_QUEUED, STATUS_RUNNING, lim),
         ).fetchone()
         if row is None:
@@ -1232,15 +1266,47 @@ def update_progress(job_id: str, stage: str, progress: int, message: str) -> Non
         conn.commit()
 
 
-def mark_completed(job_id: str, output_path: str, qa_json: str | None = None) -> None:
+def mark_completed(
+    job_id: str,
+    output_path: str,
+    qa_json: str | None = None,
+    *,
+    message: str | None = None,
+) -> None:
+    out = (output_path or "").strip()
+    if not out:
+        raise ValueError(f"mark_completed({job_id}): output_path rong — khong duoc danh DONE")
+    msg = (message or "").strip() or "Hoan tat!"
     with _connect() as conn:
         conn.execute(
             "UPDATE jobs SET status=?, stage=?, progress=?, message=?, output_path=?, qa_json=?, finished_at=? "
             "WHERE id=? AND status=?",
             (
-                STATUS_COMPLETED, "completed", 100, "Hoan tat!", output_path, qa_json,
+                STATUS_COMPLETED, "completed", 100, msg[:2000], out, qa_json,
                 time.time(), job_id, STATUS_RUNNING,
             ),
+        )
+        conn.commit()
+
+
+def set_source_title(job_id: str, title: str) -> None:
+    title = (title or "").strip()[:300]
+    if not title:
+        return
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE jobs SET source_title=? WHERE id=?",
+            (title, job_id),
+        )
+        conn.commit()
+
+
+def mark_downloaded(job_id: str) -> None:
+    """Danh dau user da co ban copy (Save folder / Download) — purge moi duoc xoa som."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE jobs SET downloaded=1 WHERE id=? AND COALESCE(downloaded,0)=0",
+            (job_id,),
         )
         conn.commit()
 
@@ -1330,3 +1396,125 @@ def mark_failed(job_id: str, error: str, qa_json: str | None = None) -> None:
                 ),
             )
         conn.commit()
+
+
+def init_merge_history(conn: sqlite3.Connection) -> None:
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS merge_history (
+        id            TEXT PRIMARY KEY,
+        user_id       TEXT,
+        filename      TEXT NOT NULL,
+        output_path   TEXT NOT NULL,
+        output_folder TEXT,
+        file_size     INTEGER NOT NULL DEFAULT 0,
+        total_videos  INTEGER NOT NULL DEFAULT 0,
+        duration_sec  REAL NOT NULL DEFAULT 0.0,
+        status        TEXT NOT NULL DEFAULT 'completed',
+        created_at    REAL NOT NULL
+    );
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_merge_created ON merge_history(created_at DESC)")
+
+
+def add_merge_history(
+    filename: str,
+    output_path: str,
+    output_folder: str = "",
+    file_size: int = 0,
+    total_videos: int = 0,
+    duration_sec: float = 0.0,
+    user_id: str | None = None,
+    status: str = "completed",
+    task_id: str | None = None,
+) -> dict[str, Any]:
+    mid = task_id or f"m_{uuid.uuid4().hex[:12]}"
+    now = time.time()
+    with _connect() as conn:
+        init_merge_history(conn)
+        conn.execute(
+            "INSERT OR REPLACE INTO merge_history (id, user_id, filename, output_path, output_folder, file_size, total_videos, duration_sec, status, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (mid, user_id, filename, output_path, output_folder, file_size, total_videos, duration_sec, status, now),
+        )
+        conn.commit()
+    return {
+        "id": mid,
+        "filename": filename,
+        "output_path": output_path,
+        "output_folder": output_folder,
+        "file_size": file_size,
+        "total_videos": total_videos,
+        "duration_sec": duration_sec,
+        "status": status,
+        "created_at": now,
+    }
+
+
+def list_merge_history(limit: int = 50) -> list[dict[str, Any]]:
+    with _connect() as conn:
+        init_merge_history(conn)
+        rows = conn.execute(
+            "SELECT * FROM merge_history ORDER BY created_at DESC LIMIT ?",
+            (max(1, min(500, int(limit))),),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_merge_history(merge_id: str) -> bool:
+    with _connect() as conn:
+        init_merge_history(conn)
+        cur = conn.execute("DELETE FROM merge_history WHERE id=?", (merge_id,))
+        conn.commit()
+    return cur.rowcount > 0
+
+
+def update_queued_jobs_export_dir(user_id: str, new_export_dir: str) -> int:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, output_opts_json FROM jobs WHERE user_id=? AND status=?",
+            (user_id, STATUS_QUEUED),
+        ).fetchall()
+        count = 0
+        for r in rows:
+            try:
+                opts = json.loads(r["output_opts_json"] or "{}")
+                # Neu job da duoc chi dinh thu muc rieng khi tao: GIU NGUYEN, khong ghi de
+                if str(opts.get("export_dir") or "").strip():
+                    continue
+                opts["export_dir"] = new_export_dir
+                conn.execute(
+                    "UPDATE jobs SET output_opts_json=? WHERE id=?",
+                    (json.dumps(opts, ensure_ascii=False), r["id"]),
+                )
+                count += 1
+            except Exception as e:
+                log.warning("Khong cap nhat duoc export_dir cho job %s: %s", r["id"], e)
+        conn.commit()
+        return count
+
+
+def sync_existing_merged_files(output_dir: Path | str) -> int:
+    """Dong bo cac file merged_*.mp4 da co trong thu muc output vao bang merge_history."""
+    try:
+        p = Path(output_dir)
+        if not p.is_dir():
+            return 0
+        added = 0
+        with _connect() as conn:
+            init_merge_history(conn)
+            existing_paths = {r["output_path"] for r in conn.execute("SELECT output_path FROM merge_history").fetchall()}
+            for f in sorted(p.glob("merged_*.mp4"), key=lambda x: x.stat().st_mtime, reverse=True):
+                if str(f) not in existing_paths and f.is_file():
+                    stat = f.stat()
+                    mid = f"m_{f.stem}"
+                    conn.execute(
+                        "INSERT OR IGNORE INTO merge_history (id, user_id, filename, output_path, output_folder, file_size, total_videos, duration_sec, status, created_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (mid, None, f.name, str(f), str(p), stat.st_size, 0, 0.0, "completed", stat.st_mtime),
+                    )
+                    added += 1
+            if added:
+                conn.commit()
+        return added
+    except Exception:
+        return 0

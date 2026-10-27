@@ -10,78 +10,160 @@
       <h1>{{ t('library_title') }}</h1>
       <p class="sub">{{ t('library_sub') }}</p>
     </div>
-    <a class="btn primary library-new" href="/">{{ t('new_video') }}</a>
+    <div class="library-head-actions">
+      <a class="btn ghost btn-sm" href="/merge">🎞 Ghép video</a>
+      <a class="btn primary btn-sm" href="/">{{ t('new_video') }}</a>
+    </div>
   </div>
 
-  {% if videos %}
-  <div class="video-grid">
-    {% for v in videos %}
-    <a class="video-card" href="/jobs/{{ v.id }}">
-      <div class="thumb-wrap">
-        {% if v.has_file %}
-        <img class="thumb" src="/api/jobs/{{ v.id }}/thumb" alt="" loading="lazy" />
-        {% else %}
-        <div class="thumb missing">{{ t('library_expired') if v.expired else t('library_missing') }}</div>
-        {% endif %}
-        {% if v.duration_label and v.duration_label != '0:00' %}
-        <span class="thumb-dur">{{ v.duration_label }}</span>
-        {% endif %}
-      </div>
-      <div class="video-meta">
-        <div class="video-avatar">{{ (v.target_lang or 'vi')[:2]|upper }}</div>
-        <div class="video-text">
-          <h3 class="video-title">{{ v.title }}</h3>
-          <p class="video-sub">
-            {{ (v.target_lang or 'vi')|upper }} · {{ voice_label(v.voice) }}
-            {% if v.rel_label %} · {{ v.rel_label }}{% endif %}
+  <div class="lib-tabs" style="display: flex; gap: 10px; margin: 18px 0 24px; border-bottom: 1px solid var(--border, #2a2e39); padding-bottom: 10px;">
+    <a href="/library?tab=jobs" class="btn {% if tab != 'merge' %}primary{% else %}ghost{% endif %}" style="display: inline-flex; align-items: center; gap: 8px; font-weight: 600; text-decoration: none; padding: 8px 16px; border-radius: 8px; width: auto;">
+      <span>🎬 Video dịch thuật</span>
+      <span class="badge" style="background: rgba(255,255,255,0.18); padding: 1px 7px; border-radius: 10px; font-size: 11.5px;">{{ total_jobs }}</span>
+    </a>
+    <a href="/library?tab=merge" class="btn {% if tab == 'merge' %}primary{% else %}ghost{% endif %}" style="display: inline-flex; align-items: center; gap: 8px; font-weight: 600; text-decoration: none; padding: 8px 16px; border-radius: 8px; width: auto;">
+      <span>🎞 Video đã ghép</span>
+      <span class="badge" style="background: rgba(255,255,255,0.18); padding: 1px 7px; border-radius: 10px; font-size: 11.5px;">{{ merge_total }}</span>
+    </a>
+  </div>
+
+  {% if tab == 'merge' %}
+    {# --- TAB: VIDEO DA GHEP --- #}
+    {% if merge_videos %}
+    <div class="video-grid">
+      {% for m in merge_videos %}
+      <div class="video-card merge-card" style="display: flex; flex-direction: column; justify-content: space-between; padding: 14px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; transition: border-color 0.15s ease;">
+        <div>
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 22px;">🎞️</span>
+              <span class="badge" style="background: rgba(0, 242, 234, 0.15); color: #00f2ea; border: 1px solid rgba(0,242,234,0.3); font-size: 11px; padding: 2px 7px; border-radius: 6px; font-weight: 600;">Ghép xong</span>
+            </div>
+            <button type="button" class="btn ghost btn-xs danger" onclick="deleteMerged('{{ m.id }}')" title="Xóa khỏi lịch sử" style="padding: 2px 6px; font-size: 12px; border: none; opacity: 0.7; cursor: pointer;">✕</button>
+          </div>
+          <h3 class="video-title" style="font-size: 14px; font-weight: 600; color: #fff; margin: 0 0 6px; word-break: break-all; line-height: 1.4;" title="{{ m.filename }}">{{ m.filename }}</h3>
+          <p class="video-sub" style="font-size: 12px; color: var(--muted, #8a8d9f); margin: 0 0 14px; line-height: 1.5;">
+            <span>📦 {{ m.size_fmt }}</span>
+            {% if m.total_videos > 0 %} · <span>{{ m.total_videos }} video</span>{% endif %}
+            {% if m.created_at_fmt %} · <span>🕒 {{ m.created_at_fmt }}</span>{% endif %}
           </p>
         </div>
+        <div style="display: flex; gap: 8px; margin-top: auto;">
+          <a href="/api/merge/download/{{ m.filename }}" target="_blank" class="btn primary btn-sm" style="flex: 1; text-align: center; text-decoration: none; padding: 6px 10px; font-size: 12.5px; font-weight: 600;">
+            ▶ Xem / Tải
+          </a>
+          <button type="button" class="btn ghost btn-sm" onclick="revealMerged('{{ m.output_path|replace('\\', '\\\\') }}', '{{ m.filename }}')" style="padding: 6px 10px; font-size: 12.5px; cursor: pointer;" title="Mở thư mục chứa file">
+            📁 Mở thư mục
+          </button>
+        </div>
       </div>
-    </a>
-    {% endfor %}
-  </div>
-
-  {% if total_pages > 1 %}
-  <nav class="pager" aria-label="pagination">
-    {% if page > 1 %}
-    <a class="pager-nav" href="/library?page={{ page - 1 }}" aria-label="{{ t('pager_prev') }}">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    </a>
+      {% endfor %}
+    </div>
     {% else %}
-    <span class="pager-nav disabled" aria-disabled="true">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    </span>
+    <div class="library-empty">
+      <p>Chưa có video nào được ghép</p>
+      <a class="btn primary" href="/merge">Ghép video ngay</a>
+    </div>
     {% endif %}
-
-    {% for item in page_items|default([]) %}
-      {% if item is none %}
-      <span class="pager-ellipsis" aria-hidden="true">…</span>
-      {% elif item == page %}
-      <span class="pager-num active" aria-current="page">{{ item }}</span>
-      {% else %}
-      <a class="pager-num" href="/library?page={{ item }}">{{ item }}</a>
-      {% endif %}
-    {% endfor %}
-
-    {% if page < total_pages %}
-    <a class="pager-nav next" href="/library?page={{ page + 1 }}" aria-label="{{ t('pager_next') }}">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    </a>
-    {% else %}
-    <span class="pager-nav next disabled" aria-disabled="true">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    </span>
-    {% endif %}
-  </nav>
-  {% endif %}
 
   {% else %}
-  <div class="library-empty">
-    <p>{{ t('library_empty') }}</p>
-    <a class="btn primary" href="/">{{ t('new_video') }}</a>
-  </div>
+    {# --- TAB: VIDEO DICH THUAT (TRADITIONAL) --- #}
+    {% if videos %}
+    <div class="video-grid">
+      {% for v in videos %}
+      <a class="video-card" href="/jobs/{{ v.id }}">
+        <div class="thumb-wrap">
+          {% if v.has_file %}
+          <img class="thumb" src="/api/jobs/{{ v.id }}/thumb" alt="" loading="lazy" />
+          {% else %}
+          <div class="thumb missing">{{ t('library_expired') if v.expired else t('library_missing') }}</div>
+          {% endif %}
+          {% if v.duration_label and v.duration_label != '0:00' %}
+          <span class="thumb-dur">{{ v.duration_label }}</span>
+          {% endif %}
+        </div>
+        <div class="video-meta">
+          <div class="video-avatar">{{ (v.target_lang or 'vi')[:2]|upper }}</div>
+          <div class="video-text">
+            <h3 class="video-title">{{ v.title }}</h3>
+            <p class="video-sub">
+              {{ (v.target_lang or 'vi')|upper }} · {{ voice_label(v.voice) }}
+              {% if v.rel_label %} · {{ v.rel_label }}{% endif %}
+            </p>
+          </div>
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+
+    {% if total_pages > 1 %}
+    <nav class="pager" aria-label="pagination">
+      {% if page > 1 %}
+      <a class="pager-nav" href="/library?page={{ page - 1 }}" aria-label="{{ t('pager_prev') }}">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+      {% else %}
+      <span class="pager-nav disabled" aria-disabled="true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>
+      {% endif %}
+
+      {% for item in page_items|default([]) %}
+        {% if item is none %}
+        <span class="pager-ellipsis" aria-hidden="true">…</span>
+        {% elif item == page %}
+        <span class="pager-num active" aria-current="page">{{ item }}</span>
+        {% else %}
+        <a class="pager-num" href="/library?page={{ item }}">{{ item }}</a>
+        {% endif %}
+      {% endfor %}
+
+      {% if page < total_pages %}
+      <a class="pager-nav next" href="/library?page={{ page + 1 }}" aria-label="{{ t('pager_next') }}">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+      {% else %}
+      <span class="pager-nav next disabled" aria-disabled="true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>
+      {% endif %}
+    </nav>
+    {% endif %}
+
+    {% else %}
+    <div class="library-empty">
+      <p>{{ t('library_empty') }}</p>
+      <a class="btn primary" href="/">{{ t('new_video') }}</a>
+    </div>
+    {% endif %}
   {% endif %}
 
   <p class="hint library-storage">{{ t('library_storage_note', n=retention_days) }}</p>
 </section>
+
+<script>
+async function revealMerged(path, filename) {
+  try {
+    const res = await fetch('/api/merge/reveal', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({path: path, filename: filename})
+    });
+    const d = await res.json();
+    if (!d.ok) alert(d.error || 'Không tìm thấy file');
+  } catch (e) {
+    alert('Lỗi: ' + e);
+  }
+}
+async function deleteMerged(id) {
+  if (!confirm('Xóa video này khỏi lịch sử ghép?')) return;
+  try {
+    const res = await fetch('/api/merge/history/' + id, {method: 'DELETE'});
+    const d = await res.json();
+    if (d.ok) window.location.reload();
+  } catch (e) {
+    alert('Lỗi: ' + e);
+  }
+}
+</script>
 {% endblock %}

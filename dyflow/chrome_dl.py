@@ -336,8 +336,8 @@ def download_with_chrome(
         from playwright.sync_api import sync_playwright  # noqa: F401
     except ImportError as e:
         raise RuntimeError(
-            "Can playwright de fallback Douyin.\n"
-            "  pip install playwright && playwright install chromium"
+            "Chrome/Playwright fallback da tat. "
+            "Tai bang yt-dlp/HTTP thoi — khong cai Playwright."
         ) from e
 
     from . import dl_cache
@@ -1149,7 +1149,9 @@ def list_user_videos_with_chrome(
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as e:
-        raise RuntimeError("Can playwright de liet ke kenh Douyin.") from e
+        raise RuntimeError(
+            "Liet ke kenh bang Playwright da tat — dung HTTP (f2) thoi."
+        ) from e
 
     cfg = cfg or {}
     limit = max(1, min(int(limit or 40), 200))

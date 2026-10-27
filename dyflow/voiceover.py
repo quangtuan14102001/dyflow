@@ -4,10 +4,12 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import sys
 import threading
 import time
 import unicodedata
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import TypedDict
@@ -16,6 +18,7 @@ from .dub_constants import (
     DUB_GROUP_MAX_CHARS,
     DUB_GROUP_MAX_DUR_SEC,
     DUB_GROUP_MAX_GAP_SEC,
+    DUB_LARGE_OVERLAP_CROSSFADE_MAX,
     DUB_MICRO_OVERLAP_SEC,
     DUB_MIN_SHORTEN_CHARS,
     DUB_OVERFLOW_MAX_MERGES,
@@ -33,8 +36,10 @@ from .dub_constants import (
 )
 from .dub_report import write_dub_final_report, write_shorten_flags, sync_spoken_text_to_segment_files
 from .dub_timing import (
+    borrow_time_from_next,
     decide_fit,
     is_audio_truncated,
+    large_overlap_crossfade,
     overflow_atempo_plan,
     overflow_semantic_try_budget,
     plan_placement,
@@ -51,15 +56,35 @@ from .dub_tts import (
     resolve_openai_speed,
     tts_rate_converge,
 )
-from .utils import log, run, probe_duration as _probe_duration_raw
+from .tts_file_io import (
+    atomic_replace,
+    clip_integrity_ok,
+    finalize_synthesized,
+    lifecycle_log,
+    unique_tmp,
+    wait_file_ready,
+    write_bytes_atomic,
+)
+from .utils import log, run, probe_duration as _probe_duration_raw, probe_duration_retry, win_hidden_kwargs
 
 _TICKS_PER_SEC = 10_000_000
-_TTS_RETRIES = 6
-_TTS_RETRY_DELAY = 3.5
-_TTS_SEGMENT_GAP = 1.0
-_TTS_PREFETCH_CONCURRENCY = 4
-_TTS_CALL_TIMEOUT_SEC = 40
+_TTS_RETRIES = 3
+_TTS_RETRY_DELAY = 0.5
+_TTS_SEGMENT_GAP = 0.3
+_TTS_PREFETCH_CONCURRENCY = 1
+_TTS_CALL_TIMEOUT_SEC = 45
 _openai_chars_lock = threading.Lock()
+# Thread-local: work_dir / seg index cho lifecycle log trong synthesize().
+_tts_ctx = threading.local()
+
+
+def _tts_ctx_set(*, work_dir: Path | None = None, seg_i: int | None = None) -> None:
+    _tts_ctx.work_dir = work_dir
+    _tts_ctx.seg_i = seg_i
+
+
+def _tts_ctx_get() -> tuple[Path | None, int | None]:
+    return getattr(_tts_ctx, "work_dir", None), getattr(_tts_ctx, "seg_i", None)
 
 
 def probe_duration(path: str | Path) -> float:
@@ -71,11 +96,12 @@ def probe_duration(path: str | Path) -> float:
         add_bucket("ffprobe", time.perf_counter() - t0, log_line=False)
 
 
-async def _await_tts(coro, *, label: str):
+async def _await_tts(coro, *, label: str, timeout: float | None = None):
+    to = float(timeout or _TTS_CALL_TIMEOUT_SEC)
     try:
-        return await asyncio.wait_for(coro, timeout=_TTS_CALL_TIMEOUT_SEC)
+        return await asyncio.wait_for(coro, timeout=to)
     except asyncio.TimeoutError as e:
-        raise RuntimeError(f"TTS het han {_TTS_CALL_TIMEOUT_SEC}s ({label})") from e
+        raise RuntimeError(f"TTS het han {to:.0f}s ({label})") from e
 
 
 class WordTiming(TypedDict):
@@ -125,34 +151,60 @@ async def _synthesize_stream(
     import edge_tts
 
     communicate = edge_tts.Communicate(text, **_tts_kwargs(cfg, boundary=boundary))
+    work_dir, seg_i = _tts_ctx_get()
+    tmp = unique_tmp(out_path, tag="stream")
 
     async def _collect() -> list[WordTiming]:
         out: list[WordTiming] = []
-        with open(out_path, "wb") as f:
-            got_audio = False
-            async for chunk in communicate.stream():
-                if chunk["type"] == "audio":
-                    f.write(chunk["data"])
-                    got_audio = True
-                elif chunk["type"] == "WordBoundary":
-                    start = chunk["offset"] / _TICKS_PER_SEC
-                    end = (chunk["offset"] + chunk["duration"]) / _TICKS_PER_SEC
-                    out.append({"text": chunk["text"], "start": start, "end": end})
-        if not got_audio or out_path.stat().st_size < 100:
-            raise RuntimeError("edge-tts khong tra audio (stream)")
-        return out
+        got_audio = False
+        lifecycle_log(work_dir, "stream_write_start", tmp, seg_i=seg_i)
+        try:
+            with open(tmp, "wb") as f:
+                async for chunk in communicate.stream():
+                    if chunk["type"] == "audio":
+                        f.write(chunk["data"])
+                        got_audio = True
+                    elif chunk["type"] == "WordBoundary":
+                        start = chunk["offset"] / _TICKS_PER_SEC
+                        end = (chunk["offset"] + chunk["duration"]) / _TICKS_PER_SEC
+                        out.append({"text": chunk["text"], "start": start, "end": end})
+                f.flush()
+                os.fsync(f.fileno())
+            lifecycle_log(work_dir, "stream_write_end", tmp, seg_i=seg_i)
+            if not got_audio or tmp.stat().st_size < 100:
+                raise RuntimeError("edge-tts khong tra audio (stream)")
+            if not finalize_synthesized(
+                tmp, out_path, work_dir=work_dir, seg_i=seg_i, stage="stream",
+            ):
+                raise RuntimeError("edge-tts stream finalize that bai")
+            return out
+        finally:
+            tmp.unlink(missing_ok=True)
 
-    return await _await_tts(_collect(), label="stream")
+    t_limit = max(_TTS_CALL_TIMEOUT_SEC, len(text) * 0.22)
+    return await _await_tts(_collect(), label="stream", timeout=t_limit)
 
 
 async def _synthesize_save(text: str, out_path: Path, cfg: dict) -> list[WordTiming]:
     import edge_tts
 
     communicate = edge_tts.Communicate(text, **_tts_kwargs(cfg, boundary=None))
-    await _await_tts(communicate.save(str(out_path)), label="save")
-    if not out_path.exists() or out_path.stat().st_size < 100:
-        raise RuntimeError("edge-tts khong tra audio (save)")
-    return []
+    work_dir, seg_i = _tts_ctx_get()
+    tmp = unique_tmp(out_path, tag="save")
+    lifecycle_log(work_dir, "save_write_start", tmp, seg_i=seg_i)
+    try:
+        t_limit = max(_TTS_CALL_TIMEOUT_SEC, len(text) * 0.22)
+        await _await_tts(communicate.save(str(tmp)), label="save", timeout=t_limit)
+        lifecycle_log(work_dir, "save_write_end", tmp, seg_i=seg_i)
+        if not tmp.exists() or tmp.stat().st_size < 100:
+            raise RuntimeError("edge-tts khong tra audio (save)")
+        if not finalize_synthesized(
+            tmp, out_path, work_dir=work_dir, seg_i=seg_i, stage="save",
+        ):
+            raise RuntimeError("edge-tts save finalize that bai")
+        return []
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 async def _synthesize_split(text: str, out_path: Path, cfg: dict) -> list[WordTiming]:
@@ -163,26 +215,40 @@ async def _synthesize_split(text: str, out_path: Path, cfg: dict) -> list[WordTi
     if len(parts) <= 1:
         return await _synthesize_save(text, out_path, cfg)
 
-    tmp_dir = out_path.parent / "_tts_parts"
+    # CRITICAL: moi out_path (moi doan/luong) co thu muc part rieng —
+    # truoc day dung chung _tts_parts/part_000.mp3 -> race khi prefetch 4 luong.
+    run_id = uuid.uuid4().hex[:8]
+    tmp_dir = out_path.parent / f"_tts_parts_{out_path.stem}_{os.getpid()}_{run_id}"
     tmp_dir.mkdir(parents=True, exist_ok=True)
+    work_dir, seg_i = _tts_ctx_get()
     part_files: list[Path] = []
-    for i, part in enumerate(parts):
-        part_path = tmp_dir / f"part_{i:03d}.mp3"
-        await _synthesize_save(part, part_path, cfg)
-        part_files.append(part_path)
-        from .job_timing import timed_async_sleep
-        await timed_async_sleep(0.6, "tts_split_gap")
+    concat_tmp = unique_tmp(out_path, tag="split")
+    try:
+        for i, part in enumerate(parts):
+            part_path = tmp_dir / f"part_{i:03d}.mp3"
+            await _synthesize_save(part, part_path, cfg)
+            part_files.append(part_path)
+            from .job_timing import timed_async_sleep
+            await timed_async_sleep(0.6, "tts_split_gap")
 
-    cmd = ["ffmpeg", "-y"]
-    for pf in part_files:
-        cmd += ["-i", str(pf)]
-    n = len(part_files)
-    cmd += [
-        "-filter_complex", f"{''.join(f'[{i}:a]' for i in range(n))}concat=n={n}:v=0:a=1[aout]",
-        "-map", "[aout]", "-c:a", "libmp3lame", "-b:a", "192k", str(out_path),
-    ]
-    run(cmd)
-    return []
+        cmd = ["ffmpeg", "-y"]
+        for pf in part_files:
+            cmd += ["-i", str(pf)]
+        n = len(part_files)
+        cmd += [
+            "-filter_complex",
+            f"{''.join(f'[{i}:a]' for i in range(n))}concat=n={n}:v=0:a=1[aout]",
+            "-map", "[aout]", "-c:a", "libmp3lame", "-b:a", "192k", str(concat_tmp),
+        ]
+        run(cmd)
+        if not finalize_synthesized(
+            concat_tmp, out_path, work_dir=work_dir, seg_i=seg_i, stage="split",
+        ):
+            raise RuntimeError("edge-tts split finalize that bai")
+        return []
+    finally:
+        concat_tmp.unlink(missing_ok=True)
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def _tts_engine(cfg: dict) -> str:
@@ -234,10 +300,19 @@ def _seg_tts_cfg(base: dict, seg: dict, *, rate: str | None = None) -> dict:
     from . import prosody
     from .dub_tts import rate_to_openai_speed
 
+    cast_on = bool(
+        base.get("cast_speakers", False)
+        if "cast_speakers" in base
+        else (base.get("voice_mode") == "multi")
+    )
+    voice = (seg.get("tts_voice") if cast_on else None) or base.get("voice")
+    oa_voice = (seg.get("openai_voice") if cast_on else None) or base.get("openai_voice")
+
     out = {
         **base,
-        "voice": seg.get("tts_voice") or base.get("voice"),
-        "openai_voice": seg.get("openai_voice") or base.get("openai_voice"),
+        "voice": voice,
+        "tts_voice": voice,
+        "openai_voice": oa_voice,
         "rate": rate if rate is not None else (seg.get("tts_rate") or base.get("rate", "+0%")),
         "pitch": seg.get("tts_pitch") or base.get("pitch", "+0Hz"),
         "volume": seg.get("tts_volume") or base.get("volume", "+0%"),
@@ -303,7 +378,10 @@ def _synthesize_openai(text: str, out_path: Path, cfg: dict) -> None:
         kwargs.pop("instructions", None)
         r = client.audio.speech.create(**kwargs)
     data = r.content if hasattr(r, "content") else bytes(r)
-    out_path.write_bytes(data)
+    work_dir, seg_i = _tts_ctx_get()
+    lifecycle_log(work_dir, "openai_write_start", out_path, seg_i=seg_i, nbytes=len(data))
+    write_bytes_atomic(out_path, data)
+    lifecycle_log(work_dir, "openai_write_done", out_path, seg_i=seg_i)
     if out_path.stat().st_size < 100:
         raise RuntimeError("OpenAI TTS khong tra audio")
     nchars = len(text)
@@ -356,12 +434,37 @@ def synthesize(script: str, out_path: str | Path, cfg: dict) -> tuple[Path, list
 
     async def _run() -> list[WordTiming]:
         plain = {**cfg, "rate": "+0%", "pitch": "+0Hz", "volume": "+0%"}
+        cur_voice = str(cfg.get("voice") or "")
+        alt_voice = cur_voice
+        pairs = [
+            ("NamMinh", "HoaiMy"),
+            ("Guy", "Jenny"),
+            ("Andrew", "Aria"),
+            ("Keita", "Nanami"),
+            ("Antonio", "Francisca"),
+            ("Madhur", "Swara"),
+            ("Conrad", "Katja"),
+            ("Ardi", "Gadis"),
+            ("Angelo", "Blessica"),
+        ]
+        for v1, v2 in pairs:
+            if v1 in cur_voice:
+                alt_voice = cur_voice.replace(v1, v2)
+                break
+            if v2 in cur_voice:
+                alt_voice = cur_voice.replace(v2, v1)
+                break
+        alt_plain = {**plain, "voice": alt_voice} if alt_voice != cur_voice else plain
         strategies = [
-            ("stream+timing", lambda: _synthesize_stream(text, out_path, cfg, "WordBoundary")),
             ("save", lambda: _synthesize_save(text, out_path, cfg)),
             ("save-plain", lambda: _synthesize_save(text, out_path, plain)),
+            ("stream", lambda: _synthesize_stream(text, out_path, cfg, None)),
+            ("stream+timing", lambda: _synthesize_stream(text, out_path, cfg, "WordBoundary")),
             ("split+save", lambda: _synthesize_split(text, out_path, plain)),
+            ("alt-voice-save", lambda: _synthesize_save(text, out_path, alt_plain)),
         ]
+        if len(text) > 200:
+            strategies.insert(1, ("split+save", lambda: _synthesize_split(text, out_path, plain)))
         last_err: Exception | None = None
         for attempt in range(_TTS_RETRIES):
             name, fn = strategies[min(attempt, len(strategies) - 1)]
@@ -393,10 +496,13 @@ def _prefetch_tts_clips(
     *,
     refresh: bool,
 ) -> None:
-    """Goi TTS lan dau song song (4 luong). Overflow/rut gon van tuan tu sau do."""
+    """Goi TTS lan dau. OpenAI 4 luong; Edge-TTS 1 luong (tuan tu cach nhe 0.15s) de khong bi Microsoft rate-limit."""
     cjk_re = re.compile(r"[\u4e00-\u9fff]")
     n = max(1, int(cfg.get("tts_prefetch_concurrency") or _TTS_PREFETCH_CONCURRENCY))
-    n = max(1, min(n, 5))
+    if not _is_openai_engine(cfg):
+        n = 1
+    elif sys.platform == "win32" and "tts_prefetch_concurrency" not in cfg:
+        n = min(n, 4)
     jobs: list[tuple[int, str, Path, dict]] = []
     for i, seg in enumerate(segs):
         text = _sanitize_tts_text(seg.get("text", ""))
@@ -408,21 +514,27 @@ def _prefetch_tts_clips(
         jobs.append((i, text, clip, _seg_tts_cfg(cfg, seg)))
     if not jobs:
         return
-    if sys.platform == "win32":
-        log.info("Windows: bo TTS prefetch song song (edge-tts de treo)")
-        return
     log.info("TTS prefetch %d doan, concurrency=%d", len(jobs), n)
 
     def _one(item: tuple[int, str, Path, dict]) -> None:
         i, text, clip, seg_cfg = item
         from .job_timing import timed_sleep
-        timed_sleep(0.12 * (i % n), "tts_prefetch_stagger")
+        timed_sleep(0.15, "tts_prefetch_stagger")
+        tmp = unique_tmp(clip, tag="prefetch")
+        _tts_ctx_set(work_dir=work_dir, seg_i=i)
+        lifecycle_log(work_dir, "prefetch_start", clip, seg_i=i, tmp=tmp.name)
         try:
-            if clip.exists():
-                clip.unlink(missing_ok=True)
-            synthesize(text, clip, seg_cfg)
+            synthesize(text, tmp, seg_cfg)
+            if not finalize_synthesized(
+                tmp, clip, work_dir=work_dir, seg_i=i, stage="prefetch",
+            ):
+                raise RuntimeError("TTS prefetch file rong")
         except Exception as e:  # noqa: BLE001
+            tmp.unlink(missing_ok=True)
+            lifecycle_log(work_dir, "prefetch_fail", clip, seg_i=i, err=str(e))
             log.warning("TTS prefetch doan %d loi: %s", i, e)
+        finally:
+            _tts_ctx_set(work_dir=None, seg_i=None)
 
     with ThreadPoolExecutor(max_workers=n) as pool:
         futs = [pool.submit(_one, job) for job in jobs]
@@ -601,7 +713,7 @@ def _normalize_tts_clip(path: Path) -> None:
     path = Path(path)
     if not path.exists() or path.stat().st_size < 100:
         return
-    tmp = path.with_name(path.stem + "._ln.mp3")
+    tmp = unique_tmp(path, tag="ln")
     try:
         run([
             "ffmpeg", "-y", "-i", str(path),
@@ -613,9 +725,10 @@ def _normalize_tts_clip(path: Path) -> None:
             str(tmp),
         ])
         if tmp.exists() and tmp.stat().st_size > 100:
-            tmp.replace(path)
+            atomic_replace(tmp, path)
     except Exception as e:  # noqa: BLE001
         log.warning("Chuan hoa am luong %s loi: %s", path.name, e)
+    finally:
         tmp.unlink(missing_ok=True)
 
 
@@ -625,6 +738,7 @@ def _mean_volume_db(path: Path) -> float | None:
         p = subprocess.run(
             ["ffmpeg", "-i", str(path), "-af", "volumedetect", "-f", "null", "-"],
             capture_output=True, text=True, check=False,
+            **win_hidden_kwargs(),
         )
         m = re.search(r"mean_volume:\s*([-\d.]+)\s*dB", (p.stderr or "") + (p.stdout or ""))
         return float(m.group(1)) if m else None
@@ -758,6 +872,197 @@ def synthesize_segments(
         )
 
 
+def _mix_timeline_clips(
+    clips: list[tuple[float, float, Path | str]],
+    total_dur: float,
+    out_path: Path,
+    job_work: Path,
+) -> None:
+    """Mix audio clips into a full timeline audio file.
+
+    Batches ffmpeg operations and uses -filter_complex_script to avoid
+    Windows command-line length limits (WinError 206) on long videos (300+ clips).
+    """
+    if not clips:
+        cmd = [
+            "ffmpeg", "-y", "-f", "lavfi",
+            "-i", f"anullsrc=r=24000:cl=mono:d={total_dur:.3f}",
+            "-c:a", "libmp3lame", "-b:a", "192k", str(out_path),
+        ]
+        run(cmd)
+        return
+
+    fade_s = SEGMENT_CROSSFADE_MS / 1000.0
+    max_xfade = float(DUB_LARGE_OVERLAP_CROSSFADE_MAX)
+
+    # Precompute clip timing and fades
+    clip_items = []
+    for i, (start, play_end, clip_path) in enumerate(clips):
+        cpath = Path(clip_path)
+        nxt = clips[i + 1][0] if i + 1 < len(clips) else total_dur
+        stored = max(0.12, float(play_end) - float(start))
+        tts_dur = probe_duration_retry(cpath, fallback=stored, retries=4)
+        overlap_out = max(0.0, (start + tts_dur) - nxt)
+        overlap_in = max(0.0, clips[i - 1][1] - start) if i > 0 else 0.0
+        fade_in = fade_s
+        fade_out = fade_s
+        if overlap_in > 0.01:
+            fade_in = min(max(fade_s, overlap_in), max_xfade, max(0.02, tts_dur * 0.45))
+        if overlap_out > 0.01:
+            fade_out = min(max(fade_s, overlap_out), max_xfade, max(0.02, tts_dur * 0.45))
+        fade_out_st = max(0.0, tts_dur - fade_out)
+        clip_items.append({
+            "idx": i,
+            "start": float(start),
+            "play_end": float(play_end),
+            "clip_path": cpath,
+            "tts_dur": tts_dur,
+            "fade_in": fade_in,
+            "fade_out": fade_out,
+            "fade_out_st": fade_out_st,
+            "end_time": float(start) + tts_dur,
+        })
+
+    # Partition clips into batches (target ~25 clips per batch to stay well under command line limits)
+    TARGET_BATCH_SIZE = 25
+    batches: list[list[dict]] = []
+    cur_batch: list[dict] = []
+
+    for i, item in enumerate(clip_items):
+        cur_batch.append(item)
+        is_last_item = (i == len(clip_items) - 1)
+        if is_last_item:
+            batches.append(cur_batch)
+            break
+        nxt_start = clip_items[i + 1]["start"]
+        has_gap = (item["end_time"] <= nxt_start)
+        if len(cur_batch) >= TARGET_BATCH_SIZE and (has_gap or len(cur_batch) >= 40):
+            batches.append(cur_batch)
+            cur_batch = []
+
+    log.info(
+        "Mix timeline: %d clips -> %d batches (%s)",
+        len(clip_items), len(batches), [len(b) for b in batches],
+    )
+
+    tmp_dir = job_work / "_mix_tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        # If single batch, write directly to out_path
+        if len(batches) == 1:
+            script_file = tmp_dir / "filter_single.txt"
+            filters = []
+            mix_inputs = ["[0:a]"]
+            b_items = batches[0]
+            for j, it in enumerate(b_items):
+                label = f"a{j}"
+                fit = _fit_to_slot_filter(
+                    f"[{j + 1}:a]", it["tts_dur"], max(0.12, it["tts_dur"]), f"f{j}",
+                    max_stretch=TTS_ATEMPO_MAX,
+                    natural=True,
+                )
+                delay_ms = int(round(it["start"] * 1000))
+                filters.append(
+                    f"{fit};[f{j}]afade=t=in:st=0:d={it['fade_in']:.4f},"
+                    f"afade=t=out:st={it['fade_out_st']:.4f}:d={it['fade_out']:.4f},"
+                    f"volume=1.0,adelay={delay_ms}|{delay_ms}[{label}]"
+                )
+                mix_inputs.append(f"[{label}]")
+            n = len(mix_inputs)
+            filters.append(
+                f"{''.join(mix_inputs)}amix=inputs={n}:duration=first:dropout_transition=0[aout]"
+            )
+            script_file.write_text(";\n".join(filters), encoding="utf-8")
+
+            cmd = [
+                "ffmpeg", "-y",
+                "-f", "lavfi", "-i", f"anullsrc=r=24000:cl=mono:d={total_dur:.3f}",
+            ]
+            for it in b_items:
+                cmd += ["-i", str(it["clip_path"])]
+            cmd += [
+                "-filter_complex_script", str(script_file),
+                "-map", "[aout]",
+                "-c:a", "libmp3lame", "-b:a", "192k",
+                str(out_path),
+            ]
+            run(cmd)
+            return
+
+        # Multiple batches: mix each batch to intermediate wav, then concat
+        wav_parts: list[Path] = []
+        t_batch_start = 0.0
+
+        for b_idx, b_items in enumerate(batches):
+            is_last_batch = (b_idx == len(batches) - 1)
+            if is_last_batch:
+                t_batch_end = total_dur
+            else:
+                next_batch_first = batches[b_idx + 1][0]
+                t_batch_end = next_batch_first["start"]
+
+            b_dur = max(0.1, t_batch_end - t_batch_start)
+            script_file = tmp_dir / f"filter_batch_{b_idx}.txt"
+            filters = []
+            mix_inputs = ["[0:a]"]
+
+            for j, it in enumerate(b_items):
+                label = f"a{j}"
+                fit = _fit_to_slot_filter(
+                    f"[{j + 1}:a]", it["tts_dur"], max(0.12, it["tts_dur"]), f"f{j}",
+                    max_stretch=TTS_ATEMPO_MAX,
+                    natural=True,
+                )
+                delay_ms = int(round(max(0.0, it["start"] - t_batch_start) * 1000))
+                filters.append(
+                    f"{fit};[f{j}]afade=t=in:st=0:d={it['fade_in']:.4f},"
+                    f"afade=t=out:st={it['fade_out_st']:.4f}:d={it['fade_out']:.4f},"
+                    f"volume=1.0,adelay={delay_ms}|{delay_ms}[{label}]"
+                )
+                mix_inputs.append(f"[{label}]")
+
+            n = len(mix_inputs)
+            filters.append(
+                f"{''.join(mix_inputs)}amix=inputs={n}:duration=first:dropout_transition=0[aout]"
+            )
+            script_file.write_text(";\n".join(filters), encoding="utf-8")
+
+            wav_part = tmp_dir / f"batch_{b_idx:04d}.wav"
+            cmd = [
+                "ffmpeg", "-y",
+                "-f", "lavfi", "-i", f"anullsrc=r=24000:cl=mono:d={b_dur:.3f}",
+            ]
+            for it in b_items:
+                cmd += ["-i", str(it["clip_path"])]
+            cmd += [
+                "-filter_complex_script", str(script_file),
+                "-map", "[aout]",
+                "-c:a", "pcm_s16le",
+                str(wav_part),
+            ]
+            run(cmd)
+            wav_parts.append(wav_part)
+            t_batch_start = t_batch_end
+
+        # Concat all wav parts into final MP3
+        concat_list = tmp_dir / "concat_list.txt"
+        lines = [f"file '{p.as_posix()}'\n" for p in wav_parts]
+        concat_list.write_text("".join(lines), encoding="utf-8")
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", str(concat_list),
+            "-c:a", "libmp3lame", "-b:a", "192k",
+            str(out_path),
+        ]
+        run(cmd)
+
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def _synthesize_segments_impl(
     segments: list[dict],
     work_dir: str | Path,
@@ -863,16 +1168,29 @@ def _synthesize_segments_impl(
     shorten_flags: list[dict] = []
     semantic_reviews: list[dict] = []
     semantic_by_i: dict[int, dict] = {}
+    # Tang 3: timeline_start doan sau bi tre (muon thoi gian). >= source_start.
+    timeline_overrides: dict[int, float] = {}
     cjk_re = re.compile(r"[\u4e00-\u9fff]")
     skip_idx: set[int] = set()
 
-    def _live_next_start(idx: int) -> float:
+    def _next_live_idx(idx: int) -> int | None:
         j = idx + 1
         while j < len(segs) and j in skip_idx:
             j += 1
-        if j < len(segs):
-            return float(segs[j]["start"])
+        return j if j < len(segs) else None
+
+    def _live_next_start(idx: int) -> float:
+        j = _next_live_idx(idx)
+        if j is not None:
+            src = float(segs[j]["start"])
+            return float(timeline_overrides.get(j, src))
         return float(video_dur or 0.0) or (float(segs[idx].get("end") or 0) + 1.5)
+
+    def _following_start_after(j: int) -> float:
+        k = _next_live_idx(j)
+        if k is not None:
+            return float(timeline_overrides.get(k, float(segs[k]["start"])))
+        return float(video_dur or 0.0) or (float(segs[j].get("end") or 0) + 1.5)
 
     prev_sid = None
     n_segs = max(1, len(segs))
@@ -889,7 +1207,11 @@ def _synthesize_segments_impl(
         t_seg = time.perf_counter()
         tts_wall = 0.0
         tts_calls = 0
-        start = float(seg["start"])
+        source_start = float(seg["start"])
+        # Tang 3: neu doan truoc muon thoi gian, start tre hon source_start.
+        start = float(timeline_overrides.get(i, source_start))
+        if start < source_start - 1e-6:
+            start = source_start
         hard_end = float(seg["end"])
         next_start = _live_next_start(i)
         place0 = plan_placement(
@@ -898,8 +1220,14 @@ def _synthesize_segments_impl(
         )
         max_avail = place0["hard_limit"]
         orig_slot = place0["speech_slot"]
-        # Ngan sach rut gon: cua thoai + spill. Mix dat dung source_start.
+        # Ngan sach rut gon: cua thoai + spill. Mix dat dung timeline_start.
         fit_slot = max_avail
+        tier3_borrowed_sec = 0.0
+        tier5_overlap_sec = 0.0
+        tier5_crossfade_sec = 0.0
+        used_tier4 = False
+        used_tier5 = False
+        used_tier3 = False
 
         clip = work_dir / f"seg_{i:04d}.mp3"
         pct = 66 + int(15 * i / n_segs)
@@ -910,7 +1238,7 @@ def _synthesize_segments_impl(
             prev_sid = sid
         seg_cfg = _seg_tts_cfg(cfg, seg)
 
-        auto_shorten = bool(cfg.get("dub_auto_shorten", True))
+        auto_shorten = bool(cfg.get("dub_auto_shorten", False))
         chars_per_sec = float(
             cfg.get("target_chars_per_sec")
             or cfg.get("dub_chars_per_sec")
@@ -925,20 +1253,29 @@ def _synthesize_segments_impl(
         overflow_why = "-"
 
         def _tts_once(c: dict) -> bool:
+            """TTS vao file tam duy nhat roi fsync+replace — khong de clip trong khi fail."""
             nonlocal tts_wall, tts_calls
             tts_calls += 1
             t0 = time.perf_counter()
+            tmp = unique_tmp(clip, tag="once")
+            _tts_ctx_set(work_dir=job_work, seg_i=i)
+            lifecycle_log(job_work, "tts_once_start", clip, seg_i=i, tmp=tmp.name)
             try:
-                if clip.exists():
-                    clip.unlink(missing_ok=True)
-                synthesize(text, clip, c)
-                return clip.exists() and clip.stat().st_size > 100
+                synthesize(text, tmp, c)
+                ok = finalize_synthesized(
+                    tmp, clip, work_dir=job_work, seg_i=i, stage="tts_once",
+                )
+                return ok
             except RuntimeError as e:
                 log.warning("TTS doan %d loi: %s", i, e)
+                lifecycle_log(job_work, "tts_once_fail", clip, seg_i=i, err=str(e))
+                tmp.unlink(missing_ok=True)
                 return False
             finally:
+                _tts_ctx_set(work_dir=None, seg_i=None)
                 tts_wall += time.perf_counter() - t0
 
+        match_flags: list[str] = []
         have_clip = clip.exists() and clip.stat().st_size > 100
         if have_clip:
             log.info("TTS da co (prefetch/cache): %s", clip.name)
@@ -956,6 +1293,7 @@ def _synthesize_segments_impl(
                     if skip_failed:
                         log.warning("Bo qua doan %d (TTS loi), im lang", i)
                         _make_silence_mp3(clip, min(max_avail, max(0.2, hard_end - start)))
+                        match_flags.append("tts_silence_fallback")
                     else:
                         raise RuntimeError(f"TTS doan {i} that bai")
             timed_sleep(min(segment_gap, 0.4), "tts_after_synth_gap")
@@ -966,7 +1304,6 @@ def _synthesize_segments_impl(
         atempo_applied = 1.0
         atempo_needed_seg = 1.0
         atempo_cap_seg = float(TTS_ATEMPO_SAFE_MAX)
-        match_flags: list[str] = []
 
         for shorten_pass in range(max_shorten + 6):
             tts_dur_raw = probe_duration(clip) if clip.exists() else max_avail
@@ -1005,8 +1342,12 @@ def _synthesize_segments_impl(
                 rate_iters = 0
 
             if needs_shorten and auto_shorten and shorten_pass < max_shorten:
-                from .translate_llm import dub_target_lang, hard_shorten_text, shorten_for_slot
+                from .translate_llm import (
+                    dub_target_lang, hard_shorten_text, load_term_lock, shorten_for_slot,
+                )
+                from .genre_profiles import load_genre_lock
 
+                _gid, genre_topic = load_genre_lock(work_dir)
                 target_dur = max_avail
                 shrink = 0.88 * (0.82 ** shorten_pass)
                 raw_budget = int(len(text) * target_dur / max(tts_dur, 0.05) * shrink)
@@ -1019,7 +1360,6 @@ def _synthesize_segments_impl(
                     shorter = None
                 else:
                     max_chars = max(floor, raw_budget)
-                    from .translate_llm import dub_target_lang
                     shorter = shorten_for_slot(
                         text,
                         slot_sec=max_avail,
@@ -1027,6 +1367,11 @@ def _synthesize_segments_impl(
                         target=dub_target_lang(cfg),
                         chars_per_sec=chars_per_sec,
                         max_chars=max_chars,
+                        locked_relation=str(seg.get("speaker_relation") or ""),
+                        locked_pronoun=str(seg.get("pronoun_pair_used") or ""),
+                        locked_terms=load_term_lock(segs),
+                        topic_context=genre_topic,
+                        speaker_id=str(seg.get("speaker_id") or seg.get("voice_id") or ""),
                         i=i,
                     )
                     if not shorter or shorter == text:
@@ -1045,9 +1390,17 @@ def _synthesize_segments_impl(
                         i, orig_slot, text[:60],
                     )
                     seg_cfg = _seg_tts_cfg(cfg, seg)
+                    bak = clip.read_bytes() if clip.exists() and clip.stat().st_size > 100 else b""
                     if _tts_once(seg_cfg):
                         timed_sleep(min(segment_gap, 0.5), "tts_after_shorten_gap")
                         continue
+                    # TTS fail: khoi phuc file cu, khong de clip trong/mat.
+                    if bak:
+                        clip.write_bytes(bak)
+                    log.warning(
+                        "Rut gon doan %d TTS fail — giu file truoc, khong continue",
+                        i,
+                    )
 
             t_at = time.perf_counter()
             tts_dur, atempo_applied, fit = _apply_safe_atempo(
@@ -1166,9 +1519,27 @@ def _synthesize_segments_impl(
                     nxt_i, overflow_merges, DUB_OVERFLOW_MAX_MERGES,
                     fit["overlap_sec"],
                 )
-                seg_cfg = _seg_tts_cfg(cfg, seg)
-                if _tts_once(seg_cfg):
-                    timed_sleep(min(segment_gap, 0.5), "tts_after_merge_gap")
+                nxt_clip = job_work / f"seg_{nxt_i:04d}.mp3"
+                merged_locally = False
+                if clip.exists() and nxt_clip.exists() and nxt_clip.stat().st_size > 100:
+                    tmp_concat = unique_tmp(clip, tag="mrg_concat")
+                    try:
+                        run([
+                            "ffmpeg", "-y", "-i", str(clip), "-i", str(nxt_clip),
+                            "-filter_complex", "[0:a][1:a]concat=n=2:v=0:a=1[aout]",
+                            "-map", "[aout]", "-c:a", "libmp3lame", "-b:a", "192k", str(tmp_concat),
+                        ])
+                        if finalize_synthesized(tmp_concat, clip, work_dir=job_work, seg_i=i, stage="merge_concat"):
+                            tts_dur = probe_duration(clip)
+                            merged_locally = True
+                            log.info("Gop audio cuc bo %s + %s xong (0.05s, khong can goi TTS lai)", clip.name, nxt_clip.name)
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("Gop audio cuc bo doan %d va %d loi: %s, fallback TTS", i, nxt_i, e)
+                        tmp_concat.unlink(missing_ok=True)
+                if not merged_locally:
+                    seg_cfg = _seg_tts_cfg(cfg, seg)
+                    if _tts_once(seg_cfg):
+                        timed_sleep(min(segment_gap, 0.5), "tts_after_merge_gap")
                 continue
 
             why_txt = {
@@ -1178,15 +1549,115 @@ def _synthesize_segments_impl(
                 "atempo_con_tran": "tua toi cap xong file van de cau sau",
                 "gop": "con cau sau de gop",
             }.get(merge_why or overflow_why, merge_why or overflow_why)
+
+            # --- Tang 2: micro-overlap <=250ms (truoc khi muon/rut) ---
+            closed_t2 = close_file_to_slot(
+                clip, max_avail,
+                start=start, next_start=next_start,
+                atempo_already=max(float(atempo_applied), 1.0),
+                cap=TTS_ATEMPO_SEVERE_MAX,
+                allow_speech_trim=False,
+                allow_micro_overlap=True,
+                allow_large_overlap=False,
+                label=f"doan {i} tier2-micro",
+            )
+            tts_dur = float(closed_t2["dur"])
+            extra_t2 = float(closed_t2.get("tempo_applied") or 1.0)
+            atempo_applied *= extra_t2
+            if closed_t2.get("micro_overlap") or not closed_t2["still_overlap"]:
+                overflow_action = str(closed_t2.get("action") or "close_slot")
+                if closed_t2.get("micro_overlap"):
+                    match_flags.append("micro_overlap")
+                    match_flags.append("chong_doan_micro")
+                    overflow_why = "micro_overlap"
+                if (
+                    atempo_applied - 1.0 >= TTS_ATEMPO_FLAG_MIN
+                    and "atempo" not in match_flags
+                ):
+                    match_flags.append("atempo")
+                log.warning(
+                    "OVERFLOW doan %d tang2 micro/ok action=%s tts=%.2fs hard=%.2fs "
+                    "overlap_sec=%.3f | %s",
+                    i, overflow_action, tts_dur, max_avail,
+                    float(closed_t2.get("overlap_sec") or 0), text[:50],
+                )
+                break
+
+            # --- Tang 3: muon thoi gian tu khoang cho sau doan ke ---
+            need_borrow = max(0.0, start + tts_dur - (next_start - 0.02))
+            nxt_live = _next_live_idx(i)
+            if need_borrow > 0.02 and nxt_live is not None:
+                nxt_seg = segs[nxt_live]
+                nxt_src = float(nxt_seg["start"])
+                nxt_tl = float(timeline_overrides.get(nxt_live, nxt_src))
+                borrow = borrow_time_from_next(
+                    need_sec=need_borrow,
+                    next_source_start=nxt_src,
+                    next_source_end=float(nxt_seg["end"]),
+                    next_timeline_start=nxt_tl,
+                    following_start=_following_start_after(nxt_live),
+                )
+                if borrow.get("applied"):
+                    timeline_overrides[nxt_live] = float(borrow["new_next_start"])
+                    tier3_borrowed_sec = float(borrow["borrowed_sec"])
+                    used_tier3 = True
+                    next_start = _live_next_start(i)
+                    place_b = plan_placement(
+                        source_start=start, source_end=hard_end,
+                        next_start=next_start, tts_dur=tts_dur,
+                    )
+                    max_avail = place_b["hard_limit"]
+                    fit_slot = max_avail
+                    match_flags.append("tier3_borrowed_time")
+                    overflow_why = "tier3_borrow"
+                    log.warning(
+                        "TIER3 doan %d muon %.3fs tu doan %d "
+                        "(next_start %.3f->%.3f, room=%.3f) — overflow con %.3fs",
+                        i, tier3_borrowed_sec, nxt_live, nxt_tl,
+                        borrow["new_next_start"], borrow["room_sec"],
+                        max(0.0, start + tts_dur - (next_start - 0.02)),
+                    )
+                    if not place_b["would_overlap"]:
+                        overflow_action = "tier3_borrow"
+                        if (
+                            atempo_applied - 1.0 >= TTS_ATEMPO_FLAG_MIN
+                            and "atempo" not in match_flags
+                        ):
+                            match_flags.append("atempo")
+                        break
+                    # Van tran: thu micro lai sau khi hard_limit mo rong.
+                    closed_t3 = close_file_to_slot(
+                        clip, max_avail,
+                        start=start, next_start=next_start,
+                        atempo_already=max(float(atempo_applied), 1.0),
+                        cap=TTS_ATEMPO_SEVERE_MAX,
+                        allow_speech_trim=False,
+                        allow_micro_overlap=True,
+                        allow_large_overlap=False,
+                        label=f"doan {i} after-tier3",
+                    )
+                    tts_dur = float(closed_t3["dur"])
+                    atempo_applied *= float(closed_t3.get("tempo_applied") or 1.0)
+                    if closed_t3.get("micro_overlap") or not closed_t3["still_overlap"]:
+                        overflow_action = str(closed_t3.get("action") or "tier3_borrow")
+                        if closed_t3.get("micro_overlap"):
+                            match_flags.append("micro_overlap")
+                            match_flags.append("chong_doan_micro")
+                            overflow_why = "micro_overlap"
+                        break
+
             log.info(
-                "SEMANTIC_SHORTEN doan %d BAT DAU: overflow_why=%s tts=%.2fs hard=%.2fs",
-                i, overflow_why, tts_dur, max_avail,
+                "SEMANTIC_SHORTEN doan %d BAT DAU: overflow_why=%s tts=%.2fs hard=%.2fs "
+                "tier3_borrow=%.3fs",
+                i, overflow_why, tts_dur, max_avail, tier3_borrowed_sec,
             )
 
-            # Gop het muc: rut gon ngu nghia (2 lan, +1 neu severe >120%). Do TTS that, roi moi fail.
+            # Gop het muc + tang 3: rut gon ngu nghia (+ tang 4 aggressive).
             from .translate_llm import (
-                dub_target_lang, locked_cast_payload, shorten_semantic_overflow,
+                dub_target_lang, load_term_lock, locked_cast_payload,
+                shorten_semantic_overflow,
             )
+            from .genre_profiles import load_genre_lock
 
             vi_before = text
             zh_src = str(seg.get("source_text") or "")
@@ -1210,10 +1681,13 @@ def _synthesize_segments_impl(
             last_ineffective = False
             ineffective_hint = ""
             cast_lock = locked_cast_payload(segs)
+            term_lock = load_term_lock(segs)
+            _gid, genre_topic = load_genre_lock(work_dir)
 
             while attempt < max_tries:
                 attempt += 1
-                aggressive = attempt >= 3 or last_ineffective
+                is_tier4 = attempt >= 4
+                aggressive = attempt >= 3 or last_ineffective or is_tier4
                 bud = semantic_shorten_budget(
                     text=text,
                     tts_dur=tts_dur,
@@ -1232,6 +1706,7 @@ def _synthesize_segments_impl(
                     "tts_before": round(tts_dur, 3),
                     "tts_after": None,
                     "aggressive": aggressive,
+                    "tier4": is_tier4,
                 }
                 shorter = shorten_semantic_overflow(
                     text,
@@ -1248,9 +1723,12 @@ def _synthesize_segments_impl(
                     locked_relation=str(seg.get("speaker_relation") or ""),
                     locked_pronoun=str(seg.get("pronoun_pair_used") or ""),
                     locked_cast=cast_lock,
+                    locked_terms=term_lock,
+                    topic_context=genre_topic,
                     speaker_id=str(seg.get("speaker_id") or seg.get("voice_id") or ""),
                     aggressive=aggressive,
                     ineffective_hint=ineffective_hint,
+                    tier4=is_tier4,
                     i=i,
                 )
                 if not shorter or shorter == text:
@@ -1384,6 +1862,10 @@ def _synthesize_segments_impl(
                     fitted_semantic = True
                     overflow_action = "semantic_shorten"
                     match_flags.append("shortened_semantic")
+                    if is_tier4:
+                        used_tier4 = True
+                        if "tier4_aggressive_cut" not in match_flags:
+                            match_flags.append("tier4_aggressive_cut")
                     if (
                         atempo_applied - 1.0 >= TTS_ATEMPO_FLAG_MIN
                         and "atempo" not in match_flags
@@ -1394,12 +1876,17 @@ def _synthesize_segments_impl(
                     break
                 cov_ratio = tts_dur_raw / max(max_avail, 0.12)
                 max_tries = max(max_tries, overflow_semantic_try_budget(cov_ratio, attempt))
+                if is_tier4:
+                    used_tier4 = True
+                    if "tier4_aggressive_cut" not in match_flags:
+                        match_flags.append("tier4_aggressive_cut")
                 if attempt < max_tries:
                     log.info(
                         "SEMANTIC_SHORTEN doan %d lan %d chua vua (actual_overlap cov=%.1f%%) "
                         "-> thu lan %d%s",
                         i, attempt, cov_ratio * 100, attempt + 1,
-                        " (severe, cat manh hon)" if cov_ratio > 1.20 else "",
+                        " (tier4, bo menh de phu)" if attempt + 1 >= 4
+                        else (" (severe, cat manh hon)" if cov_ratio > 1.20 else ""),
                     )
 
             review = {
@@ -1451,6 +1938,7 @@ def _synthesize_segments_impl(
                 cap=TTS_ATEMPO_SEVERE_MAX,
                 allow_speech_trim=False,
                 allow_micro_overlap=True,
+                allow_large_overlap=True,
                 label=f"doan {i} last-mile",
             )
             tts_dur = float(closed["dur"])
@@ -1463,6 +1951,7 @@ def _synthesize_segments_impl(
                 overflow_action = str(closed.get("action") or "close_slot")
                 if closed.get("micro_overlap"):
                     match_flags.append("micro_overlap")
+                    match_flags.append("chong_doan_micro")
                     overflow_why = "micro_overlap"
                 if (
                     atempo_applied - 1.0 >= TTS_ATEMPO_FLAG_MIN
@@ -1482,22 +1971,31 @@ def _synthesize_segments_impl(
                 )
                 break
 
+            # --- Tang 5: overlap lon + crossfade dai — zero-fail, luon xuat ---
+            ov = float(closed.get("overlap_sec") or max(
+                0.0, start + tts_dur - (next_start - 0.02),
+            ))
+            xfade = float(closed.get("crossfade_sec") or large_overlap_crossfade(ov))
+            if not closed.get("large_overlap"):
+                # Dam bao chap nhan ke ca khi plan khong set (edge case).
+                ov = max(0.0, start + tts_dur - (next_start - 0.02))
+                xfade = large_overlap_crossfade(ov)
+            used_tier5 = True
+            tier5_overlap_sec = round(ov, 3)
+            tier5_crossfade_sec = round(xfade, 3)
+            match_flags.append("tier5_large_overlap")
+            match_flags.append("chong_doan_severe")
             match_flags.append("qua_dai")
-            match_flags.append("chong_doan")
-            match_flags.append("overrun_fallback")
+            if used_tier4 and "tier4_aggressive_cut" not in match_flags:
+                match_flags.append("tier4_aggressive_cut")
             match_flags.append("shortened_semantic_fail")
-            overflow_action = "keep_and_flag"
-            log.error(
-                "OVERFLOW doan %d: tts=%.2fs hard=%.2fs can=%.2fx overlap=%.2fs — "
-                "%s. Da rut gon ngu nghia %d lan, van de. GIU cau rut tot nhat "
-                "(%d ky tu, khong phai cau goc dai), KHONG cat audio, "
-                "KHONG doi start cau sau (timeline_start=%.2f). "
-                "atempo_applied=%.3f needed=%.3f cap=%.3f — tran la ranh gioi cuoi, "
-                "KHONG tua them. QA FAIL chong_doan; job web se hoan credit. "
+            overflow_action = "tier5_large_overlap"
+            overflow_why = "tier5_large_overlap"
+            log.warning(
+                "TIER5 doan %d: overlap=%.3fs crossfade=%.3fs tts=%.2fs hard=%.2fs "
+                "— GIU full audio, KHONG cat, KHONG fail-closed. Can REVIEW. "
                 "| GOC: %s | RUT: %s",
-                i, tts_dur, max_avail, fit["required_tempo"], fit["overlap_sec"],
-                why_txt, max_tries, len(text), start,
-                atempo_applied, atempo_needed_seg, atempo_cap_seg,
+                i, tier5_overlap_sec, tier5_crossfade_sec, tts_dur, max_avail,
                 vi_before, text,
             )
             shorten_flags.append({
@@ -1506,15 +2004,19 @@ def _synthesize_segments_impl(
                 "end": round(hard_end, 3),
                 "slot_sec": round(max_avail, 3),
                 "tts_dur_sec": round(tts_dur, 3),
-                "overlap_sec": fit["overlap_sec"],
-                "required_tempo": fit["required_tempo"],
-                "overflow_action": "keep_and_flag",
+                "overlap_sec": tier5_overlap_sec,
+                "crossfade_sec": tier5_crossfade_sec,
+                "required_tempo": fit.get("required_tempo"),
+                "overflow_action": "tier5_large_overlap",
                 "overflow_reason": merge_why,
                 "text": text,
                 "text_before": vi_before,
                 "source_text": zh_src,
                 "shorten_attempts": shorten_used,
                 "semantic_attempts": attempts_log,
+                "tier3_borrowed_sec": tier3_borrowed_sec,
+                "tier4": used_tier4,
+                "tier5": True,
             })
             break
 
@@ -1534,6 +2036,7 @@ def _synthesize_segments_impl(
                 cap=TTS_ATEMPO_SEVERE_MAX,
                 allow_speech_trim=False,
                 allow_micro_overlap=True,
+                allow_large_overlap=True,
                 label=f"doan {i} loudnorm",
             )
             post_dur = float(closed_ln["dur"])
@@ -1541,7 +2044,17 @@ def _synthesize_segments_impl(
             atempo_applied *= extra_ln
             if closed_ln.get("micro_overlap") and "micro_overlap" not in match_flags:
                 match_flags.append("micro_overlap")
+                match_flags.append("chong_doan_micro")
                 overflow_why = "micro_overlap"
+            if closed_ln.get("large_overlap"):
+                used_tier5 = True
+                tier5_overlap_sec = round(float(closed_ln.get("overlap_sec") or 0), 3)
+                tier5_crossfade_sec = round(float(closed_ln.get("crossfade_sec") or 0), 3)
+                if "tier5_large_overlap" not in match_flags:
+                    match_flags.append("tier5_large_overlap")
+                if "chong_doan_severe" not in match_flags:
+                    match_flags.append("chong_doan_severe")
+                overflow_why = "tier5_large_overlap"
             if extra_ln > 1.001:
                 atempo_cap_seg = max(float(atempo_cap_seg), float(TTS_ATEMPO_SEVERE_MAX))
         tts_dur = post_dur
@@ -1557,6 +2070,22 @@ def _synthesize_segments_impl(
 
         play_end = start + play_slot
         voice_end = round(play_end, 3)
+        # Bao ve file cuoi: backup + khong append clip rong.
+        if not clip.exists() or clip.stat().st_size < 100:
+            log.warning(
+                "Doan %d clip mat/rong sau xu ly — TTS lai truoc khi append",
+                i,
+            )
+            seg_cfg = _seg_tts_cfg(cfg, seg)
+            if not _tts_once(seg_cfg):
+                _make_silence_mp3(clip, max(0.2, play_slot))
+                match_flags.append("tts_silence_fallback")
+        bak_path = clip.with_name(clip.stem + "._bak.mp3")
+        try:
+            if clip.exists() and clip.stat().st_size > 100:
+                shutil.copy2(clip, bak_path)
+        except OSError as e:
+            log.debug("Backup clip %s loi: %s", clip.name, e)
         clips.append((start, play_end, clip))
         cue_segs.append({
             **seg,
@@ -1565,25 +2094,59 @@ def _synthesize_segments_impl(
             "display_end": round(max(hard_end, voice_end), 3),
             "timeline_start": round(start, 3),
             "timeline_end": voice_end,
+            "source_start": round(source_start, 3),
             "text": text,
             "tts_rate": seg_cfg.get("rate", seg.get("tts_rate")),
+            "tts_silence_fallback": "tts_silence_fallback" in match_flags,
         })
         mean_db = mean_lufs if mean_lufs is not None else _mean_volume_db(clip)
         leftover = bool(cjk_re.search(text))
-        flags = [
-            f for f in match_flags
-            if f not in ("qua_dai", "qua_ngan", "can_rut_gon", "chong_doan", "cat_khop")
-        ]
+        _strip_legacy = (
+            "qua_dai", "qua_ngan", "can_rut_gon", "chong_doan", "cat_khop",
+            "chong_doan_micro", "chong_doan_severe",
+        )
+        flags = [f for f in match_flags if f not in _strip_legacy]
+        # Giữ lại tier flags / micro / severe da gan trong match_flags.
+        for keep in (
+            "tier3_borrowed_time", "tier4_aggressive_cut", "tier5_large_overlap",
+            "micro_overlap", "chong_doan_micro", "chong_doan_severe",
+            "shortened_semantic", "shortened_semantic_fail", "atempo", "atempo_severe",
+            "overrun_fallback",
+        ):
+            if keep in match_flags and keep not in flags:
+                flags.append(keep)
         overlap_now = max(0.0, play_end - (next_start - 0.02))
         micro_ok = overlap_now <= float(DUB_MICRO_OVERLAP_SEC) + 0.02
         micro = (
-            ("micro_overlap" in flags or overflow_why == "micro_overlap")
+            ("micro_overlap" in flags or "chong_doan_micro" in flags
+             or overflow_why == "micro_overlap")
             and micro_ok
+            and not used_tier5
         )
-        if place["would_overlap"] and not micro:
+        if used_tier5 or ("tier5_large_overlap" in flags):
+            if "tier5_large_overlap" not in flags:
+                flags.append("tier5_large_overlap")
+            if "chong_doan_severe" not in flags:
+                flags.append("chong_doan_severe")
+            if "qua_dai" not in flags:
+                flags.append("qua_dai")
+            if tier5_overlap_sec <= 0 and overlap_now > 0:
+                tier5_overlap_sec = round(overlap_now, 3)
+            if tier5_crossfade_sec <= 0 and overlap_now > 0:
+                tier5_crossfade_sec = large_overlap_crossfade(overlap_now)
+        elif place["would_overlap"] and not micro:
+            # Van de nhung chua gan tier5 (edge) — zero-fail: gan severe.
+            used_tier5 = True
+            tier5_overlap_sec = round(overlap_now, 3)
+            tier5_crossfade_sec = large_overlap_crossfade(overlap_now)
             flags.append("qua_dai")
-            flags.append("chong_doan")
-            flags = [f for f in flags if f != "micro_overlap"]
+            flags.append("chong_doan_severe")
+            flags.append("tier5_large_overlap")
+        elif micro:
+            if "micro_overlap" not in flags:
+                flags.append("micro_overlap")
+            if "chong_doan_micro" not in flags:
+                flags.append("chong_doan_micro")
         elif play_slot < orig_slot * 0.85:
             flags.append("qua_ngan")
         if leftover:
@@ -1607,13 +2170,15 @@ def _synthesize_segments_impl(
                 flags.append("audio_truncated")
             if overflow_why in ("khong_tran", "-", "keep"):
                 overflow_why = "audio_truncated"
-        if micro and "micro_overlap" not in flags:
-            flags.append("micro_overlap")
+        if used_tier3 and "tier3_borrowed_time" not in flags:
+            flags.append("tier3_borrowed_time")
+        if used_tier4 and "tier4_aggressive_cut" not in flags:
+            flags.append("tier4_aggressive_cut")
         overlap_ms = round(max(0.0, play_end - (next_start - 0.02)) * 1000, 1)
         qa_rows.append({
             "i": i,
             "start": round(start, 2),
-            "source_start": round(start, 3),
+            "source_start": round(source_start, 3),
             "source_end": round(hard_end, 3),
             "slot": round(orig_slot, 2),
             "hard_limit": round(max_avail, 2),
@@ -1641,6 +2206,9 @@ def _synthesize_segments_impl(
             "overflow_action": overflow_action,
             "overflow_reason": overflow_why,
             "overlap_sec": round(max(0.0, play_end - (next_start - 0.02)), 3),
+            "tier3_borrowed_sec": round(tier3_borrowed_sec, 3),
+            "tier5_overlap_sec": round(tier5_overlap_sec, 3),
+            "tier5_crossfade_sec": round(tier5_crossfade_sec, 3),
             "required_tempo": round(
                 play_slot / max(max_avail, 0.12) if play_slot > max_avail else 1.0, 3,
             ),
@@ -1660,12 +2228,17 @@ def _synthesize_segments_impl(
         from .job_timing import add_segment, add_tts
         add_tts(i, tts_wall, n_calls=tts_calls)
         add_segment(i, time.perf_counter() - t_seg, n_tts=tts_calls)
+        clip_sz = clip.stat().st_size if clip.exists() else 0
+        lifecycle_log(
+            job_work, "qa_read", clip,
+            seg_i=i, size=clip_sz, tts_dur=round(post_dur, 3),
+        )
         log.info(
             "QA doan %d: source %.2f->%.2f speech=%.1fs hard=%.1fs tts=%.1fs "
-            "timeline=%.2f->%.2f atempo=%.2f overflow_why=%s flags=%s | %s",
-            i, start, hard_end, orig_slot, max_avail, post_dur,
+            "timeline=%.2f->%.2f atempo=%.2f overflow_why=%s flags=%s size=%d | %s",
+            i, source_start, hard_end, orig_slot, max_avail, post_dur,
             start, voice_end, atempo_applied, overflow_why,
-            ",".join(flags) or "ok",
+            ",".join(flags) or "ok", clip_sz,
             text[:60],
         )
 
@@ -1688,56 +2261,121 @@ def _synthesize_segments_impl(
         from .dub_audit import raise_if_dub_qa_fail
         raise_if_dub_qa_fail(job_work, cfg)
 
+    # Pre-mix integrity: khong tin QA da pass — file co the doi giua 2 thoi diem.
+    mix_t0 = time.perf_counter()
+    lifecycle_log(job_work, "mix_integrity_begin", None, n_clips=len(clips))
+    recovered_bak = 0
+    recovered_retts = 0
+    recovered_silence = 0
+    still_bad: list[str] = []
+
+    def _qa_flag(idx: int, flag: str) -> None:
+        if idx < 0 or idx >= len(qa_rows):
+            return
+        fl = list(qa_rows[idx].get("flags") or [])
+        if flag not in fl:
+            fl.append(flag)
+            qa_rows[idx]["flags"] = fl
+        qa_rows[idx]["mix_recovery"] = flag
+
+    for idx, (s0, play_end, cpath) in enumerate(clips):
+        cpath = Path(cpath)
+        stored = max(0.2, float(play_end) - float(s0))
+        lifecycle_log(
+            job_work, "mix_read", cpath,
+            seg_i=idx, expected_dur=round(stored, 3),
+        )
+        if clip_integrity_ok(cpath, expected_dur_sec=stored, retries=5):
+            continue
+        # Race van xay ra — dem + phuc hoi, khong fail job neu cuu duoc.
+        log.warning(
+            "Mix integrity FAIL %s (expected ~%.2fs) — thu phuc hoi",
+            cpath.name, stored,
+        )
+        fixed = False
+        bak = cpath.with_name(cpath.stem + "._bak.mp3")
+        if wait_file_ready(bak, min_bytes=100, retries=3):
+            try:
+                shutil.copy2(bak, cpath)
+                if clip_integrity_ok(cpath, expected_dur_sec=stored, retries=3):
+                    log.warning("Mix: phuc hoi %s tu backup", cpath.name)
+                    recovered_bak += 1
+                    _qa_flag(idx, "tts_recovered_at_mix")
+                    lifecycle_log(job_work, "mix_recovered_bak", cpath, seg_i=idx)
+                    fixed = True
+            except OSError as e:
+                log.warning("Mix: copy backup %s loi: %s", cpath.name, e)
+        if not fixed:
+            cue = cue_segs[idx] if idx < len(cue_segs) else {}
+            t = _sanitize_tts_text(cue.get("text") or "")
+            if t:
+                tmp = unique_tmp(cpath, tag="mixfix")
+                try:
+                    _tts_ctx_set(work_dir=job_work, seg_i=idx)
+                    synthesize(t, tmp, _seg_tts_cfg(cfg, cue))
+                    if finalize_synthesized(
+                        tmp, cpath, work_dir=job_work, seg_i=idx, stage="mix_retts",
+                    ) and clip_integrity_ok(cpath, expected_dur_sec=None, retries=3):
+                        log.warning("Mix: TTS lai %s ok", cpath.name)
+                        recovered_retts += 1
+                        _qa_flag(idx, "tts_recovered_at_mix")
+                        lifecycle_log(job_work, "mix_recovered_retts", cpath, seg_i=idx)
+                        fixed = True
+                except Exception as e:  # noqa: BLE001
+                    log.warning("Mix: TTS lai %s loi: %s", cpath.name, e)
+                    tmp.unlink(missing_ok=True)
+                finally:
+                    _tts_ctx_set(work_dir=None, seg_i=None)
+        if not fixed:
+            try:
+                _make_silence_mp3(cpath, stored)
+                recovered_silence += 1
+                _qa_flag(idx, "tts_silence_fallback")
+                if idx < len(cue_segs):
+                    cue_segs[idx]["tts_silence_fallback"] = True
+                lifecycle_log(job_work, "mix_silence_fallback", cpath, seg_i=idx)
+                log.warning("Mix: %s -> silence %.2fs (cuu job)", cpath.name, stored)
+                fixed = True
+            except Exception as e:  # noqa: BLE001
+                still_bad.append(f"{cpath.name} ({e})")
+    recovered = recovered_bak + recovered_retts + recovered_silence
+    mix_stats = {
+        "mix_recovered_total": recovered,
+        "mix_recovered_from_bak": recovered_bak,
+        "mix_recovered_retts": recovered_retts,
+        "mix_silence_fallback": recovered_silence,
+        "mix_integrity_ms": round((time.perf_counter() - mix_t0) * 1000, 1),
+    }
+    (job_work / "mix_recovery.json").write_text(
+        json.dumps(mix_stats, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
+    # Viet lai QA neu co flag phuc hoi — de UI/report thay.
+    if recovered:
+        (job_work / "segments_qa.json").write_text(
+            json.dumps(qa_rows, ensure_ascii=False, indent=2), encoding="utf-8",
+        )
+    log.info(
+        "Mix integrity: recovered=%d (bak=%d retts=%d silence=%d) — 0 la ly tuong",
+        recovered, recovered_bak, recovered_retts, recovered_silence,
+    )
+    lifecycle_log(job_work, "mix_integrity_end", None, **mix_stats)
+    if still_bad:
+        raise RuntimeError(
+            "TTS file loi truoc khi mix (khong phuc hoi duoc) — "
+            + "; ".join(still_bad[:5])
+        )
+
     voice_end_max = 0.0
-    for s0, _, cpath in clips:
-        voice_end_max = max(voice_end_max, s0 + probe_duration(cpath))
+    for s0, play_end, cpath in clips:
+        stored = max(0.12, float(play_end) - float(s0))
+        dur = probe_duration_retry(cpath, fallback=stored, retries=4)
+        voice_end_max = max(voice_end_max, float(s0) + dur)
     if video_dur:
         total_dur = float(video_dur)
     else:
         total_dur = max(voice_end_max, total_dur)
 
-    cmd = ["ffmpeg", "-y", "-f", "lavfi", "-i", f"anullsrc=r=24000:cl=mono:d={total_dur:.3f}"]
-    for _, _, clip in clips:
-        cmd += ["-i", str(clip)]
-
-    filters = []
-    mix_inputs = ["[0:a]"]
-    fade_s = SEGMENT_CROSSFADE_MS / 1000.0
-    max_xfade = float(DUB_MICRO_OVERLAP_SEC)
-    for i, (start, play_end, clip_path) in enumerate(clips):
-        nxt = clips[i + 1][0] if i + 1 < len(clips) else total_dur
-        tts_dur = probe_duration(clip_path)
-        overlap_out = max(0.0, (start + tts_dur) - nxt)
-        overlap_in = max(0.0, clips[i - 1][1] - start) if i > 0 else 0.0
-        fade_in = fade_s
-        fade_out = fade_s
-        if overlap_in > 0.01:
-            fade_in = min(max(fade_s, overlap_in), max_xfade, max(0.02, tts_dur * 0.45))
-        if overlap_out > 0.01:
-            fade_out = min(max(fade_s, overlap_out), max_xfade, max(0.02, tts_dur * 0.45))
-        label = f"a{i}"
-        fit = _fit_to_slot_filter(
-            f"[{i + 1}:a]", tts_dur, max(0.12, tts_dur), f"f{i}",
-            max_stretch=TTS_ATEMPO_MAX,
-            natural=True,
-        )
-        fade_out_st = max(0.0, tts_dur - fade_out)
-        delay_ms = int(round(start * 1000))
-        filters.append(
-            f"{fit};[f{i}]afade=t=in:st=0:d={fade_in:.4f},"
-            f"afade=t=out:st={fade_out_st:.4f}:d={fade_out:.4f},"
-            f"volume=1.0,adelay={delay_ms}|{delay_ms}[{label}]"
-        )
-        mix_inputs.append(f"[{label}]")
-
-    n = len(mix_inputs)
-    filters.append(
-        f"{''.join(mix_inputs)}amix=inputs={n}:duration=first:dropout_transition=0[aout]"
-    )
-
-    cmd += ["-filter_complex", ";".join(filters), "-map", "[aout]",
-            "-c:a", "libmp3lame", "-b:a", "192k", str(out_path)]
-    run(cmd)
+    _mix_timeline_clips(clips, total_dur, out_path, job_work)
 
     try:
         (job_work / "segments_cues.json").write_text(
@@ -1748,7 +2386,30 @@ def _synthesize_segments_impl(
         )
         write_shorten_flags(job_work, shorten_flags)
         sync_spoken_text_to_segment_files(job_work, cue_segs)
-        write_dub_final_report(job_work, qa_rows, video_dur=video_dur or total_dur)
+        report = write_dub_final_report(job_work, qa_rows, video_dur=video_dur or total_dur)
+        # Thong ke cuoi: so doan phai tu phuc hoi o mix (0 = ly tuong).
+        mix_path = job_work / "mix_recovery.json"
+        mix_info = {}
+        if mix_path.exists():
+            try:
+                mix_info = json.loads(mix_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                mix_info = {}
+        n_rec = int(mix_info.get("mix_recovered_total") or 0)
+        n_sil = int(mix_info.get("mix_silence_fallback") or 0)
+        log.info(
+            "JOB STAT mix_recovered=%d silence_fallback=%d (0 recovered = khong co race)",
+            n_rec, n_sil,
+        )
+        if isinstance(report, dict):
+            report["mix_recovery"] = mix_info
+            mix_path.write_text(
+                json.dumps({**mix_info, "logged": True}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            (job_work / "dub_final_report.json").write_text(
+                json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8",
+            )
     except Exception:  # noqa: BLE001
         pass
 

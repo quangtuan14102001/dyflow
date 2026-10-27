@@ -27,8 +27,15 @@
 
   <p class="studio-tools-h">{{ t('studio_nav_tools') }}</p>
   <nav class="studio-nav studio-nav-tools">
-    <a class="studio-link{% if path.startswith('/queue') %} on{% endif %}" href="/queue">{{ t('studio_nav_queue') }}</a>
+    <a class="studio-link{% if path.startswith('/queue') %} on{% endif %}" href="/queue" id="rail-queue-link" style="display: flex; align-items: center; justify-content: space-between;">
+      <span>{{ t('studio_nav_queue') }}</span>
+      <span class="rail-badge" id="rail-queue-badge" hidden style="font-size: 11px; padding: 1px 6px; border-radius: 10px; background: #38bdf8; color: #0f172a; font-weight: 700; line-height: 1.4;"></span>
+    </a>
     <a class="studio-link{% if path.startswith('/batch') %} on{% endif %}" href="/batch">{{ t('studio_multi') }}</a>
+    <a class="studio-link{% if path.startswith('/merge') %} on{% endif %}" href="/merge" id="rail-merge-link" style="display: flex; align-items: center; justify-content: space-between;">
+      <span>{{ t('studio_nav_merge') }}</span>
+      <span class="rail-badge" id="rail-merge-badge" hidden style="font-size: 11px; padding: 1px 6px; border-radius: 10px; background: #fe2c55; color: #fff; font-weight: 700; line-height: 1.4;"></span>
+    </a>
   </nav>
 
   <div class="studio-rail-end">
@@ -75,9 +82,15 @@
     <span class="nav-email">{{ user.email }}</span>
     <button type="button" class="nav-link" id="logout-btn">{{ t('logout') }}</button>
     {% endif %}
-    {% if desktop %}
-    <span class="studio-build" title="Build">build {{ build }}</span>
-    {% endif %}
+    <div style="display: flex; flex-direction: column; gap: 5px; width: 100%; margin-top: 6px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--muted, #8a8d9f);">
+        <span class="studio-build" title="Phiên bản VideosCreator">v{{ app_version|default('1.0.1') }}</span>
+        {% if patch_active %}<span class="badge" title="Đang chạy bản vá cập nhật" style="font-size: 10px; padding: 1px 5px; background: rgba(74,222,128,0.2); color: #4ade80; border-radius: 4px; font-weight: 600;">patch</span>{% endif %}
+      </div>
+      <button type="button" class="btn ghost btn-xs" id="app-update-btn" style="width: 100%; font-size: 11px; padding: 4px 6px; display: flex; align-items: center; justify-content: center; gap: 5px; cursor: pointer;">
+        <span>🔄</span> Cập nhật
+      </button>
+    </div>
   </div>
 </aside>
 <div class="studio-scrim" id="studio-scrim" hidden></div>

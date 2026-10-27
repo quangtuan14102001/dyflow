@@ -15,21 +15,6 @@ from .dub_constants import (
 )
 from .utils import log
 
-# Whisper hay nhan nham -> Google dich sai nghia (can ra tay, khong phai timing)
-_HEMORRHOID_ZH = re.compile(r"肉球|瘡|痔疮|刚周|肛周|塞不回去|肉球跑出来")
-_HEMORRHOID_VI = re.compile(
-    r"trĩ|hậu môn|cục thịt|nhét|thụt|thò|thịt trĩ|thịt thò",
-    re.I,
-)
-_CONTENT_REVIEW_RULES: tuple[dict, ...] = (
-    {
-        "match": "刚周",
-        "kind": "whisper_misread",
-        "expected_zh": "肛周",
-        "note": "Whisper nham 肛周 thanh 刚周; Google co the dich thanh mang thai",
-    },
-)
-
 
 def write_transcribe_report(
     work_dir: Path,
@@ -57,6 +42,7 @@ def write_transcribe_report(
         ),
     }
     out = work_dir / "transcribe_report.json"
+    work_dir.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     log.info(
         "Transcribe report: %d doan, transcript %.1fs / video %.1fs (lech %.1f%%)%s",
@@ -82,24 +68,35 @@ def write_translate_csv(work_dir: Path, rows: list[dict]) -> Path:
     return out
 
 
-def scan_content_review_flags(segments: list[dict]) -> list[dict]:
-    """Tim loi noi dung (Whisper/dich) — tach khoi QA timing."""
+def scan_content_review_flags(
+    segments: list[dict],
+    *,
+    content_rules: list[dict] | tuple[dict, ...] | None = None,
+) -> list[dict]:
+    """Tim loi noi dung (Whisper/dich) — tach khoi QA timing.
+
+    content_rules: quy tac theo job/profile (tuy chon), moi rule:
+      {match, kind, expected_zh?, note} — match nam trong source_text.
+    Mac dinh chi bat ti le ky tu dich/zh bat thuong (tong quat).
+    """
     flags: list[dict] = []
+    rules = list(content_rules or ())
     for i, seg in enumerate(segments):
         src = str(seg.get("source_text") or seg.get("text") or "")
         vi = str(seg.get("text") or "")
-        for rule in _CONTENT_REVIEW_RULES:
-            if rule["match"] not in src:
+        for rule in rules:
+            match = str(rule.get("match") or "")
+            if not match or match not in src:
                 continue
             flags.append({
                 "i": i,
                 "start": round(float(seg.get("start", 0)), 3),
                 "end": round(float(seg.get("end", 0)), 3),
-                "kind": rule["kind"],
+                "kind": str(rule.get("kind") or "content_rule"),
                 "source_text": src,
                 "translated_text": vi,
-                "expected_zh": rule.get("expected_zh", ""),
-                "note": rule["note"],
+                "expected_zh": str(rule.get("expected_zh") or ""),
+                "note": str(rule.get("note") or ""),
             })
         src_len = len(re.sub(r"\s+", "", src))
         vi_len = len(re.sub(r"\s+", "", vi))
@@ -113,16 +110,6 @@ def scan_content_review_flags(segments: list[dict]) -> list[dict]:
                 "translated_text": vi,
                 "char_ratio": round(vi_len / src_len, 2),
                 "note": "Ti le ky tu dich/zh bat thuong — can doi chieu nghia",
-            })
-        if _HEMORRHOID_ZH.search(src) and not _HEMORRHOID_VI.search(vi):
-            flags.append({
-                "i": i,
-                "start": round(float(seg.get("start", 0)), 3),
-                "end": round(float(seg.get("end", 0)), 3),
-                "kind": "meaning_mismatch_heuristic",
-                "source_text": src,
-                "translated_text": vi,
-                "note": "Zh co cum trĩ/thịt thò nhung vi khong nhac y tuong tu",
             })
     return flags
 
@@ -278,6 +265,9 @@ def write_dub_final_report(work_dir: Path, qa_rows: list[dict], *, video_dur: fl
     total_slot = sum(float(r.get("slot", 0)) for r in qa_rows)
     total_play = sum(float(r.get("play", r.get("post_dur", 0))) for r in qa_rows)
     stats = qa_summary_stats(qa_rows)
+    from .dub_audit import tier_review_rows, tier_stats
+    t_stats = tier_stats(qa_rows)
+    t_review = tier_review_rows(qa_rows)
     report = {
         "segment_count": len(qa_rows),
         "video_duration_sec": round(float(video_dur), 3) if video_dur else None,
@@ -285,6 +275,8 @@ def write_dub_final_report(work_dir: Path, qa_rows: list[dict], *, video_dur: fl
         "total_voice_sec": round(total_play, 3),
         "coverage_pct": round(total_play / total_slot * 100, 1) if total_slot else 0,
         "qa_stats": stats,
+        "tier_stats": t_stats,
+        "tier45_review": t_review,
         "timing_warn_ms_threshold": TIMING_WARN_MS,
         "volume_warn_db_threshold": VOLUME_WARN_DB,
         "timing_issues": timing_issues,
@@ -297,12 +289,20 @@ def write_dub_final_report(work_dir: Path, qa_rows: list[dict], *, video_dur: fl
             f"{len(timing_issues)} doan lech timing >{TIMING_WARN_MS}ms, "
             f"{len(cumulative_issues)} doan cum_offset >{CUMULATIVE_WARN_MS}ms, "
             f"{len(volume_issues)} doan volume lech >{VOLUME_WARN_DB}dB, "
-            f"{len(shorten_flags)} doan qua dai (can rut gon)"
+            f"{len(shorten_flags)} doan qua dai (can rut gon); "
+            f"tang4/5={t_stats['tier4_aggressive_cut']}+{t_stats['tier5_large_overlap']}"
+            f"/{t_stats['segments']}"
+            + (" — CAN NGHE LAI" if t_stats["needs_listen_review"] else " — sach tang1-3")
         ),
     }
     out = work_dir / "dub_final_report.json"
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     log.info("Dub final report: %s", report["summary"])
+    if t_review:
+        (work_dir / "tier45_review.json").write_text(
+            json.dumps({"stats": t_stats, "segments": t_review}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     write_fix_compare(work_dir, stats)
     return report
 
@@ -314,6 +314,14 @@ def qa_summary_stats(qa_rows: list[dict]) -> dict:
     shorten_n = sum(1 for r in qa_rows if int(r.get("shorten_used") or 0) > 0)
     qua_dai = sum(1 for r in qa_rows if "qua_dai" in (r.get("flags") or []))
     qua_ngan = sum(1 for r in qa_rows if "qua_ngan" in (r.get("flags") or []))
+    tier4 = sum(1 for r in qa_rows if "tier4_aggressive_cut" in (r.get("flags") or []))
+    tier5 = sum(
+        1 for r in qa_rows
+        if "tier5_large_overlap" in (r.get("flags") or [])
+        or "chong_doan_severe" in (r.get("flags") or [])
+    )
+    mix_rec = sum(1 for r in qa_rows if "tts_recovered_at_mix" in (r.get("flags") or []))
+    mix_sil = sum(1 for r in qa_rows if "tts_silence_fallback" in (r.get("flags") or []))
     dead_zone = sum(
         1 for r in qa_rows
         if abs(float(r.get("atempo", 1)) - 1.0) <= 0.005
@@ -330,7 +338,13 @@ def qa_summary_stats(qa_rows: list[dict]) -> dict:
         "qua_dai_count": qua_dai,
         "qua_ngan_count": qua_ngan,
         "can_rut_gon_count": qua_dai,
+        "tier4_aggressive_cut": tier4,
+        "tier5_large_overlap": tier5,
+        "tier4_or_5": tier4 + tier5,
         "dead_zone_ok_gia": dead_zone,
+        "mix_recovered_at_mix": mix_rec,
+        "mix_silence_fallback": mix_sil,
+        "mix_race_events": mix_rec + mix_sil,
         "final_cum_offset_ms": round(float(qa_rows[-1].get("cum_offset_ms", 0)), 1) if qa_rows else 0,
     }
 

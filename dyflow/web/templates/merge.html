@@ -1,0 +1,378 @@
+{% extends "base.html" %}
+{% block title %}{{ brand }} — {{ t('merge_title') }}{% endblock %}
+{% block robots %}noindex, nofollow{% endblock %}
+{% block canonical_path %}/merge{% endblock %}
+{% block container_class %}container-studio{% endblock %}
+
+{% block content %}
+<div class="studio-desk">
+  <!-- Cot trai: Chon file & Danh sach video -->
+  <section class="studio-center" style="display: flex; flex-direction: column; gap: 16px;">
+    <div class="library-head" style="margin-bottom: 4px;">
+      <div>
+        <h1 style="font-size: 22px; font-weight: 700; color: #fff; margin: 0 0 4px;">{{ t('merge_title') }}</h1>
+        <p class="sub" style="margin: 0; color: var(--muted); font-size: 13.5px;">{{ t('merge_sub') }}</p>
+      </div>
+      <div class="queue-head-actions">
+        <a class="btn ghost btn-sm" href="/">{{ t('studio_nav_create') }}</a>
+        <a class="btn ghost btn-sm" href="/library">{{ t('studio_nav_library') }}</a>
+      </div>
+    </div>
+
+    <!-- Drop zone keo tha -->
+    <div class="merge-drop-zone" id="merge-drop-zone">
+      <div class="merge-drop-icon">🎬</div>
+      <p class="merge-drop-text">{{ t('merge_drop_hint') }}</p>
+      <div class="merge-pick-btns">
+        <button type="button" class="btn primary" id="merge-pick-files-btn">
+          📁 {{ t('merge_pick_files') }}
+        </button>
+        <button type="button" class="btn ghost" id="merge-pick-folder-btn">
+          📂 {{ t('merge_pick_folder') }}
+        </button>
+        <button type="button" class="btn ghost btn-sm danger" id="merge-clear-btn" hidden>
+          {{ t('merge_clear') }}
+        </button>
+      </div>
+      <input type="file" id="merge-files" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.mkv,.webm,.avi" multiple hidden />
+      <input type="file" id="merge-folder" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.mkv,.webm,.avi" multiple webkitdirectory hidden />
+    </div>
+
+    <!-- Danh sach video da chon -->
+    <div class="merge-list-wrap">
+      <div class="merge-list-header">
+        <span class="merge-list-count" id="merge-list-count">0 video</span>
+        <div class="merge-list-actions" id="merge-list-actions" hidden>
+          <button type="button" class="btn ghost btn-xs" id="merge-select-all">Chọn tất cả</button>
+          <button type="button" class="btn ghost btn-xs" id="merge-deselect-all">Bỏ chọn</button>
+        </div>
+      </div>
+      <ul class="merge-list" id="merge-list">
+        <li class="merge-empty" id="merge-empty">
+          {{ t('merge_list_empty') }}
+        </li>
+      </ul>
+    </div>
+
+    <!-- Lich su video da ghep -->
+    <div class="merge-history-box" id="merge-history-box" style="margin-top: 6px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 14px 16px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <h3 style="font-size: 14.5px; font-weight: 700; color: #fff; margin: 0; display: flex; align-items: center; gap: 8px;">
+          <span>🎞️ Lịch sử video đã ghép</span>
+          <span class="badge" id="merge-history-count" style="font-size: 11px; padding: 1px 7px; border-radius: 10px; background: rgba(0, 242, 234, 0.2); color: #00f2ea;">0</span>
+        </h3>
+        <button type="button" class="btn ghost btn-xs" id="merge-history-refresh-btn" style="padding: 3px 8px; font-size: 11.5px; cursor: pointer;">🔄 Làm mới</button>
+      </div>
+      <div id="merge-history-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 280px; overflow-y: auto;">
+        <div style="color: var(--muted); font-size: 13px; text-align: center; padding: 16px 0;">Đang tải lịch sử ghép...</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Cot phai: Thiet lap ghep & Ket qua xuat video -->
+  <aside class="studio-inspector studio-side" style="display: flex; flex-direction: column; gap: 16px; overflow-x: hidden; overflow-y: auto; height: 100%; max-height: 100vh; padding: 14px 16px 40px;">
+    <div>
+      <h2 style="font-size: 16px; font-weight: 700; color: #fff; margin: 0 0 16px;">⚙️ {{ t('merge_sec_settings') }}</h2>
+
+      <div class="field" style="margin-bottom: 14px;">
+        <span style="font-size: 13px; font-weight: 600; color: #d0d3e2; margin-bottom: 6px; display: block;">{{ t('merge_aspect_ratio') }}</span>
+        <select id="merge-aspect-ratio" class="select" style="width: 100%;">
+          <option value="first" selected>{{ t('merge_aspect_first') }}</option>
+          <option value="9:16">{{ t('merge_aspect_9_16') }}</option>
+          <option value="16:9">{{ t('merge_aspect_16_9') }}</option>
+          <option value="1:1">{{ t('merge_aspect_1_1') }}</option>
+        </select>
+      </div>
+
+      <div class="field" style="margin-bottom: 14px;">
+        <span style="font-size: 13px; font-weight: 600; color: #d0d3e2; margin-bottom: 6px; display: block;">{{ t('merge_fit') }}</span>
+        <select id="merge-fit" class="select" style="width: 100%;">
+          <option value="contain" selected>{{ t('merge_fit_contain') }}</option>
+          <option value="cover">{{ t('merge_fit_cover') }}</option>
+        </select>
+      </div>
+
+      <label class="st-check" style="margin-top: 10px; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+        <input type="checkbox" id="merge-fast-copy" checked />
+        <span style="font-size: 13.5px; font-weight: 600; color: #fff;">{{ t('merge_fast_copy') }}</span>
+      </label>
+      <p class="hint left" style="margin-top: 4px; font-size: 12px; color: #8a8d9f;">{{ t('merge_fast_copy_hint') }}</p>
+      <!-- Thư mục lưu riêng cho Ghép video (hoàn toàn độc lập với Tạo video) -->
+      <div class="save-path-row" id="merge-save-path-row" style="margin-top: 14px;">
+        <label for="merge-save-path-input" style="font-size: 13px; font-weight: 600; color: #d0d3e2; margin-bottom: 6px; display: block;">📂 Thư mục lưu video ghép:</label>
+        <div class="save-path-controls" style="display: flex; gap: 8px;">
+          <input type="text" id="merge-save-path-input"
+                 value="{{ merge_export_dir|default('', true) | e }}"
+                 placeholder="{{ merge_export_dir|default('Downloads/Merged_Videos', true) | e }}"
+                 title="{{ merge_export_dir|default('', true) | e }}"
+                 autocomplete="off"
+                 spellcheck="false"
+                 style="flex: 1; min-width: 0;" />
+          <button type="button" class="btn ghost btn-sm" id="merge-save-path-browse" style="white-space: nowrap;">Đổi thư mục...</button>
+        </div>
+        <p class="hint left" id="merge-save-path-hint" style="font-size: 11.5px; color: #8a8d9f; margin-top: 4px;">Video sau khi ghép sẽ lưu vào thư mục này (không ảnh hưởng video đang tạo).</p>
+        <p class="hint left" id="merge-save-path-status" hidden style="font-size: 11.5px; margin-top: 4px;"></p>
+      </div>
+      <div class="merge-action-row" style="margin-top: 20px; display: flex; gap: 10px; align-items: center;">
+        <button type="button" class="btn primary" id="merge-start-btn" disabled style="padding: 14px 20px; font-size: 15px; font-weight: 700; flex: 1 1 auto; width: 100%; min-width: 0; white-space: nowrap;">
+          🚀 {{ t('merge_btn_start') }}
+        </button>
+        <button type="button" class="btn ghost danger" id="merge-cancel-btn" hidden style="padding: 14px 20px; font-size: 14px; font-weight: 600; white-space: nowrap; flex: 0 0 auto; width: auto;">
+          ⏹️ Hủy
+        </button>
+      </div>
+
+      <p class="error" id="merge-error" style="margin-top: 12px; font-size: 13px;"></p>
+
+      <!-- Thanh tien do -->
+      <div class="merge-progress-wrap" id="merge-progress-wrap" hidden>
+        <div class="merge-progress-bar-bg">
+          <div class="merge-progress-bar" id="merge-progress-bar" style="width: 0%;"></div>
+        </div>
+        <span class="merge-progress-text" id="merge-progress-text">Đang chuẩn bị...</span>
+      </div>
+    </div>
+
+    <!-- Khung ket qua xuat video -->
+    <div class="merge-result-card" id="merge-result-card" hidden style="background: #141726; border: 1px solid rgba(0, 242, 234, 0.35); border-radius: 12px; padding: 16px; margin-top: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+        <h2 style="font-size: 15.5px; font-weight: 700; color: #fff; margin: 0; display: flex; align-items: center; gap: 6px;">
+          <span>🎉</span> {{ t('merge_result_title') }}
+        </h2>
+        <span class="badge" style="background: rgba(34, 197, 94, 0.2); color: #4ade80; font-size: 11.5px; padding: 2px 8px; border-radius: 6px; font-weight: 600;">Thành công</span>
+      </div>
+
+      <!-- Action buttons o tren dau de luon nhin thay ro rang, khong bao gio bi che -->
+      <div class="merge-result-actions" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;">
+        <a class="btn primary btn-block" id="merge-download-btn" href="#" download style="font-size: 14.5px; font-weight: 700; padding: 12px 14px; text-align: center;">
+          📥 {{ t('merge_btn_download') }}
+        </a>
+        <button type="button" class="btn ghost btn-block" id="merge-open-folder-btn" hidden style="font-size: 13.5px; padding: 10px 14px;">
+          📂 {{ t('merge_btn_open_folder') }}
+        </button>
+      </div>
+
+      <!-- Video preview gon gang, max-height 220px khong phong to chiem het man hinh -->
+      <div class="merge-player-wrap" style="text-align: center; background: #000; border: 1px solid #232738; border-radius: 8px; padding: 4px; overflow: hidden; max-height: 220px; display: flex; align-items: center; justify-content: center;">
+        <video id="merge-result-video" controls playsinline preload="auto" style="width: 100%; max-height: 212px; border-radius: 6px; object-fit: contain;"></video>
+      </div>
+
+      <div style="margin-top: 10px;">
+        <button type="button" class="btn ghost btn-block btn-sm" id="merge-new-btn" style="color: var(--muted); font-size: 13px;">
+          🔄 Ghép bộ video khác
+        </button>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<style>
+/* CSS dac tri cho Merge Video — dam bao render chuan 100% bat ke cache */
+.merge-drop-zone {
+  border: 2px dashed rgba(254, 44, 85, 0.4);
+  background: rgba(254, 44, 85, 0.03);
+  border-radius: 12px;
+  padding: 24px 18px;
+  text-align: center;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+.merge-drop-zone:hover, .merge-drop-zone.dragover {
+  border-color: #fe2c55;
+  background: rgba(254, 44, 85, 0.08);
+}
+.merge-drop-icon {
+  font-size: 34px;
+  margin-bottom: 6px;
+}
+.merge-drop-text {
+  color: #8a8d9f;
+  font-size: 13.5px;
+  margin: 0 0 14px;
+}
+.merge-pick-btns {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+.merge-list-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.merge-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 4px;
+}
+.merge-list-count {
+  font-weight: 600;
+  font-size: 14px;
+  color: #fff;
+}
+.merge-list-actions {
+  display: flex;
+  gap: 8px;
+}
+.btn-xs {
+  padding: 2px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+.merge-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 520px;
+  overflow-y: auto;
+}
+.merge-empty {
+  padding: 36px 16px;
+  text-align: center;
+  color: #8a8d9f;
+  font-size: 14px;
+  border: 1px dashed #252838;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.01);
+}
+.merge-item {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 12px !important;
+  background: #141724 !important;
+  border: 1px solid #222638 !important;
+  border-radius: 8px !important;
+  padding: 10px 14px !important;
+  transition: all 0.15s ease;
+}
+.merge-item:hover {
+  border-color: #383e58 !important;
+  background: #181c2c !important;
+}
+.merge-item-idx {
+  font-weight: 700;
+  font-size: 13px;
+  color: #fe2c55;
+  min-width: 22px;
+  text-align: center;
+}
+.merge-item-info {
+  flex: 1;
+  min-width: 0;
+}
+.merge-item-name {
+  font-size: 13.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #f1f2f6;
+}
+.merge-item-size {
+  font-size: 12px;
+  color: #7b8098;
+  margin-top: 2px;
+}
+.merge-item-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.merge-ctrl-btn {
+  background: #1e2235;
+  border: 1px solid #2d334d;
+  color: #d1d4e2;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.merge-ctrl-btn:hover:not(:disabled) {
+  background: #2a3048;
+  color: #fff;
+  border-color: #434c6e;
+}
+.merge-ctrl-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.merge-ctrl-del {
+  color: #ff4b6b;
+  font-weight: bold;
+}
+.merge-ctrl-del:hover:not(:disabled) {
+  background: rgba(255, 75, 107, 0.15);
+  color: #ff2a51;
+  border-color: rgba(255, 75, 107, 0.4);
+}
+.merge-progress-wrap {
+  margin-top: 16px;
+}
+.merge-progress-bar-bg {
+  height: 8px;
+  background: #161926;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid #282d42;
+}
+.merge-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #fe2c55, #ff5e3a);
+  transition: width 0.3s ease;
+}
+.merge-progress-text {
+  display: block;
+  font-size: 12.5px;
+  color: #9da2b8;
+  margin-top: 6px;
+  text-align: center;
+}
+.merge-result-card {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid #252838;
+  border-radius: 10px;
+  background: #131622;
+}
+[hidden] {
+  display: none !important;
+}
+.merge-action-row {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  width: 100% !important;
+}
+.merge-action-row #merge-start-btn {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  white-space: nowrap !important;
+  width: 100% !important;
+}
+.merge-action-row #merge-cancel-btn {
+  flex: 0 0 auto !important;
+  width: auto !important;
+  white-space: nowrap !important;
+}
+.merge-action-row #merge-cancel-btn[hidden] {
+  display: none !important;
+}
+.merge-result-card h2 {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0 0 12px;
+  color: #fff;
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/merge.js?v=vc20261022_01"></script>
+{% endblock %}
