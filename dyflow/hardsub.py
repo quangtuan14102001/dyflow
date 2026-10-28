@@ -188,8 +188,21 @@ class SubtitleTracker:
                 "box_h": None,
                 "count": 0,
             }
-        med_y = int(np.median(self.all_detected_y))
-        med_h = int(np.median(self.all_detected_h)) if self.all_detected_h else 50
+        # Loc phu de loi thoai vs watermark canh bao duoi day (y > 90%):
+        # Tranh truong hop dong chu '剧情纯属虚构' xuat hien 100% cac frame
+        # keo tuot toa do Y cua sub tieng Viet xuong sat day va lam lech khoi vung thoai.
+        dialogue_boxes = [
+            (y, h_box)
+            for y, h_box in zip(self.all_detected_y, self.all_detected_h)
+            if y <= int(h * 0.90)
+        ]
+        if dialogue_boxes:
+            med_y = int(np.median([y for y, _ in dialogue_boxes]))
+            med_h = int(np.median([hb for _, hb in dialogue_boxes]))
+        else:
+            med_y = int(np.median(self.all_detected_y))
+            med_h = int(np.median(self.all_detected_h)) if self.all_detected_h else 50
+
         margin_v = max(40, h - med_y)
         return {
             "detected": True,
@@ -270,11 +283,11 @@ def blur_hardsubs_ocr(
     nframes = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
 
     # 1. Xac dinh ROI (Vung phu de day man hinh):
-    # Video doc 9:16 (h > w): phu de nam trong khoang 55% -> 95% chieu cao (bao gom ca phim ngan co sub cao)
-    # Video ngang 16:9 (w >= h): phu de nam trong khoang 65% -> 96% chieu cao
+    # Video doc 9:16 (h > w): scan tu 40% -> 99% chieu cao (bao gom ca phu de nguc/bung va watermark canh bao duoi day)
+    # Video ngang 16:9 (w >= h): scan tu 55% -> 99% chieu cao
     is_portrait = h > w
-    roi_top_default = 0.55 if is_portrait else 0.65
-    roi_bot_default = 0.95 if is_portrait else 0.96
+    roi_top_default = 0.40 if is_portrait else 0.55
+    roi_bot_default = 0.99 if is_portrait else 0.99
 
     roi_top = float(cfg.get("ocr_roi_top", roi_top_default))
     roi_bot = float(cfg.get("ocr_roi_bottom", roi_bot_default))
