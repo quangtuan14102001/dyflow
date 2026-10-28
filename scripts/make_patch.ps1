@@ -48,6 +48,11 @@ New-Item -ItemType Directory -Path (Join-Path $tmpPatch "dyflow") -Force | Out-N
 # Copy dyflow
 Copy-Item (Join-Path $root "dyflow\*") (Join-Path $tmpPatch "dyflow") -Recurse -Force
 
+# Copy profiles (mau prompt van phong cac the loai phim)
+if (Test-Path (Join-Path $root "profiles")) {
+  Copy-Item (Join-Path $root "profiles") (Join-Path $tmpPatch "profiles") -Recurse -Force
+}
+
 # Copy version.json vao trong ban va
 Copy-Item $versionJson (Join-Path $tmpPatch "version.json") -Force
 
@@ -55,7 +60,7 @@ Copy-Item $versionJson (Join-Path $tmpPatch "version.json") -Force
 Get-ChildItem -Path $tmpPatch -Include "__pycache__", "*.pyc", "*.pyo" -Recurse -Force | Remove-Item -Recurse -Force
 
 # Nen patch.zip
-tar.exe -a -cf $patchZip -C $tmpPatch dyflow version.json
+tar.exe -a -cf $patchZip -C $tmpPatch dyflow profiles version.json
 if ($LASTEXITCODE -ne 0) {
   # Fallback neu tar khong kha dung
   Compress-Archive -Path (Join-Path $tmpPatch "*") -DestinationPath $patchZip -Force

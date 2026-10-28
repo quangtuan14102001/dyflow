@@ -20,20 +20,52 @@ _FORMAT_LEAK_RE = re.compile(
 )
 
 
+DEFAULT_GENRES = [
+    {"id": "tien_hiep", "label": "Tiên Hiệp / Tu Tiên", "file": "tien_hiep.txt"},
+    {"id": "tan_the", "label": "Tận thế / Sinh tồn", "file": "tan_the.txt"},
+    {"id": "xuyen_khong", "label": "Xuyên không / Trọng sinh", "file": "xuyen_khong.txt"},
+    {"id": "kiem_hiep", "label": "Kiếm hiệp / Võ hiệp", "file": "kiem_hiep.txt"},
+    {"id": "do_thi", "label": "Đô thị / Hiện đại", "file": "do_thi.txt"},
+    {"id": "ngon_tinh", "label": "Ngôn tình / Lãng mạn", "file": "ngon_tinh.txt"},
+    {"id": "cung_dau", "label": "Cung đấu / Trạch đấu", "file": "cung_dau.txt"},
+    {"id": "quan_su", "label": "Quân sự / Kháng chiến", "file": "quan_su.txt"},
+    {"id": "than_thoai", "label": "Thần thoại / Phong thần", "file": "than_thoai.txt"},
+]
+
+
 def _profiles_root() -> Path:
-    """Dev: repo/profiles/genre. Frozen: _MEIPASS/profiles/genre."""
+    """Dev: repo/profiles/genre. Frozen: _MEIPASS/profiles/genre. Patch: AppData/profiles/genre."""
+    import os
     import sys
 
-    if getattr(sys, "frozen", False):
-        base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
-        cand = base / "profiles" / "genre"
+    cands: list[Path] = []
+    # 1. Frozen / PyInstaller
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        cands.append(Path(meipass) / "profiles" / "genre")
+        cands.append(Path(meipass) / "_internal" / "profiles" / "genre")
+    exe_dir = Path(sys.executable).resolve().parent
+    cands.append(exe_dir / "profiles" / "genre")
+    cands.append(exe_dir / "_internal" / "profiles" / "genre")
+
+    # 2. Thu muc file goc & repo dev
+    cands.append(Path(__file__).resolve().parents[1] / "profiles" / "genre")
+    cands.append(Path.cwd() / "profiles" / "genre")
+    cands.append(Path(r"C:\Github\dyflow\profiles\genre"))
+
+    # 3. Thu muc AppData
+    local_app = os.environ.get("LOCALAPPDATA")
+    if local_app:
+        la = Path(local_app)
+        cands.append(la / "VideosCreator" / "patch" / "profiles" / "genre")
+        cands.append(la / "VideosCreator" / "profiles" / "genre")
+        cands.append(la / "Programs" / "VideosCreator" / "profiles" / "genre")
+        cands.append(la / "Programs" / "VideosCreator" / "_internal" / "profiles" / "genre")
+
+    for cand in cands:
         if cand.is_dir():
             return cand
-        # onedir: profiles canh exe
-        beside = Path(sys.executable).resolve().parent / "profiles" / "genre"
-        if beside.is_dir():
-            return beside
-    # dyflow/genre_profiles.py -> repo root
+
     return Path(__file__).resolve().parents[1] / "profiles" / "genre"
 
 
@@ -70,19 +102,30 @@ def list_genres() -> list[dict]:
     if items:
         return items
     # Fallback: moi file .txt
-    if not root.is_dir():
-        return []
-    for path in sorted(root.glob("*.txt")):
-        text = path.read_text(encoding="utf-8")
-        gid = path.stem
-        items.append({
-            "id": gid,
-            "label": gid.replace("_", " ").title(),
-            "file": path.name,
-            "chars": len(text),
-            "ready": bool(text.strip()),
-        })
-    return items
+    if root.is_dir():
+        for path in sorted(root.glob("*.txt")):
+            text = path.read_text(encoding="utf-8")
+            gid = path.stem
+            items.append({
+                "id": gid,
+                "label": gid.replace("_", " ").title(),
+                "file": path.name,
+                "chars": len(text),
+                "ready": bool(text.strip()),
+            })
+    if items:
+        return items
+    # Fallback tuyet doi: danh sach the loai mac dinh, khong bao gio de dropdown trong
+    return [
+        {
+            "id": g["id"],
+            "label": g["label"],
+            "file": g["file"],
+            "chars": 0,
+            "ready": True,
+        }
+        for g in DEFAULT_GENRES
+    ]
 
 
 def load_genre_template(genre_id: str) -> str:

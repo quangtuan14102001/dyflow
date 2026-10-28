@@ -39,9 +39,16 @@ def main():
     si.lpDesktop = r"WinSta0\Default"
     pi = PROCESS_INFORMATION()
 
-    app = r"C:\Github\dyflow\dist\VideosCreator\VideosCreator.exe"
-    cmd = f'"{app}"'
-    cwd = r"C:\Github\dyflow\dist\VideosCreator"
+    from pathlib import Path
+    use_exe = "--exe" in sys.argv
+    if use_exe:
+        app = r"C:\Github\dyflow\dist\VideosCreator\VideosCreator.exe"
+        cmd = f'"{app}"'
+        cwd = r"C:\Github\dyflow\dist\VideosCreator"
+    else:
+        app = sys.executable
+        cmd = f'"{sys.executable}" desktop.py'
+        cwd = r"C:\Github\dyflow"
 
     # CREATE_BREAKAWAY_FROM_JOB = 0x01000000, CREATE_NEW_PROCESS_GROUP = 0x00000200
     flags = 0

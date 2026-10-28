@@ -15,9 +15,18 @@ def resource_root() -> Path:
     """Thu muc chua config.yaml + templates khi chay source hoac PyInstaller."""
     if getattr(sys, "frozen", False):
         meipass = getattr(sys, "_MEIPASS", None)
-        if meipass:
+        if meipass and Path(meipass).is_dir():
             return Path(meipass)
         return Path(sys.executable).resolve().parent
+    cands = [
+        Path(__file__).resolve().parents[1],
+        Path.cwd(),
+        Path(r"C:\Github\dyflow"),
+        Path(sys.executable).resolve().parent,
+    ]
+    for c in cands:
+        if (c / "config.yaml").is_file() or (c / "profiles").is_dir():
+            return c
     return Path(__file__).resolve().parents[1]
 
 
