@@ -12,15 +12,33 @@ from pathlib import Path
 def _dll_path() -> Path | None:
     names = ("VideosCreatorWebView.dll",)
     cands: list[Path] = []
-    if getattr(sys, "frozen", False):
-        exe_dir = Path(sys.executable).resolve().parent
-        cands.append(exe_dir)
-        cands.append(exe_dir / "_internal")
-        meipass = getattr(sys, "_MEIPASS", None)
-        if meipass:
-            cands.append(Path(meipass))
-            cands.append(Path(meipass) / "_internal")
+    
+    # 1. Thu muc exe (frozen hoac Python environment)
+    exe_dir = Path(sys.executable).resolve().parent
+    cands.append(exe_dir)
+    cands.append(exe_dir / "_internal")
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        cands.append(Path(meipass))
+        cands.append(Path(meipass) / "_internal")
+
+    # 2. Thu muc du an / repo goc
     cands.append(Path(__file__).resolve().parents[1] / "dist" / "native")
+    cands.append(Path(__file__).resolve().parents[1] / "dist" / "VideosCreator")
+    cands.append(Path.cwd() / "dist" / "native")
+    cands.append(Path.cwd() / "dist" / "VideosCreator")
+    cands.append(Path(r"C:\Github\dyflow\dist\native"))
+    cands.append(Path(r"C:\Github\dyflow\dist\VideosCreator"))
+
+    # 3. Thu muc AppData / Programs cua VideosCreator
+    local_app = os.environ.get("LOCALAPPDATA")
+    if local_app:
+        la = Path(local_app)
+        cands.append(la / "VideosCreator")
+        cands.append(la / "VideosCreator" / "patch")
+        cands.append(la / "Programs" / "VideosCreator")
+        cands.append(la / "Programs" / "VideosCreator" / "_internal")
+
     for folder in cands:
         for name in names:
             p = folder / name
