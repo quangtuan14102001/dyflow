@@ -256,7 +256,14 @@ def synthesize_tvoice(
 
         status = str(status_data.get("status") or "").lower()
         if status == "done":
-            audio_url = status_data.get("audioUrl") or ""
+            audio_url = str(
+                status_data.get("audioUrl")
+                or status_data.get("audio_url")
+                or status_data.get("url")
+                or ""
+            ).strip()
+            if audio_url and not audio_url.startswith(("http://", "https://")):
+                audio_url = f"{BASE_URL.rstrip('/')}/{audio_url.lstrip('/')}"
             break
         if status in ("error", "failed"):
             err_msg = status_data.get("error") or status_data.get("message") or "Unknown error"
@@ -264,6 +271,9 @@ def synthesize_tvoice(
 
     if not audio_url:
         raise RuntimeError(f"T-Voice timeout sau {timeout}s (jobId: {job_id})")
+
+    if not audio_url.startswith(("http://", "https://")):
+        audio_url = f"{BASE_URL.rstrip('/')}/{audio_url.lstrip('/')}"
 
     # 3. Tai file audio ve out_path
     try:
