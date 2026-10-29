@@ -157,6 +157,15 @@ def apply_patch_file(zip_path: Path) -> dict:
             shutil.rmtree(dest_dir, ignore_errors=True)
         shutil.move(str(tmp_dir), str(dest_dir))
 
+        # Dong thoi sync truc tiep vao _internal/ neu la ban dong goi frozen Windows
+        if getattr(sys, "frozen", False):
+            try:
+                internal_dir = Path(sys.executable).resolve().parent / "_internal"
+                if (dest_dir / "dyflow").is_dir() and internal_dir.is_dir():
+                    shutil.copytree(str(dest_dir / "dyflow"), str(internal_dir / "dyflow"), dirs_exist_ok=True)
+            except Exception as e:
+                log.warning("Khong the copy patch vao _internal: %s", e)
+
         return {
             "ok": True,
             "message": "Áp dụng bản vá thành công! Vui lòng khởi động lại app để nạp bản mới.",

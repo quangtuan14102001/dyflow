@@ -33,6 +33,30 @@ try:
     if _patch_dir.is_dir():
         if str(_patch_dir) not in sys.path:
             sys.path.insert(0, str(_patch_dir))
+
+        class _PatchMetaFinder:
+            def __init__(self, root: Path):
+                self.root = root
+
+            def find_spec(self, fullname: str, path=None, target=None):
+                parts = fullname.split(".")
+                if parts[0] == "dyflow":
+                    rel = Path(*parts)
+                    py_f = self.root / f"{rel}.py"
+                    init_f = self.root / rel / "__init__.py"
+                    target_f = py_f if py_f.is_file() else (init_f if init_f.is_file() else None)
+                    if target_f:
+                        import importlib.util
+                        return importlib.util.spec_from_file_location(
+                            fullname,
+                            target_f,
+                            submodule_search_locations=[str(target_f.parent)] if target_f.name == "__init__.py" else None,
+                        )
+                return None
+
+        if not any(type(f).__name__ == "_PatchMetaFinder" for f in sys.meta_path):
+            sys.meta_path.insert(0, _PatchMetaFinder(_patch_dir))
+
         _patch_dyflow = _patch_dir / "dyflow"
         if _patch_dyflow.is_dir():
             import dyflow

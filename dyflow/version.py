@@ -1,7 +1,7 @@
 """Thong tin phien ban va quan ly cap nhat VideosCreator."""
 from __future__ import annotations
 
-__version__ = "1.1.2"
+__version__ = "1.1.3"
 __build__ = "2026.10.29"
 
 

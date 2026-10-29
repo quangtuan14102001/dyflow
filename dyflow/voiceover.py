@@ -1220,6 +1220,7 @@ def _synthesize_segments_impl(
 
     prev_sid = None
     n_segs = max(1, len(segs))
+    tts_fail_count = 0
     for i, seg in enumerate(segs):
         if i in skip_idx:
             continue
@@ -1319,19 +1320,33 @@ def _synthesize_segments_impl(
                 })
                 ok = _tts_once(plain)
                 if not ok:
-                    # Neu loi do het token / so du, dung ngay de bao cho user thay vi xuat video bi cam tieng
+                    tts_fail_count += 1
                     err_low = last_tts_err.lower()
-                    if any(kw in err_low for kw in ["số dư không đủ", "so du khong du", "không đủ token", "hết token", "insufficient_quota", "out of credit", "credit"]):
+                    if any(kw in err_low for kw in [
+                        "số dư không đủ", "so du khong du", "không đủ token", "hết token",
+                        "token", "không đủ số dư", "insufficient_quota", "out of credit", "credit", "balance"
+                    ]):
                         raise RuntimeError(
                             f"Tài khoản TTS đã hết Token (Số dư không đủ cho đoạn {i+1}). "
                             "Vui lòng nạp thêm Token trên tvoiceai.com hoặc chọn giọng (Free) trên đầu danh sách."
                         )
-                    if skip_failed:
-                        log.warning("Bo qua doan %d (TTS loi), im lang", i)
-                        _make_silence_mp3(clip, min(max_avail, max(0.2, hard_end - start)))
-                        match_flags.append("tts_silence_fallback")
-                    else:
-                        raise RuntimeError(f"TTS doan {i} that bai: {last_tts_err}")
+                    if _is_tvoice_engine(cfg):
+                        raise RuntimeError(
+                            f"Lỗi tạo giọng đọc T-Voice ở đoạn {i+1}: {last_tts_err}. "
+                            "Hệ thống đã dừng lại để tránh xuất ra clip bị mất tiếng lồng tiếng."
+                        )
+                    if tts_fail_count >= 3 or not skip_failed:
+                        raise RuntimeError(
+                            f"TTS thất bại ({last_tts_err}). "
+                            "Hệ thống đã dừng lại để tránh xuất ra clip bị mất tiếng lồng tiếng."
+                        )
+                    log.warning("Bo qua doan %d (TTS loi), im lang: %s", i, last_tts_err)
+                    _make_silence_mp3(clip, min(max_avail, max(0.2, hard_end - start)))
+                    match_flags.append("tts_silence_fallback")
+                else:
+                    tts_fail_count = 0
+            else:
+                tts_fail_count = 0
             timed_sleep(min(segment_gap, 0.4), "tts_after_synth_gap")
 
         tts_dur_raw = probe_duration(clip) if clip.exists() else max_avail

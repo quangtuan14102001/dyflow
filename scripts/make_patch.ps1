@@ -57,11 +57,16 @@ if (Test-Path (Join-Path $root "profiles")) {
 # Copy version.json vao trong ban va
 Copy-Item $versionJson (Join-Path $tmpPatch "version.json") -Force
 
+# Copy desktop.py vao trong ban va
+if (Test-Path (Join-Path $root "desktop.py")) {
+  Copy-Item (Join-Path $root "desktop.py") (Join-Path $tmpPatch "desktop.py") -Force
+}
+
 # Don dep __pycache__ va file rac
 Get-ChildItem -Path $tmpPatch -Include "__pycache__", "*.pyc", "*.pyo" -Recurse -Force | Remove-Item -Recurse -Force
 
 # Nen patch.zip
-tar.exe -a -cf $patchZip -C $tmpPatch dyflow profiles version.json
+tar.exe -a -cf $patchZip -C $tmpPatch dyflow profiles version.json desktop.py
 if ($LASTEXITCODE -ne 0) {
   # Fallback neu tar khong kha dung
   Compress-Archive -Path (Join-Path $tmpPatch "*") -DestinationPath $patchZip -Force

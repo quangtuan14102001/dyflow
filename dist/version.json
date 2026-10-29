@@ -1,7 +1,7 @@
 {
-    "version":  "1.1.2",
-    "release_date":  "2026-10-29 21:37",
-    "changelog":  "Ban va v1.1.2: Toi uu tai audio T-Voice, chuan hoa giao dien cap nhat va tu dong khoi dong lai.",
+    "version":  "1.1.3",
+    "release_date":  "2026-10-29 23:43",
+    "changelog":  "Ban va v1.1.3: Khac phuc triet de loi mat tieng long tieng T-Voice va bao loi ro rang khi TTS gap su co.",
     "patch_url":  "https://raw.githubusercontent.com/quangtuan14102001/dyflow/main/dist/patch.zip",
     "installer_url":  "https://raw.githubusercontent.com/quangtuan14102001/dyflow/main/dist/VideosCreator_Setup.exe"
 }
