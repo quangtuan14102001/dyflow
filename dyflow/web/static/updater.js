@@ -97,6 +97,14 @@ const DyflowUpdater = {
       this.applyBtn.hidden = true;
       this.applyBtn.style.display = "none";
     }
+    if (this.restartBtn) {
+      this.restartBtn.hidden = true;
+      this.restartBtn.style.display = "none";
+    }
+    if (this.progressWrap) {
+      this.progressWrap.hidden = true;
+      this.progressWrap.style.display = "none";
+    }
 
     try {
       const res = await fetch("/api/desktop/update/check", { method: "POST" });
@@ -117,25 +125,33 @@ const DyflowUpdater = {
           this.changelogWrap.style.display = "block";
           if (this.changelogText) this.changelogText.textContent = data.changelog;
         }
+        // An nut Kiem tra, chi hien duy nhat 1 nut Cap nhat mau xanh
+        if (this.checkBtn) {
+          this.checkBtn.style.display = "none";
+        }
         if (this.applyBtn) {
           this.applyBtn.hidden = false;
           this.applyBtn.style.display = "block";
           this.applyBtn.disabled = false;
           this.applyBtn.textContent = `⚡ Cập nhật lên v${data.latest_version} ngay (~1-2MB)`;
         }
-        if (this.checkBtn) {
-          this.checkBtn.disabled = false;
-          this.checkBtn.textContent = `⚡ Cập nhật lên v${data.latest_version} ngay`;
-          this.checkBtn.style.background = "linear-gradient(135deg, #10b981, #059669)";
-          this.checkBtn.onclick = (e) => {
-            e.preventDefault();
-            this.applyUpdate();
-          };
-        }
       } else {
         if (this.statusText) {
           this.statusText.textContent = `✓ Bạn đang sử dụng phiên bản mới nhất (v${data.current_version}).`;
           this.statusText.style.color = "#4ade80";
+        }
+        if (this.checkBtn) {
+          this.checkBtn.style.display = "block";
+          this.checkBtn.disabled = false;
+          this.checkBtn.textContent = "🔍 Kiểm tra bản mới";
+        }
+        if (this.applyBtn) {
+          this.applyBtn.hidden = true;
+          this.applyBtn.style.display = "none";
+        }
+        if (this.restartBtn) {
+          this.restartBtn.hidden = true;
+          this.restartBtn.style.display = "none";
         }
       }
     } catch (e) {
@@ -143,8 +159,8 @@ const DyflowUpdater = {
         this.statusText.textContent = "Lỗi: " + (e.message || e);
         this.statusText.style.color = "#ff8a8a";
       }
-    } finally {
-      if (this.checkBtn && (!this.latestData || !this.latestData.has_update)) {
+      if (this.checkBtn) {
+        this.checkBtn.style.display = "block";
         this.checkBtn.disabled = false;
         this.checkBtn.textContent = "🔍 Kiểm tra bản mới";
       }
@@ -157,10 +173,12 @@ const DyflowUpdater = {
       return;
     }
 
-    if (this.applyBtn) this.applyBtn.disabled = true;
+    if (this.applyBtn) {
+      this.applyBtn.disabled = true;
+      this.applyBtn.textContent = "⏳ Đang tải bản vá...";
+    }
     if (this.checkBtn) {
-      this.checkBtn.disabled = true;
-      this.checkBtn.textContent = "⏳ Đang tải bản vá...";
+      this.checkBtn.style.display = "none";
     }
     if (this.progressWrap) {
       this.progressWrap.hidden = false;
@@ -183,34 +201,39 @@ const DyflowUpdater = {
       if (this.progressBar) this.progressBar.style.width = "100%";
       if (this.progressLabel) this.progressLabel.textContent = "✓ Đã áp dụng bản vá thành công!";
       if (this.statusText) {
-        this.statusText.innerHTML = `🎉 <strong>Cập nhật hoàn tất!</strong> Vui lòng nhấn nút bên dưới để khởi động lại app.`;
+        this.statusText.innerHTML = `🎉 <strong>Cập nhật hoàn tất!</strong> Ứng dụng đang tự khởi động lại...`;
         this.statusText.style.color = "#4ade80";
       }
 
+      // An hoan toan nut check va nut apply
+      if (this.checkBtn) {
+        this.checkBtn.style.display = "none";
+      }
       if (this.applyBtn) {
         this.applyBtn.hidden = true;
         this.applyBtn.style.display = "none";
       }
+      // Chi hien DUY NHAT 1 nut Khoi dong lai
       if (this.restartBtn) {
         this.restartBtn.hidden = false;
         this.restartBtn.style.display = "block";
+        this.restartBtn.textContent = "🔄 Khởi động lại app ngay";
       }
-      if (this.checkBtn) {
-        this.checkBtn.disabled = false;
-        this.checkBtn.textContent = "🔄 Khởi động lại app ngay";
-        this.checkBtn.style.background = "linear-gradient(135deg, #0284c7, #2563eb)";
-        this.checkBtn.onclick = (e) => {
-          e.preventDefault();
-          this.restart();
-        };
-      }
+
+      // Tu dong khoi dong lai sau 1.5 giay
+      setTimeout(() => {
+        this.restart();
+      }, 1500);
     } catch (e) {
       if (this.statusText) {
         this.statusText.textContent = "Lỗi cập nhật: " + (e.message || e);
         this.statusText.style.color = "#ff8a8a";
       }
       if (this.progressWrap) this.progressWrap.hidden = true;
-      if (this.applyBtn) this.applyBtn.disabled = false;
+      if (this.applyBtn) {
+        this.applyBtn.disabled = false;
+        this.applyBtn.textContent = `⚡ Thử cập nhật lại`;
+      }
     }
   },
 
