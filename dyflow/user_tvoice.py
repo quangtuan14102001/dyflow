@@ -6,6 +6,8 @@ import os
 import re
 from pathlib import Path
 
+from .utils import log
+
 ENV = "TVOICE_API_KEY"
 
 

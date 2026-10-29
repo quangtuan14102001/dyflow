@@ -1,7 +1,7 @@
 {
-    "version":  "1.0.9",
-    "release_date":  "2026-10-29 15:28",
-    "changelog":  "Fix loi nhan dien key T-Voice va cap nhat tinh nang tu dong",
+    "version":  "1.1.0",
+    "release_date":  "2026-10-29 16:05",
+    "changelog":  "Toi uu hoa luu Key T-Voice AI va tu dong sua loi ket noi",
     "patch_url":  "https://raw.githubusercontent.com/quangtuan14102001/dyflow/main/dist/patch.zip",
     "installer_url":  "https://raw.githubusercontent.com/quangtuan14102001/dyflow/main/dist/VideosCreator_Setup.exe"
 }
