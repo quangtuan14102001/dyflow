@@ -264,7 +264,7 @@ def blur_hardsubs_ocr(
     import cv2
 
     src, out_path = Path(src), Path(out_path)
-    every_n = max(1, int(cfg.get("ocr_every_n", 5)))
+    every_n = max(1, int(cfg.get("ocr_every_n", 12)))
     pad = max(0, int(cfg.get("ocr_pad", 14)))
     blur = max(3, int(cfg.get("ocr_blur", 35)))
     min_score = float(cfg.get("ocr_min_score", 0.35))
@@ -372,7 +372,7 @@ def blur_hardsubs_ocr(
             "-i", str(tmp_video),
             "-i", str(src),
             "-map", "0:v:0", "-map", "1:a:0?",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
             "-c:a", "copy",
             "-shortest",
             str(out_path),
@@ -381,7 +381,7 @@ def blur_hardsubs_ocr(
     else:
         run([
             "ffmpeg", "-y", "-i", str(tmp_video),
-            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
             "-an", str(out_path),
         ])
         tmp_video.unlink(missing_ok=True)

@@ -522,10 +522,13 @@ def _prefetch_tts_clips(
     """Goi TTS lan dau. OpenAI 4 luong; Edge-TTS 1 luong (tuan tu cach nhe 0.15s) de khong bi Microsoft rate-limit."""
     cjk_re = re.compile(r"[\u4e00-\u9fff]")
     n = max(1, int(cfg.get("tts_prefetch_concurrency") or _TTS_PREFETCH_CONCURRENCY))
-    if not _is_openai_engine(cfg):
+    if _is_openai_engine(cfg):
+        if sys.platform == "win32" and "tts_prefetch_concurrency" not in cfg:
+            n = min(n, 4)
+    elif _is_tvoice_engine(cfg):
+        n = 3
+    else:
         n = 1
-    elif sys.platform == "win32" and "tts_prefetch_concurrency" not in cfg:
-        n = min(n, 4)
     jobs: list[tuple[int, str, Path, dict]] = []
     for i, seg in enumerate(segs):
         text = _sanitize_tts_text(seg.get("text", ""))

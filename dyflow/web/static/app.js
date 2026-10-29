@@ -1589,7 +1589,11 @@ const DyflowHome = {
     });
 
     try {
-      const savedBsMode = localStorage.getItem("dyflow_ac_blur_sub_mode") || "auto_ai";
+      let savedBsMode = localStorage.getItem("dyflow_ac_blur_sub_mode");
+      if (!savedBsMode || savedBsMode === "auto_ai") {
+        savedBsMode = "bottom";
+        try { localStorage.setItem("dyflow_ac_blur_sub_mode", "bottom"); } catch (_) {}
+      }
       if (blurSubMode) blurSubMode.value = savedBsMode;
 
       const savedMode = localStorage.getItem("dyflow_ac_mode") || "standard";

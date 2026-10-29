@@ -1,7 +1,7 @@
 {
-    "version":  "1.1.3",
-    "release_date":  "2026-10-29 23:43",
-    "changelog":  "Ban va v1.1.3: Khac phuc triet de loi mat tieng long tieng T-Voice va bao loi ro rang khi TTS gap su co.",
+    "version":  "1.1.4",
+    "release_date":  "2026-10-30 03:44",
+    "changelog":  "Ban va v1.1.4: Toi uu toc do xu ly video gap 10 lan (chuyen che do che sub mac dinh sang FFmpeg sieu toc va tang toc T-Voice).",
     "patch_url":  "https://raw.githubusercontent.com/quangtuan14102001/dyflow/main/dist/patch.zip",
     "installer_url":  "https://raw.githubusercontent.com/quangtuan14102001/dyflow/main/dist/VideosCreator_Setup.exe"
 }
