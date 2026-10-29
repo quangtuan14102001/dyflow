@@ -89,8 +89,14 @@ const DyflowUpdater = {
       this.statusText.textContent = "Đang kết nối máy chủ để tìm bản cập nhật mới nhất...";
       this.statusText.style.color = "#38bdf8";
     }
-    if (this.changelogWrap) this.changelogWrap.hidden = true;
-    if (this.applyBtn) this.applyBtn.hidden = true;
+    if (this.changelogWrap) {
+      this.changelogWrap.hidden = true;
+      this.changelogWrap.style.display = "none";
+    }
+    if (this.applyBtn) {
+      this.applyBtn.hidden = true;
+      this.applyBtn.style.display = "none";
+    }
 
     try {
       const res = await fetch("/api/desktop/update/check", { method: "POST" });
@@ -108,12 +114,23 @@ const DyflowUpdater = {
         }
         if (this.changelogWrap && data.changelog) {
           this.changelogWrap.hidden = false;
+          this.changelogWrap.style.display = "block";
           if (this.changelogText) this.changelogText.textContent = data.changelog;
         }
         if (this.applyBtn) {
           this.applyBtn.hidden = false;
+          this.applyBtn.style.display = "block";
           this.applyBtn.disabled = false;
           this.applyBtn.textContent = `⚡ Cập nhật lên v${data.latest_version} ngay (~1-2MB)`;
+        }
+        if (this.checkBtn) {
+          this.checkBtn.disabled = false;
+          this.checkBtn.textContent = `⚡ Cập nhật lên v${data.latest_version} ngay`;
+          this.checkBtn.style.background = "linear-gradient(135deg, #10b981, #059669)";
+          this.checkBtn.onclick = (e) => {
+            e.preventDefault();
+            this.applyUpdate();
+          };
         }
       } else {
         if (this.statusText) {
@@ -127,7 +144,7 @@ const DyflowUpdater = {
         this.statusText.style.color = "#ff8a8a";
       }
     } finally {
-      if (this.checkBtn) {
+      if (this.checkBtn && (!this.latestData || !this.latestData.has_update)) {
         this.checkBtn.disabled = false;
         this.checkBtn.textContent = "🔍 Kiểm tra bản mới";
       }
@@ -141,7 +158,14 @@ const DyflowUpdater = {
     }
 
     if (this.applyBtn) this.applyBtn.disabled = true;
-    if (this.progressWrap) this.progressWrap.hidden = false;
+    if (this.checkBtn) {
+      this.checkBtn.disabled = true;
+      this.checkBtn.textContent = "⏳ Đang tải bản vá...";
+    }
+    if (this.progressWrap) {
+      this.progressWrap.hidden = false;
+      this.progressWrap.style.display = "flex";
+    }
     if (this.progressBar) this.progressBar.style.width = "40%";
     if (this.progressLabel) this.progressLabel.textContent = "Đang tải bản vá cập nhật...";
 
@@ -163,8 +187,23 @@ const DyflowUpdater = {
         this.statusText.style.color = "#4ade80";
       }
 
-      if (this.applyBtn) this.applyBtn.hidden = true;
-      if (this.restartBtn) this.restartBtn.hidden = false;
+      if (this.applyBtn) {
+        this.applyBtn.hidden = true;
+        this.applyBtn.style.display = "none";
+      }
+      if (this.restartBtn) {
+        this.restartBtn.hidden = false;
+        this.restartBtn.style.display = "block";
+      }
+      if (this.checkBtn) {
+        this.checkBtn.disabled = false;
+        this.checkBtn.textContent = "🔄 Khởi động lại app ngay";
+        this.checkBtn.style.background = "linear-gradient(135deg, #0284c7, #2563eb)";
+        this.checkBtn.onclick = (e) => {
+          e.preventDefault();
+          this.restart();
+        };
+      }
     } catch (e) {
       if (this.statusText) {
         this.statusText.textContent = "Lỗi cập nhật: " + (e.message || e);
