@@ -166,6 +166,11 @@ def _required_keys(cfg: dict | None, job: dict | None) -> list[tuple[str, str]]:
     if engine in ("openai", "tts-1", "tts-1-hd", "gpt-4o-mini-tts", "openai_tts"):
         keys.append(("OPENAI_API_KEY", MISSING_OPENAI))
         keys.append(("OPENAI_TTS_API_KEY", MISSING_TTS_OPENAI))
+    elif engine in ("tvoice", "tvoiceai", "t_voice"):
+        keys.append((
+            "TVOICE_API_KEY",
+            "Thiếu TVOICE_API_KEY (tts_engine=tvoice). Dán key sk_tvoice_... trong app.",
+        ))
     elif translate_mode in ("openai", "full", "rewrite"):
         keys.append(("OPENAI_API_KEY", MISSING_OPENAI))
     elif translate_mode == "deepseek":
@@ -178,18 +183,12 @@ def _required_keys(cfg: dict | None, job: dict | None) -> list[tuple[str, str]]:
             "QWEN_API_KEY",
             "Thieu QWEN_API_KEY / DASHSCOPE_API_KEY (dich Qwen). Dan key trong app.",
         ))
-    if engine in ("eleven", "elevenlabs"):
-        keys.append((
-            "ELEVENLABS_API_KEY",
-            "Thieu ELEVENLABS_API_KEY (tts_engine=elevenlabs). Job dung o pre-flight.",
-        ))
     return keys
 
 
 def missing_keys(cfg: dict | None = None, job: dict | None = None) -> list[str]:
     hydrate_openai_key()
     out: list[str] = []
-    env_alias = {"ELEVENLABS_API_KEY": ("ELEVENLABS_API_KEY", "ELEVEN_API_KEY")}
     for name, _msg in _required_keys(cfg, job):
         if name == "OPENAI_API_KEY":
             if not openai_key():
@@ -199,6 +198,12 @@ def missing_keys(cfg: dict | None = None, job: dict | None = None) -> list[str]:
             from .user_openai import has_tts_key
 
             if not has_tts_key():
+                out.append(name)
+            continue
+        if name == "TVOICE_API_KEY":
+            from .user_tvoice import has_tvoice_key
+
+            if not has_tvoice_key():
                 out.append(name)
             continue
         if name == "DEEPSEEK_API_KEY":

@@ -291,25 +291,6 @@
           {% endfor %}
         </select>
       </label>
-        <div class="field" id="translate-engine-field">
-        <span>{{ t('translate_engine_label') }}</span>
-        <p class="hint left">{{ t('translate_engine_hint') }}</p>
-        <label class="st-check">
-          <input type="radio" name="translate_engine" value="deepseek" {% if license and license.has_deepseek_key %}checked{% endif %} />
-          <span>{{ t('translate_engine_deepseek') }}</span>
-        </label>
-        <label class="st-check">
-          <input type="radio" name="translate_engine" value="google" {% if not (license and license.has_deepseek_key) %}checked{% endif %} />
-          <span>{{ t('translate_engine_google') }}</span>
-        </label>
-        <label class="field openai-tts-inline" id="deepseek-key-box" hidden>
-          <span>{{ t('deepseek_key_label') }}</span>
-          <p class="hint left">{{ t('deepseek_key_hint') }}</p>
-          <input class="input" type="password" id="home-deepseek-key" placeholder="sk-…" autocomplete="off" spellcheck="false" />
-          <button type="button" class="btn ghost btn-sm" id="home-deepseek-save">{{ t('deepseek_key_save') }}</button>
-          <p class="hint left" id="home-deepseek-status">{% if license and license.has_deepseek_key %}{{ t('deepseek_key_ok') }}{% else %}{{ t('deepseek_key_needed') }}{% endif %}</p>
-        </label>
-      </div>
       <div class="field" id="genre-field">
         <label for="genre_id">{{ t('genre_label') }} <span style="color: var(--accent); font-weight: 700;">*</span></label>
         <p class="hint left">{{ t('genre_hint') }}</p>
@@ -342,31 +323,74 @@
           <p class="hint left genre-flash" id="genre-prompt-flash" hidden></p>
         </div>
       </div>
-      <div class="field">
-        <span>{{ t('voice_label') }}</span>
-        <p class="hint left voice-hint" id="voice-hint"></p>
-        <div class="voices" id="voice-options"></div>
-      </div>
-      <div class="field voice-mode-field" id="voice-mode-field">
-        <span>{{ t('voice_mode_label') }}</span>
-        <p class="hint left">{{ t('voice_mode_hint') }}</p>
-        <div class="radio-row" style="display: flex; gap: 16px; margin-top: 6px;">
-          <label class="st-check" style="cursor: pointer; display: flex; align-items: center; gap: 6px;">
-            <input type="radio" name="voice_mode" value="single" checked />
-            <span>{{ t('voice_mode_single') }}</span>
-          </label>
-          <label class="st-check" style="cursor: pointer; display: flex; align-items: center; gap: 6px;">
-            <input type="radio" name="voice_mode" value="multi" />
-            <span>{{ t('voice_mode_multi') }}</span>
-          </label>
+      <div class="field" id="unified-voice-field">
+        <label for="voice-select" style="font-weight: 600;">{{ t('voice_label') }}</label>
+        <p class="hint left" style="margin-top: 2px; margin-bottom: 6px;">
+          Chọn giọng đọc: 2 giọng Free mặc định của app, hoặc 50+ giọng T-Voice AI (Review phim, Vbee, ElevenLabs).
+        </p>
+
+        <!-- Hidden input de luu engine TTS (edge hoac tvoice) -->
+        <input type="hidden" name="tts" id="tts_engine_input" value="edge" />
+
+        <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 10px;">
+          <select id="voice-select" name="voice" class="select" style="flex: 1; font-weight: 600;">
+            <optgroup label="🆓 Giọng Miễn Phí (Free của App)">
+              <option value="vi-VN-NamMinhNeural" data-tts="edge" selected>🎙️ Nam Minh (Free)</option>
+              <option value="vi-VN-HoaiMyNeural" data-tts="edge">🎙️ Hoài My (Free)</option>
+            </optgroup>
+            <optgroup label="🌟 Review Phim & Tin Tức (Hot)">
+              {% for v in (tvoice_voices or []) if v.category == 'review' %}
+              <option value="{{ v.id }}" data-tts="tvoice">{{ v.name }}</option>
+              {% endfor %}
+            </optgroup>
+            <optgroup label="🎙️ Studio Vbee">
+              {% for v in (tvoice_voices or []) if v.category == 'vbee' %}
+              <option value="{{ v.id }}" data-tts="tvoice">{{ v.name }}</option>
+              {% endfor %}
+            </optgroup>
+            <optgroup label="✨ ElevenLabs">
+              {% for v in (tvoice_voices or []) if v.category == 'elevenlabs' %}
+              <option value="{{ v.id }}" data-tts="tvoice">{{ v.name }}</option>
+              {% endfor %}
+            </optgroup>
+            <optgroup label="📖 Kể chuyện & Đạo lý">
+              {% for v in (tvoice_voices or []) if v.category == 'story' %}
+              <option value="{{ v.id }}" data-tts="tvoice">{{ v.name }}</option>
+              {% endfor %}
+            </optgroup>
+            <optgroup label="⚡ Giọng Chuẩn / Cơ bản">
+              {% for v in (tvoice_voices or []) if v.category == 'standard' %}
+              <option value="{{ v.id }}" data-tts="tvoice">{{ v.name }}</option>
+              {% endfor %}
+            </optgroup>
+          </select>
+          <button type="button" class="btn ghost btn-sm voice-play" id="voice-preview-btn" onclick="DyflowHome.previewSelectedVoice(this)" title="Nghe thử giọng này" style="white-space: nowrap; height: 48px; padding: 0 16px; font-weight: 600;">▶ Nghe thử</button>
         </div>
+
+        <p id="voice-preview-status" class="hint left" style="margin-top: -4px; margin-bottom: 8px; font-size: 12.5px; font-weight: 500;" hidden></p>
       </div>
-      <div class="field tts-field" id="tts-field">
-        <span>{{ t('tts_label') }}</span>
-        <p class="hint left">{{ t('tts_hint') }}</p>
-        <div class="voices voices-tts" id="tts-options"></div>
-        <p class="error field-msg" id="tts-error" hidden></p>
+
+      <div class="field" id="translate-engine-field" style="margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, 0.08);">
+        <span>{{ t('translate_engine_label') }}</span>
+        <p class="hint left">{{ t('translate_engine_hint') }}</p>
+        <label class="st-check">
+          <input type="radio" name="translate_engine" value="deepseek" {% if license and license.has_deepseek_key %}checked{% endif %} />
+          <span>{{ t('translate_engine_deepseek') }}</span>
+        </label>
+        <label class="st-check">
+          <input type="radio" name="translate_engine" value="google" {% if not (license and license.has_deepseek_key) %}checked{% endif %} />
+          <span>{{ t('translate_engine_google') }}</span>
+        </label>
+        <label class="field openai-tts-inline" id="deepseek-key-box" hidden>
+          <span>{{ t('deepseek_key_label') }}</span>
+          <p class="hint left">{{ t('deepseek_key_hint') }}</p>
+          <input class="input" type="password" id="home-deepseek-key" placeholder="sk-…" autocomplete="off" spellcheck="false" />
+          <button type="button" class="btn ghost btn-sm" id="home-deepseek-save">{{ t('deepseek_key_save') }}</button>
+          <p class="hint left" id="home-deepseek-status">{% if license and license.has_deepseek_key %}{{ t('deepseek_key_ok') }}{% else %}{{ t('deepseek_key_needed') }}{% endif %}</p>
+        </label>
       </div>
+
+      <input type="hidden" name="voice_mode" value="single" />
     </section>
   </aside>
 </form>
@@ -376,11 +400,13 @@
 <script>
   window.DYFLOW_LANGUAGES = {{ languages | tojson }};
   window.DYFLOW_TTS = {{ tts_choices | tojson }};
+  window.DYFLOW_TVOICE_VOICES = {{ (tvoice_voices or []) | tojson }};
   window.DYFLOW_GENRES = {{ (genres or []) | tojson }};
   window.DYFLOW_GENRE_TEMPLATES = {{ (genre_templates or {}) | tojson }};
   window.DYFLOW_HAS_OPENAI_TTS = {{ (license.has_openai_tts_key if license else false) | tojson }};
   window.DYFLOW_HAS_DEEPSEEK = {{ (license.has_deepseek_key if license else false) | tojson }};
   window.DYFLOW_HAS_QWEN = {{ (license.has_qwen_key if license else false) | tojson }};
+  window.DYFLOW_HAS_TVOICE = {{ (license.has_tvoice_key if license else false) | tojson }};
   window.DYFLOW_CHANNEL_MAX = {{ 100000 if desktop else 40 }};
   DyflowHome.init();
   DyflowTrial.init();

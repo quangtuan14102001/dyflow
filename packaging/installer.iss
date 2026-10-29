@@ -1,6 +1,6 @@
 ; Script generated for VideosCreator Setup Installer
 #define MyAppName "VideosCreator"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.9"
 #define MyAppPublisher "VideosCreator"
 #define MyAppURL "https://videoscreator.net"
 #define MyAppExeName "VideosCreator.exe"

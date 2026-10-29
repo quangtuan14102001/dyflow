@@ -44,19 +44,6 @@
           🔄 Khởi động lại app ngay
         </button>
       </div>
-
-      <!-- Tuy chon cap nhat thu cong tu file zip -->
-      <div style="margin-top: 6px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.06); display: flex; align-items: center; justify-content: space-between; gap: 10px;">
-        <input type="file" id="update-file-input" accept=".zip" hidden />
-        <button type="button" class="btn ghost btn-xs" id="update-pick-file-btn" style="font-size: 11.5px; cursor: pointer;">
-          📁 Cài từ file patch (.zip)
-        </button>
-        {% if patch_active %}
-        <button type="button" class="btn ghost btn-xs danger" id="update-rollback-btn" style="font-size: 11.5px; cursor: pointer; color: #ff8a8a;">
-          ↺ Khôi phục bản gốc
-        </button>
-        {% endif %}
-      </div>
     </div>
   </div>
 </div>

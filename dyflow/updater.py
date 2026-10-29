@@ -43,8 +43,41 @@ def check_update(url: str = "") -> dict:
                     "error": f"Server phản hồi mã lỗi {resp.status}",
                     "current_version": curr_ver,
                 }
-            raw = resp.read().decode("utf-8")
+            raw = resp.read().decode("utf-8-sig")
             data = json.loads(raw)
+    except urllib.error.HTTPError as e:
+        log.warning("Kiem tra update HTTP error: %s", e)
+        if e.code == 404:
+            # Fallback kiem tra version.json noi bo tai may (trong thu muc resource_root)
+            from .desktop_mode import resource_root
+
+            local_v_file = resource_root() / "version.json"
+            if local_v_file.is_file():
+                try:
+                    local_data = json.loads(local_v_file.read_text(encoding="utf-8-sig"))
+                    local_ver = str(local_data.get("version") or "").strip()
+                    if local_ver and _parse_version(local_ver) <= _parse_version(curr_ver):
+                        return {
+                            "ok": True,
+                            "current_version": curr_ver,
+                            "latest_version": curr_ver,
+                            "has_update": False,
+                            "release_date": local_data.get("release_date") or "",
+                            "changelog": "Bạn đang sử dụng phiên bản mới nhất.",
+                        }
+                except Exception:
+                    pass
+
+            return {
+                "ok": False,
+                "error": "Kho lưu trữ GitHub đang ở chế độ Riêng tư (Private) hoặc chưa xuất bản file version.json công khai.",
+                "current_version": curr_ver,
+            }
+        return {
+            "ok": False,
+            "error": f"Không thể kết nối máy chủ cập nhật ({e})",
+            "current_version": curr_ver,
+        }
     except Exception as e:
         log.warning("Kiem tra update that bai: %s", e)
         return {
@@ -111,7 +144,7 @@ def apply_patch_file(zip_path: Path) -> dict:
         v_file = tmp_dir / "version.json"
         if v_file.is_file():
             try:
-                v_data = json.loads(v_file.read_text(encoding="utf-8"))
+                v_data = json.loads(v_file.read_text(encoding="utf-8-sig"))
                 (data_dir() / "patch_version.json").write_text(
                     json.dumps(v_data, ensure_ascii=False, indent=2),
                     encoding="utf-8",

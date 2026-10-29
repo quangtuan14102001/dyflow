@@ -76,6 +76,19 @@
       <p class="error" id="deepseek-key-error"></p>
     </form>
 
+    <form id="tvoice-key-form" class="auth-form openai-tts-form">
+      <label class="field">
+        <span>Khóa API T-Voice AI (tvoiceai.com)</span>
+        <p class="hint left">Dùng để lồng tiếng các giọng Review phim, Vbee, ElevenLabs tiếng Việt.</p>
+        <input class="input" type="password" name="key" id="tvoice-key" placeholder="sk_tvoice_…" autocomplete="off" spellcheck="false" />
+      </label>
+      <button type="submit" class="btn ghost" id="tvoice-key-btn">Lưu Key T-Voice</button>
+      <p class="ok-banner license-ok" id="tvoice-key-ok" {% if not (license and license.has_tvoice_key) %}hidden{% endif %}>
+        {% if license and license.has_tvoice_key %}✓ Đã cấu hình Key T-Voice AI{% endif %}
+      </p>
+      <p class="error" id="tvoice-key-error"></p>
+    </form>
+
     {% include "_license_mint.html" %}
   </section>
 </div>

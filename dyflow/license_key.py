@@ -594,6 +594,12 @@ def public_status(now: float | None = None, user: dict | None = None) -> dict[st
         has_qw = has_qwen_key()
     except Exception:  # noqa: BLE001
         has_qw = False
+    try:
+        from .user_tvoice import has_tvoice_key
+
+        has_tv = has_tvoice_key()
+    except Exception:  # noqa: BLE001
+        has_tv = False
     extra = {
         "machine_code": format_machine_code(),
         "key_machine_code": "",
@@ -602,6 +608,7 @@ def public_status(now: float | None = None, user: dict | None = None) -> dict[st
         "has_openai_tts_key": has_oa,
         "has_deepseek_key": has_ds,
         "has_qwen_key": has_qw,
+        "has_tvoice_key": has_tv,
         "perpetual": False,
     }
     empty = {

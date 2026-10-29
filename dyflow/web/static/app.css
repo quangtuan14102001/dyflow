@@ -708,6 +708,15 @@ h2 { font-size: 18px; margin: 0 0 16px; }
   outline: none;
 }
 .select:focus { border-color: var(--accent); }
+.select option, .select optgroup {
+  background-color: #1e1e26;
+  color: #f1f1f4;
+  padding: 8px 12px;
+}
+.select optgroup {
+  font-weight: 700;
+  color: #34D399;
+}
 
 .voices {
   display: flex;

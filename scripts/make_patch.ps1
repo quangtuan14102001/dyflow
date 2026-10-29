@@ -36,9 +36,10 @@ $verData = [ordered]@{
   installer_url = "https://raw.githubusercontent.com/quangtuan14102001/dyflow/main/dist/VideosCreator_Setup.exe"
 }
 $verJsonContent = $verData | ConvertTo-Json -Depth 4
-[System.IO.File]::WriteAllText($versionJson, $verJsonContent, [System.Text.Encoding]::UTF8)
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[System.IO.File]::WriteAllText($versionJson, $verJsonContent, $utf8NoBom)
 $rootVersionJson = Join-Path $root "version.json"
-[System.IO.File]::WriteAllText($rootVersionJson, $verJsonContent, [System.Text.Encoding]::UTF8)
+[System.IO.File]::WriteAllText($rootVersionJson, $verJsonContent, $utf8NoBom)
 
 # Tao thu muc tam de nén chi gom ma nguon sach (loai bo __pycache__, .pyc)
 $tmpPatch = Join-Path $dist "_tmp_patch"

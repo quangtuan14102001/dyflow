@@ -259,6 +259,21 @@ def _is_openai_engine(cfg: dict) -> bool:
     return _tts_engine(cfg) in ("openai", "tts-1", "tts-1-hd", "gpt-4o-mini-tts", "openai_tts")
 
 
+def _is_tvoice_engine(cfg: dict) -> bool:
+    return _tts_engine(cfg) in ("tvoice", "tvoiceai", "t_voice")
+
+
+def _synthesize_tvoice(text: str, out_path: Path, cfg: dict) -> None:
+    from .tvoice import synthesize_tvoice
+
+    voice = cfg.get("tvoice_voice") or cfg.get("voice_id") or cfg.get("voice") or "Ngọc Huyền"
+    speed = cfg.get("speed") or cfg.get("tvoice_speed") or cfg.get("rate") or 1.0
+    synthesize_tvoice(text, out_path, voice=voice, speed=speed)
+
+
+
+
+
 _EMO_INSTRUCTIONS = {
     "excited": (
         "Speak with lively energy and warmth, like a character in a short video. "
@@ -307,12 +322,14 @@ def _seg_tts_cfg(base: dict, seg: dict, *, rate: str | None = None) -> dict:
     )
     voice = (seg.get("tts_voice") if cast_on else None) or base.get("voice")
     oa_voice = (seg.get("openai_voice") if cast_on else None) or base.get("openai_voice")
+    tv_voice = (seg.get("tvoice_voice") if cast_on else None) or base.get("tvoice_voice")
 
     out = {
         **base,
         "voice": voice,
         "tts_voice": voice,
         "openai_voice": oa_voice,
+        "tvoice_voice": tv_voice,
         "rate": rate if rate is not None else (seg.get("tts_rate") or base.get("rate", "+0%")),
         "pitch": seg.get("tts_pitch") or base.get("pitch", "+0Hz"),
         "volume": seg.get("tts_volume") or base.get("volume", "+0%"),
@@ -399,13 +416,19 @@ def _synthesize_openai(text: str, out_path: Path, cfg: dict) -> None:
 
 
 def synthesize(script: str, out_path: str | Path, cfg: dict) -> tuple[Path, list[WordTiming]]:
-    """Tao file audio .mp3 tu text (OpenAI tts-1, fallback Edge)."""
+    """Tao file audio .mp3 tu text (T-Voice AI, OpenAI tts-1, fallback Edge)."""
     from .prosody import sanitize_edge_cfg
 
     out_path = Path(out_path)
     text = _sanitize_tts_text(script)
     if not text:
         raise RuntimeError("Script trong, khong the long tieng")
+
+    is_tv = _is_tvoice_engine(cfg)
+    if is_tv:
+        _synthesize_tvoice(text, out_path, cfg)
+        return out_path, []
+
 
     is_oa = _tts_engine(cfg) in ("openai", "tts-1", "tts-1-hd", "gpt-4o-mini-tts", "openai_tts")
     if is_oa:
@@ -519,7 +542,8 @@ def _prefetch_tts_clips(
     def _one(item: tuple[int, str, Path, dict]) -> None:
         i, text, clip, seg_cfg = item
         from .job_timing import timed_sleep
-        timed_sleep(0.15, "tts_prefetch_stagger")
+        stagger = 0.55 if _is_tvoice_engine(cfg) else 0.15
+        timed_sleep(stagger, "tts_prefetch_stagger")
         tmp = unique_tmp(clip, tag="prefetch")
         _tts_ctx_set(work_dir=work_dir, seg_i=i)
         lifecycle_log(work_dir, "prefetch_start", clip, seg_i=i, tmp=tmp.name)
@@ -566,7 +590,9 @@ def synthesize_preview(
         "tts_engine": tts_engine or "openai",
         "openai_model": openai_model or "tts-1",
         "openai_voice": preset.get("openai_voice") or "",
+        "tvoice_voice": preset.get("tvoice_voice") or "",
     }
+
     text = preview_sentence(lang)
     synthesize(text, out_path, cfg)
     return out_path
@@ -1252,9 +1278,11 @@ def _synthesize_segments_impl(
         overflow_action = "keep"
         overflow_why = "-"
 
+        last_tts_err = ""
+
         def _tts_once(c: dict) -> bool:
             """TTS vao file tam duy nhat roi fsync+replace — khong de clip trong khi fail."""
-            nonlocal tts_wall, tts_calls
+            nonlocal tts_wall, tts_calls, last_tts_err
             tts_calls += 1
             t0 = time.perf_counter()
             tmp = unique_tmp(clip, tag="once")
@@ -1267,6 +1295,7 @@ def _synthesize_segments_impl(
                 )
                 return ok
             except RuntimeError as e:
+                last_tts_err = str(e)
                 log.warning("TTS doan %d loi: %s", i, e)
                 lifecycle_log(job_work, "tts_once_fail", clip, seg_i=i, err=str(e))
                 tmp.unlink(missing_ok=True)
@@ -1290,12 +1319,19 @@ def _synthesize_segments_impl(
                 })
                 ok = _tts_once(plain)
                 if not ok:
+                    # Neu loi do het token / so du, dung ngay de bao cho user thay vi xuat video bi cam tieng
+                    err_low = last_tts_err.lower()
+                    if any(kw in err_low for kw in ["số dư không đủ", "so du khong du", "không đủ token", "hết token", "insufficient_quota", "out of credit", "credit"]):
+                        raise RuntimeError(
+                            f"Tài khoản TTS đã hết Token (Số dư không đủ cho đoạn {i+1}). "
+                            "Vui lòng nạp thêm Token trên tvoiceai.com hoặc chọn giọng (Free) trên đầu danh sách."
+                        )
                     if skip_failed:
                         log.warning("Bo qua doan %d (TTS loi), im lang", i)
                         _make_silence_mp3(clip, min(max_avail, max(0.2, hard_end - start)))
                         match_flags.append("tts_silence_fallback")
                     else:
-                        raise RuntimeError(f"TTS doan {i} that bai")
+                        raise RuntimeError(f"TTS doan {i} that bai: {last_tts_err}")
             timed_sleep(min(segment_gap, 0.4), "tts_after_synth_gap")
 
         tts_dur_raw = probe_duration(clip) if clip.exists() else max_avail

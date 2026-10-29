@@ -555,14 +555,18 @@ def compose(video: str | Path, voice: str | Path | None, script: str,
 
         bed_label = f"[{ambient_idx}:a]" if ambient_idx is not None else "[0:a]"
 
-        # Anti-copyright audio: dich pitch + EQ am thanh nen de pha vo acoustic fingerprint
+        # Anti-copyright audio: dich pitch +5.0% + stereo widening + EQ de pha vo acoustic fingerprint
         if ac_enabled and ac_cfg.get("pitch_shift") and has_orig:
+            ambient = min(ambient, 0.30)
             pitch_flt = (
-                "asetrate=44100*1.025,aresample=44100,atempo=0.975609756,"
-                "highpass=f=40,equalizer=f=3500:t=q:w=1:g=1.5"
+                "aformat=channel_layouts=stereo,"
+                "asetrate=44100*1.050,aresample=44100,atempo=0.952380952,"
+                "stereowiden=delay=20:feedback=0.3:crossfeed=0.3:drymix=0.8,"
+                "highpass=f=48,lowpass=f=15500,equalizer=f=3150:t=q:w=1.6:g=-2.5"
             )
             afilters.append(f"{bed_label}{pitch_flt}[abed_pitch]")
             bed_label = "[abed_pitch]"
+            log.info("Anti-copyright audio: Pitch Shift +5.0%%, Stereo Widening & Notch EQ da kich hoat")
 
         if voice_idx is not None and has_orig:
             if ambient_idx is not None:

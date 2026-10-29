@@ -500,6 +500,29 @@ def api_qwen_key(request: Request, key: str = Form("")):
     return {"ok": True, **public_status(user=auth.current_user(request))}
 
 
+@app.post("/api/tvoice-key")
+def api_tvoice_key(request: Request, key: str = Form("")):
+    from ..license_key import public_status
+    from ..user_tvoice import save_tvoice_key
+
+    _require_user(request)
+    try:
+        save_tvoice_key(key)
+    except ValueError as e:
+        code = str(e)
+        msg = "API key T-Voice không hợp lệ" if code == "tvoice_key_invalid" else "Không thể kết nối máy chủ T-Voice AI (tvoiceai.com)"
+        raise HTTPException(400, msg) from e
+    return {"ok": True, **public_status(user=auth.current_user(request))}
+
+
+@app.get("/api/tvoice-voices")
+def api_tvoice_voices(request: Request):
+    _require_user(request)
+    from ..tvoice import list_tvoice_voices
+
+    return {"voices": list_tvoice_voices()}
+
+
 # ----------------------------- pages -----------------------------
 
 def _trial_for_user(user: dict) -> dict:
@@ -560,6 +583,7 @@ def index(request: Request, page: int = 1):
     trial = _trial_for_user(user)
 
     from ..genre_profiles import list_genres, load_genre_template
+    from ..tvoice import list_tvoice_voices
 
     genres = list_genres()
     genre_templates = {g["id"]: load_genre_template(g["id"]) for g in genres}
@@ -569,6 +593,7 @@ def index(request: Request, page: int = 1):
         user=user,
         languages=languages,
         tts_choices=list_tts_choices(),
+        tvoice_voices=list_tvoice_voices(),
         genres=genres,
         genre_templates=genre_templates,
         default_dub_lang=default_dub,
@@ -1354,13 +1379,20 @@ def api_voice_preview(
 
         if not has_tts_key():
             raise HTTPException(400, i18n.t(i18n.get_ui_lang(request), "openai_tts_key_needed"))
+    if tts_cfg.get("needs_tvoice_key"):
+        from ..user_tvoice import has_tvoice_key
+
+        if not has_tvoice_key():
+            raise HTTPException(400, "Vui lòng nhập T-Voice API Key trước khi nghe thử.")
     from ..voiceover import synthesize_preview
+
 
     preset = resolve_preset(lang, voice)
     vid = preset["id"]
+    safe_vid = re.sub(r"[^a-zA-Z0-9_-]", "_", vid)
     engine = tts_cfg["tts_engine"]
     model = tts_cfg["openai_model"]
-    cache = Path("work") / "voice_previews" / f"{lang}_{vid}_{engine}_{model}.mp3"
+    cache = Path("work") / "voice_previews" / f"{lang}_{safe_vid}_{engine}_{model}.mp3"
     try:
         path = synthesize_preview(
             lang, vid, cache,
@@ -1373,7 +1405,7 @@ def api_voice_preview(
     return FileResponse(
         path,
         media_type="audio/mpeg",
-        filename=f"preview_{lang}_{vid}_{model}.mp3",
+        filename=f"preview_{lang}_{safe_vid}_{model}.mp3",
         headers={"Cache-Control": "public, max-age=86400"},
     )
 
@@ -1609,6 +1641,13 @@ def api_create_job(
                     else "openai_translate_key_invalid"
                 )
                 raise HTTPException(400, i18n.t(ui_lang, msg_key)) from e
+
+    if tts_cfg.get("needs_tvoice_key"):
+        from ..user_tvoice import has_tvoice_key
+
+        if not has_tvoice_key():
+            raise HTTPException(400, "Vui lòng nhập API Key T-Voice AI trước khi bắt đầu tạo video.")
+
 
 
     cfg = _web_cfg()

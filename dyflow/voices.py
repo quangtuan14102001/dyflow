@@ -38,6 +38,7 @@ def _voice(
     rate: str = "+0%",
     pitch: str = "+0Hz",
     volume: str = "+0%",
+    tvoice_voice: str = "",
 ) -> dict[str, str]:
     return {
         "id": vid,
@@ -46,6 +47,7 @@ def _voice(
         "age_years": AGE_YEARS[age],
         "voice": voice,
         "openai_voice": openai_voice,
+        "tvoice_voice": tvoice_voice,
         "label": label,
         "label_key": f"voice_{gender}_{age}",
         "rate": rate,
@@ -93,6 +95,8 @@ def _ages(
     volume: str = "+0%",
     male_alt: tuple[str, ...] | None = None,
     female_alt: tuple[str, ...] | None = None,
+    tvoice_alt_male: tuple[str, ...] | None = None,
+    tvoice_alt_female: tuple[str, ...] | None = None,
 ) -> list[dict]:
     """Nam/nu x 4 moc tuoi. Cung 1 speaker Edge: lech pitch/rate.
 
@@ -100,6 +104,8 @@ def _ages(
     """
     m_names = _pad4(male_alt, male_voice)
     f_names = _pad4(female_alt, female_voice)
+    tv_m_names = _pad4(tvoice_alt_male, "Minh Đức")
+    tv_f_names = _pad4(tvoice_alt_female, "Ngọc Huyền")
     same_m = len(set(m_names)) == 1
     same_f = len(set(f_names)) == 1
     # tre em: cao + nhanh; lon tuoi: tram + cham. Alt voice van nang nhe child.
@@ -125,6 +131,7 @@ def _ages(
             age=age,
             voice=m_names[i],
             openai_voice=_OA_MALE[i],
+            tvoice_voice=tv_m_names[i],
             label=f"Nam · {years}",
             rate=m_rate[i],
             pitch=m_pitch[i],
@@ -138,6 +145,7 @@ def _ages(
             age=age,
             voice=f_names[i],
             openai_voice=_OA_FEMALE[i],
+            tvoice_voice=tv_f_names[i],
             label=f"Nữ · {years}",
             rate=f_rate[i],
             pitch=f_pitch[i],
@@ -163,8 +171,22 @@ LANGUAGES: dict[str, dict[str, Any]] = {
         "translate_to": "vi",
         "chars_per_line": 24,
         # Chi 2 speaker Edge: NamMinh / HoaiMy — tuoi = pitch/rate.
-        "voices": _ages("vi-VN-NamMinhNeural", "vi-VN-HoaiMyNeural",
-                        rate="+0%", pitch="+1Hz", volume="+5%"),
+        "voices": _ages(
+            "vi-VN-NamMinhNeural", "vi-VN-HoaiMyNeural",
+            rate="+0%", pitch="+1Hz", volume="+5%",
+            tvoice_alt_male=(
+                "VIENEU_CLONE_1787477477754",  # Bé Minh Anh (6-12)
+                "VIENEU_CLONE_1787469982602",  # Quang Review (18-25)
+                "Minh Đức",                    # Minh Đức (30-45)
+                "VIENEU_CLONE_1787124911734",  # Giọng Trầm (50+)
+            ),
+            tvoice_alt_female=(
+                "VIENEU_CLONE_1787470643348",  # An Nhiên (6-12)
+                "Ngọc Huyền",                  # Ngọc Huyền 5.0 (18-25)
+                "VIENEU_CLONE_1787020235902",  # Huyền Trang (30-45)
+                "VIENEU_CLONE_1787470345139",  # Trùng Dương (50+)
+            ),
+        ),
     },
     "en": {
         "label": "English",
@@ -230,6 +252,15 @@ TTS_CHOICES: dict[str, dict[str, object]] = {
         "openai_model": "tts-1",
         "label": "Edge TTS (Miễn phí)",
         "needs_openai_key": False,
+        "needs_tvoice_key": False,
+    },
+    "tvoice": {
+        "id": "tvoice",
+        "tts_engine": "tvoice",
+        "openai_model": "tvoice",
+        "label": "T-Voice AI (240+ giọng Vbee/ElevenLabs)",
+        "needs_openai_key": False,
+        "needs_tvoice_key": True,
     },
 }
 DEFAULT_TTS = "edge"
@@ -256,14 +287,19 @@ def _voice_map(lang: str) -> dict[str, dict]:
 def _alias_id(lang: str, voice: str) -> str:
     voice = (voice or "").strip().lower()
     voices = LANGUAGES[lang]["voices"]
-    if voice in ("male", "m"):
+    for v in voices:
+        if v["id"].lower() == voice:
+            return v["id"]
+        if v.get("voice", "").lower() == voice and v.get("age") == AGE_ADULT:
+            return v["id"]
+    if voice in ("male", "m", "nam", "nam minh", "vi-vn-namminhneural"):
         for v in voices:
             if v["gender"] == "male" and v["age"] == AGE_ADULT:
                 return v["id"]
         for v in voices:
             if v["gender"] == "male":
                 return v["id"]
-    if voice in ("female", "f"):
+    if voice in ("female", "f", "nu", "nữ", "hoai my", "hoài my", "vi-vn-hoaimyneural"):
         for v in voices:
             if v["gender"] == "female" and v["age"] == AGE_ADULT:
                 return v["id"]
@@ -271,6 +307,7 @@ def _alias_id(lang: str, voice: str) -> str:
             if v["gender"] == "female":
                 return v["id"]
     return voice
+
 
 
 VOICE_PRESETS: dict[str, dict] = {
@@ -309,8 +346,28 @@ def resolve_preset(lang: str, voice: str) -> dict:
     vid = _alias_id(lang, voice)
     vmap = _voice_map(lang)
     if vid not in vmap:
-        ids = ", ".join(vmap)
-        raise ValueError(f"Giong khong hop le: {voice}. Chon: {ids}")
+        try:
+            from .tvoice import resolve_tvoice_voice_id
+            tv_id = resolve_tvoice_voice_id(voice)
+        except Exception:
+            tv_id = voice
+        return {
+            "id": voice,
+            "gender": "unknown",
+            "age": "adult",
+            "age_years": "30–45",
+            "voice": voice,
+            "openai_voice": "alloy",
+            "tvoice_voice": tv_id,
+            "label": voice,
+            "label_key": "voice_custom",
+            "rate": "+0%",
+            "pitch": "+0Hz",
+            "volume": "+0%",
+            "lang": lang,
+            "translate_to": LANGUAGES[lang]["translate_to"],
+            "chars_per_line": int(LANGUAGES[lang].get("chars_per_line") or 24),
+        }
     preset = dict(vmap[vid])
     return {
         **preset,

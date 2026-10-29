@@ -120,6 +120,7 @@ const DyflowLicense = {
     this._openaiTts();
     this._deepseekKey();
     this._qwenKey();
+    this._tvoiceKey();
     this._machineCopy();
     if (input && (location.hash === "#license-key" || location.hash === "#license-form")) {
       input.focus();
@@ -340,6 +341,40 @@ const DyflowLicense = {
       } catch (ex) {
         if (ok) { ok.hidden = true; ok.textContent = ""; }
         if (err) err.textContent = ex.message || _("qwen_key_invalid");
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    });
+  },
+
+  _tvoiceKey() {
+    const form = document.getElementById("tvoice-key-form");
+    if (!form) return;
+    const input = document.getElementById("tvoice-key");
+    const err = document.getElementById("tvoice-key-error");
+    const ok = document.getElementById("tvoice-key-ok");
+    const btn = document.getElementById("tvoice-key-btn");
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (err) err.textContent = "";
+      if (ok) { ok.hidden = true; ok.textContent = ""; }
+      if (btn) btn.disabled = true;
+      if (err) err.textContent = "Đang kiểm tra kết nối tới T-Voice AI...";
+      try {
+        const data = new FormData();
+        data.set("key", (input && input.value) || "");
+        const res = await fetch("/api/tvoice-key", { method: "POST", body: data });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(_apiDetail(body, "API key T-Voice không hợp lệ"));
+        if (err) err.textContent = "";
+        if (ok) {
+          ok.hidden = !body.has_tvoice_key;
+          ok.textContent = body.has_tvoice_key ? "✓ Đã cấu hình Key T-Voice AI" : "";
+        }
+        if (input) input.value = "";
+      } catch (ex) {
+        if (ok) { ok.hidden = true; ok.textContent = ""; }
+        if (err) err.textContent = ex.message || "API key T-Voice không hợp lệ";
       } finally {
         if (btn) btn.disabled = false;
       }
@@ -1031,6 +1066,7 @@ const DyflowHome = {
     this._hasOpenaiTts = !!window.DYFLOW_HAS_OPENAI_TTS;
     this._hasDeepseek = !!window.DYFLOW_HAS_DEEPSEEK;
     this._hasQwen = !!window.DYFLOW_HAS_QWEN;
+    this._hasTvoice = !!window.DYFLOW_HAS_TVOICE;
     this._audio = null;
     this._quoteTimer = null;
     this._quoteSeq = 0;
@@ -1069,10 +1105,12 @@ const DyflowHome = {
     this._renderTts();
     this._bindOpenaiTts();
     this._bindDeepseekKey();
+    this._bindTvoice();
     this._bindTranslateEngine();
     this._applyDefaultTranslateEngine();
     this._bindGenre();
     this._syncOpenaiKeyBox();
+    this._syncTvoiceBox();
     this._bindStudio();
     this._bindAntiCopyright();
     this._pollLiveLog();
@@ -1150,12 +1188,33 @@ const DyflowHome = {
         if (l) l.focus();
         return;
       }
-      const voiceVal = (document.querySelector('input[name="voice"]:checked') || {}).value;
+      const voiceSel = document.getElementById("voice-select");
+      const cloneInput = document.getElementById("tvoice_clone_id_input");
+      const cloneVal = (cloneInput && cloneInput.value || "").trim();
+      let voiceVal = cloneVal || (voiceSel ? voiceSel.value : "");
+      if (!voiceVal) {
+        voiceVal = (document.querySelector('input[name="voice"]:checked') || {}).value;
+      }
+      let ttsVal = (document.getElementById("tts_engine_input") || {}).value || "";
+      if (cloneVal) {
+        ttsVal = "tvoice";
+      } else if (voiceSel && voiceSel.selectedOptions && voiceSel.selectedOptions[0]) {
+        if (voiceSel.selectedOptions[0].dataset.tts) {
+          ttsVal = voiceSel.selectedOptions[0].dataset.tts;
+        }
+      }
+      if (!ttsVal) {
+        ttsVal = (document.querySelector('input[name="tts"]:checked') || {}).value || "edge";
+      }
+      if (ttsVal === "tvoice" && !this._hasTvoice) {
+        err.textContent = "Vui lòng nhập API Key T-Voice AI trước khi bắt đầu tạo video.";
+        err.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
       if (!voiceVal) {
         err.textContent = _("home_voice_needed");
         return;
       }
-      const ttsVal = (document.querySelector('input[name="tts"]:checked') || {}).value;
       if (!ttsVal) {
         this._showTtsError(_("home_tts_needed"));
         return;
@@ -1197,7 +1256,8 @@ const DyflowHome = {
         data.set("lang", langVal);
         data.set("tts", ttsVal);
         data.set("translate_engine", teVal);
-        const vmInput = document.querySelector('input[name="voice_mode"]:checked');
+        const vmInput = document.querySelector('input[name="voice_mode"]:checked')
+          || document.querySelector('input[name="voice_mode"]');
         data.set("voice_mode", vmInput ? vmInput.value : "single");
         const genreSel = document.getElementById("genre_id");
         const genrePrompt = document.getElementById("genre_prompt");
@@ -2295,6 +2355,41 @@ const DyflowHome = {
   _renderVoices() {
     const wrap = document.getElementById("voice-options");
     const hint = document.getElementById("voice-hint");
+    const voiceSel = document.getElementById("voice-select");
+    const lang = ((document.getElementById("lang") || {}).value || "").trim();
+
+    if (voiceSel) {
+      if (!this._viVoiceSelectHtml) {
+        this._viVoiceSelectHtml = voiceSel.innerHTML;
+      }
+      if (lang && lang !== "vi") {
+        const meta = this._currentLangMeta();
+        const voices = (meta && meta.voices) || [];
+        voiceSel.innerHTML = "";
+        const grp = document.createElement("optgroup");
+        grp.label = `🆓 Giọng ${meta ? meta.label : lang} (Free)`;
+        voices.forEach((v) => {
+          const opt = document.createElement("option");
+          opt.value = v.voice || v.id;
+          opt.dataset.tts = "edge";
+          opt.textContent = `🎙️ ${v.label} (Free)`;
+          grp.appendChild(opt);
+        });
+        voiceSel.appendChild(grp);
+        const ttsHidden = document.getElementById("tts_engine_input");
+        if (ttsHidden) ttsHidden.value = "edge";
+        this._syncTvoiceBox();
+      } else if (lang === "vi" && this._viVoiceSelectHtml) {
+        if (voiceSel.innerHTML !== this._viVoiceSelectHtml) {
+          voiceSel.innerHTML = this._viVoiceSelectHtml;
+          const opt = voiceSel.selectedOptions && voiceSel.selectedOptions[0];
+          const ttsHidden = document.getElementById("tts_engine_input");
+          if (ttsHidden) ttsHidden.value = (opt && opt.dataset.tts) || "edge";
+          this._syncTvoiceBox();
+        }
+      }
+    }
+
     if (!wrap) return;
     const meta = this._currentLangMeta();
     const voices = (meta && meta.voices) || [];
@@ -2333,7 +2428,15 @@ const DyflowHome = {
       b.addEventListener("click", (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
-        this._preview(b.dataset.voice, b);
+        this._preview(b.dataset.voice, b, this._selectedTts());
+      });
+    });
+    wrap.querySelectorAll('input[name="voice"]').forEach((inp) => {
+      inp.addEventListener("change", () => {
+        const customSel = document.getElementById("tvoice_custom_voice");
+        const cloneInput = document.getElementById("tvoice_clone_id_input");
+        if (customSel) customSel.value = "";
+        if (cloneInput) cloneInput.value = "";
       });
     });
   },
@@ -2669,7 +2772,15 @@ const DyflowHome = {
   },
 
   _selectedTts() {
-    return (document.querySelector('input[name="tts"]:checked') || {}).value || "edge";
+    const hidden = document.getElementById("tts_engine_input");
+    if (hidden && hidden.value) return hidden.value;
+    const checked = document.querySelector('input[name="tts"]:checked');
+    if (checked && checked.value) return checked.value;
+    const voiceSel = document.getElementById("voice-select");
+    if (voiceSel && voiceSel.selectedOptions && voiceSel.selectedOptions[0]) {
+      return voiceSel.selectedOptions[0].dataset.tts || "edge";
+    }
+    return "edge";
   },
 
   _renderTts() {
@@ -2679,8 +2790,9 @@ const DyflowHome = {
     const prev = (wrap.querySelector('input[name="tts"]:checked') || {}).value;
     wrap.innerHTML = "";
     choices.forEach((t) => {
-      const needs = !!t.needs_openai_key;
-      const locked = needs && !this._hasOpenaiTts;
+      const needsOa = !!t.needs_openai_key;
+      const needsTv = !!t.needs_tvoice_key;
+      const locked = (needsOa && !this._hasOpenaiTts) || (needsTv && !this._hasTvoice);
       const checked = prev === t.id && !locked;
       const el = document.createElement("label");
       el.className = "voice-opt" + (locked ? " is-locked" : "");
@@ -2688,7 +2800,7 @@ const DyflowHome = {
         <input type="radio" name="tts" value="${t.id}" ${checked ? "checked" : ""} ${locked ? "disabled" : ""} />
         <span class="voice-card">
           <strong>${t.label}</strong>
-          ${locked ? `<em class="tts-lock">${_("openai_tts_locked")}</em>` : ""}
+          ${locked ? `<em class="tts-lock">${needsTv ? "Cần API Key" : _("openai_tts_locked")}</em>` : ""}
           <button type="button" class="voice-play" data-tts="${t.id}" title="${_("preview")}" aria-label="${_("preview")}" ${locked ? "disabled" : ""}>▶</button>
         </span>`;
       wrap.appendChild(el);
@@ -2701,6 +2813,7 @@ const DyflowHome = {
       inp.addEventListener("change", () => {
         this._showTtsError("");
         this._syncOpenaiKeyBox();
+        this._syncTvoiceBox();
       });
     });
     wrap.querySelectorAll(".voice-play").forEach((b) => {
@@ -2708,49 +2821,208 @@ const DyflowHome = {
         ev.preventDefault();
         ev.stopPropagation();
         const voiceEl = document.querySelector('input[name="voice"]:checked');
-        const voiceId = (voiceEl && voiceEl.value) || "male_adult";
+        let voiceId = (voiceEl && voiceEl.value) || "male_adult";
+        if (b.dataset.tts === "tvoice") {
+          const customVoice = ((document.getElementById("tvoice_clone_id_input") || {}).value || "").trim()
+            || ((document.getElementById("voice-select") || {}).value || "").trim();
+          if (customVoice) voiceId = customVoice;
+        }
         this._preview(voiceId, b, b.dataset.tts);
       });
     });
     this._syncOpenaiKeyBox();
+    this._syncTvoiceBox();
+  },
+
+  _bindTvoice() {
+    const btn = document.getElementById("home-tvoice-save");
+    const input = document.getElementById("home-tvoice-key");
+    const status = document.getElementById("home-tvoice-status");
+    const prevBtn = document.getElementById("voice-preview-btn") || document.getElementById("tvoice-preview-btn");
+    const voiceSel = document.getElementById("voice-select") || document.getElementById("tvoice_custom_voice");
+    const cloneInput = document.getElementById("tvoice_clone_id_input");
+    const ttsHidden = document.getElementById("tts_engine_input");
+
+    const updateEngine = () => {
+      let engine = "edge";
+      if (voiceSel && voiceSel.selectedOptions && voiceSel.selectedOptions[0]) {
+        engine = voiceSel.selectedOptions[0].dataset.tts || "edge";
+      }
+      if (ttsHidden) ttsHidden.value = engine;
+      this._syncTvoiceBox();
+    };
+
+    if (btn && input) {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        if (status) status.textContent = "Đang kiểm tra kết nối tới T-Voice AI...";
+        try {
+          const data = new FormData();
+          data.set("key", input.value || "");
+          const res = await fetch("/api/tvoice-key", { method: "POST", body: data });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(_apiDetail(body, "API key T-Voice không hợp lệ"));
+          this._hasTvoice = !!body.has_tvoice_key;
+          window.DYFLOW_HAS_TVOICE = this._hasTvoice;
+          if (status) {
+            status.innerHTML = this._hasTvoice
+              ? `<span style="color: #10B981;">✓ Đã cấu hình T-Voice API Key</span>`
+              : `<span style="color: #F59E0B;">Chưa cấu hình API Key</span>`;
+          }
+          input.value = "";
+          this._renderTts();
+          this._syncTvoiceBox();
+        } catch (ex) {
+          this._hasTvoice = !!window.DYFLOW_HAS_TVOICE;
+          if (status) status.innerHTML = `<span style="color: #EF4444;">${ex.message || "Lỗi kiểm tra API Key"}</span>`;
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    }
+
+    if (voiceSel) {
+      voiceSel.addEventListener("change", () => {
+        updateEngine();
+      });
+    }
+
+    if (prevBtn) {
+      prevBtn.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        this.previewSelectedVoice(prevBtn);
+      });
+    }
+
+    updateEngine();
+  },
+
+  _syncTvoiceBox() {
+    const keyBox = document.getElementById("tvoice-key-box");
+    const voiceBox = document.getElementById("tvoice-voice-box");
+    const cloneInput = document.getElementById("tvoice_clone_id_input");
+    const cloneVal = (cloneInput && cloneInput.value || "").trim();
+    const isTvoice = (this._selectedTts() === "tvoice") || !!cloneVal;
+    if (keyBox) keyBox.hidden = !isTvoice;
+    if (voiceBox) voiceBox.hidden = !isTvoice;
+  },
+
+  previewSelectedVoice(btn) {
+    if (!btn) btn = document.getElementById("voice-preview-btn");
+    const statusEl = document.getElementById("voice-preview-status");
+
+    if (this._audio && !this._audio.paused) {
+      try { this._audio.pause(); } catch (_) {}
+      this._audio = null;
+      if (btn) {
+        btn.textContent = "▶ Nghe thử";
+        btn.disabled = false;
+      }
+      if (statusEl) statusEl.hidden = true;
+      return;
+    }
+
+    const voiceSel = document.getElementById("voice-select");
+    const selVal = (voiceSel && voiceSel.value || "").trim();
+    const selectedOpt = voiceSel && voiceSel.selectedOptions && voiceSel.selectedOptions[0];
+    const isTv = selectedOpt && selectedOpt.dataset.tts === "tvoice";
+    const targetVoice = selVal || "vi-VN-NamMinhNeural";
+
+    this._preview(targetVoice, btn, isTv ? "tvoice" : "edge");
   },
 
   async _preview(voiceId, btn, ttsId) {
-    const lang = (document.getElementById("lang") || {}).value || "en";
-    const resetBtns = () => {
-      document.querySelectorAll(".voice-play").forEach((b) => {
-        b.textContent = "▶";
+    const lang = (document.getElementById("lang") || {}).value || "vi";
+    const statusEl = document.getElementById("voice-preview-status");
+    const resetBtns = (msg, isError) => {
+      document.querySelectorAll(".voice-play, #voice-preview-btn").forEach((b) => {
+        b.textContent = "▶ Nghe thử";
         b.disabled = false;
       });
+      if (statusEl) {
+        if (msg) {
+          statusEl.hidden = false;
+          statusEl.style.color = isError ? "#EF4444" : "#10B981";
+          statusEl.textContent = msg;
+        } else {
+          statusEl.hidden = true;
+          statusEl.textContent = "";
+        }
+      }
     };
+
     if (this._audio) {
-      this._audio.pause();
+      try { this._audio.pause(); } catch (_) {}
       this._audio = null;
-      resetBtns();
     }
+
     const tts = ttsId || this._selectedTts();
     const url = `/api/voices/preview?lang=${encodeURIComponent(lang)}&voice=${encodeURIComponent(voiceId)}&tts=${encodeURIComponent(tts)}`;
-    btn.disabled = true;
-    btn.textContent = "…";
+
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "⏳ Đang tải...";
+    }
+    if (statusEl) {
+      statusEl.hidden = false;
+      statusEl.style.color = "#38BDF8";
+      statusEl.textContent = "⚡ Đang tạo âm thanh mẫu, vui lòng chờ giây lát...";
+    }
+
     try {
-      const audio = new Audio(url);
+      const res = await fetch(url);
+      if (!res.ok) {
+        let errMsg = "Không thể tải âm thanh nghe thử";
+        try {
+          const body = await res.json();
+          errMsg = _apiDetail(body, errMsg);
+        } catch (_) {
+          errMsg = await res.text().catch(() => errMsg);
+        }
+        throw new Error(errMsg);
+      }
+
+      const blob = await res.blob();
+      if (!blob || blob.size < 100) {
+        throw new Error("Dữ liệu âm thanh nhận về bị trống");
+      }
+
+      const blobUrl = URL.createObjectURL(blob);
+      const audio = new Audio(blobUrl);
       this._audio = audio;
-      audio.onended = resetBtns;
-      audio.onerror = () => {
+
+      audio.onended = () => {
+        try { URL.revokeObjectURL(blobUrl); } catch (_) {}
+        this._audio = null;
         resetBtns();
-        const err = document.getElementById("form-error");
-        if (err) err.textContent = _("preview_fail");
       };
+
+      audio.onerror = () => {
+        try { URL.revokeObjectURL(blobUrl); } catch (_) {}
+        this._audio = null;
+        resetBtns("Lỗi phát âm thanh trên thiết bị", true);
+      };
+
       await audio.play();
-      btn.textContent = "■";
-      btn.disabled = false;
+      if (btn) {
+        btn.textContent = "■ Dừng";
+        btn.disabled = false;
+      }
+      if (statusEl) {
+        statusEl.hidden = false;
+        statusEl.style.color = "#10B981";
+        statusEl.textContent = "🔊 Đang phát giọng đọc mẫu...";
+      }
     } catch (ex) {
-      resetBtns();
+      resetBtns(ex.message || "Lỗi nghe thử", true);
       const err = document.getElementById("form-error");
-      if (err) err.textContent = ex.message || _("preview_fail");
+      if (err) err.textContent = ex.message || "Lỗi nghe thử";
     }
   },
 };
+window.DyflowHome = DyflowHome;
+
 
 const DyflowJob = {
   init(jobId) {
