@@ -17,7 +17,7 @@ try:
         _patch_dir = Path(_appdata) / "VideosCreator" / "patch"
     else:
         _patch_dir = Path.home() / ".config" / "videoscreator" / "patch"
-    if _patch_dir.is_dir() and not any(type(f).__name__ == "_PatchMetaFinder" for f in sys.meta_path):
+    if getattr(sys, "frozen", False) and _patch_dir.is_dir() and not any(type(f).__name__ == "_PatchMetaFinder" for f in sys.meta_path):
         class _PatchMetaFinder:
             def __init__(self, root: Path):
                 self.root = root

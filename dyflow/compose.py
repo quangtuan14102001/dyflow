@@ -352,22 +352,38 @@ def compose(video: str | Path, voice: str | Path | None, script: str,
     active_video = video
     ocr_done = False
     ocr_meta: dict = {}
-    if blur_sub_on and blur_sub_mode in ("ocr", "auto_ai", "ai"):
-        from .hardsub import blur_hardsubs_ocr
-        from .job_timing import step as timing_step
-        ocr_out = Path(video).resolve().parent / f"{Path(video).stem}_ocrblur.mp4"
-        try:
-            with timing_step("OCR Blur"):
-                ocr_cfg = dict(cfg.get("transform", {}).get("blur_burned_subs", {}) or {})
-                active_video = blur_hardsubs_ocr(video, ocr_out, ocr_cfg, meta_out=ocr_meta)
-                ocr_done = True
-                log.info(
-                    "AI OCR da tu dong tim va che mo phu de: %s (y_center=%s, margin_v=%s)",
-                    active_video.name, ocr_meta.get("y_center"), ocr_meta.get("margin_v"),
-                )
-        except Exception as e:
-            log.warning("AI OCR che phu de gap loi (%s), fallback ve che dai duoi day: %s", blur_sub_mode, e)
-            blur_sub_mode = "bottom"
+    fast_scan_done = False
+    fast_scan_meta: dict = {}
+    if blur_sub_on:
+        if blur_sub_mode in ("legacy_ai", "slow_ai"):
+            # Che do cu: quet tung frame bang OpenCV (cham)
+            from .hardsub import blur_hardsubs_ocr
+            from .job_timing import step as timing_step
+            ocr_out = Path(video).resolve().parent / f"{Path(video).stem}_ocrblur.mp4"
+            try:
+                with timing_step("Legacy OCR Blur"):
+                    ocr_cfg = dict(cfg.get("transform", {}).get("blur_burned_subs", {}) or {})
+                    active_video = blur_hardsubs_ocr(video, ocr_out, ocr_cfg, meta_out=ocr_meta)
+                    ocr_done = True
+                    log.info(
+                        "Legacy AI OCR da tu dong tim va che mo phu de: %s (y_center=%s, margin_v=%s)",
+                        active_video.name, ocr_meta.get("y_center"), ocr_meta.get("margin_v"),
+                    )
+            except Exception as e:
+                log.warning("Legacy AI OCR gap loi, fallback ve che dai duoi day: %s", e)
+                blur_sub_mode = "bottom"
+        elif blur_sub_mode in ("auto_ai", "smart", "ai", "ocr"):
+            # Che do moi: AI Fast Scan 6-8 khung hinh mau trong ~1-2 giay
+            from .hardsub import detect_subtitle_region_fast
+            from .job_timing import step as timing_step
+            try:
+                with timing_step("AI Fast Sub Scan"):
+                    ocr_cfg = dict(cfg.get("transform", {}).get("blur_burned_subs", {}) or {})
+                    fast_scan_meta = detect_subtitle_region_fast(video, ocr_cfg, num_samples=8)
+                    fast_scan_done = bool(fast_scan_meta.get("detected"))
+            except Exception as e:
+                log.warning("AI Fast Sub Scan gap loi, dung toa do mac dinh: %s", e)
+                fast_scan_done = False
 
     # Xac dinh do phan giai canvas cho caption ASS
     if export_fit == "source":
@@ -375,18 +391,19 @@ def compose(video: str | Path, voice: str | Path | None, script: str,
     else:
         cap_w, cap_h = ASPECT.get(cfg_exp.get("formats", ["9:16"])[0], (1080, 1920))
 
-    # Neu AI OCR phat hien dong chu phu de goc -> can vi tri Sub tieng Viet vao dung tam vet mo!
-    if ocr_done and ocr_meta.get("detected") and ocr_meta.get("y_center"):
+    # Neu AI phat hien dong chu phu de goc (du la Fast Scan hay Legacy OCR) -> can vi tri Sub tieng Viet vao dung tam vet mo!
+    sub_meta = ocr_meta if (ocr_done and ocr_meta.get("detected")) else (fast_scan_meta if fast_scan_done else None)
+    if sub_meta and sub_meta.get("y_center"):
         scale_y = cap_h / max(1, src_h)
-        scaled_y_center = int(ocr_meta["y_center"] * scale_y)
+        scaled_y_center = int(sub_meta["y_center"] * scale_y)
         # ASS Alignment=2: MarginV tinh tu day len mep duoi dong chu.
         # De tam dong chu trung voi tam vet mo:
         fs_est = int(cfg_cap.get("fontsize") or round(cap_h * 0.028))
         target_mv = (cap_h - scaled_y_center) - int(fs_est * 0.60)
         cfg_cap["margin_v"] = max(35, min(int(cap_h * 0.85), target_mv))
         log.info(
-            "AI OCR can toa do Sub tieng Viet: MarginV=%d (y_center=%d scaled=%d canvas=%dx%d fs=%d)",
-            cfg_cap["margin_v"], ocr_meta.get("y_center", 0), scaled_y_center, cap_w, cap_h, fs_est,
+            "AI can toa do Sub tieng Viet: MarginV=%d (y_center=%d scaled=%d canvas=%dx%d fs=%d)",
+            cfg_cap["margin_v"], sub_meta.get("y_center", 0), scaled_y_center, cap_w, cap_h, fs_est,
         )
 
     # tao caption ASS 1 lan (PlayRes khop khung hinh xuat)
@@ -450,7 +467,13 @@ def compose(video: str | Path, voice: str | Path | None, script: str,
             else:
                 # Che mo vung phu de o day clip:
                 is_landscape = W >= H
-                if blur_sub_mode in ("bottom_full", "full"):
+                if fast_scan_done:
+                    # Su dung toa do thuc te do AI Fast Scan tim thay cho rieng clip nay (dung cho 100%)
+                    w_ratio = float(fast_scan_meta.get("w_ratio", 0.68 if not is_landscape else 0.55))
+                    h_ratio = float(fast_scan_meta.get("h_ratio", 0.095 if not is_landscape else 0.085))
+                    y_center_ratio = float(fast_scan_meta.get("y_ratio", 0.815 if not is_landscape else 0.875))
+                    y_ratio = max(0.02, min(0.95 - h_ratio, y_center_ratio - (h_ratio / 2.0)))
+                elif blur_sub_mode in ("bottom_full", "full"):
                     # Dai ngang toan man hinh (tu trai sang phai)
                     w_ratio = 1.0
                     h_ratio = 0.085 if is_landscape else 0.095

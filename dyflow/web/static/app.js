@@ -1590,9 +1590,9 @@ const DyflowHome = {
 
     try {
       let savedBsMode = localStorage.getItem("dyflow_ac_blur_sub_mode");
-      if (!savedBsMode || savedBsMode === "auto_ai") {
-        savedBsMode = "bottom";
-        try { localStorage.setItem("dyflow_ac_blur_sub_mode", "bottom"); } catch (_) {}
+      if (!savedBsMode) {
+        savedBsMode = "auto_ai";
+        try { localStorage.setItem("dyflow_ac_blur_sub_mode", "auto_ai"); } catch (_) {}
       }
       if (blurSubMode) blurSubMode.value = savedBsMode;
 

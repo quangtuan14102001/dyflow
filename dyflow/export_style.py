@@ -234,13 +234,15 @@ def _opt_bool(v: Any) -> bool:
 ANTI_COPYRIGHT_MODES = ("off", "standard", "advanced", "custom")
 
 BLUR_SUB_MODES = (
+    "auto_ai",
+    "smart",
     "bottom",
     "bottom_medium",
     "bottom_large",
     "bottom_full",
     "full",
     "center",
-    "auto_ai",
+    "legacy_ai",
     "ocr",
     "off",
 )
@@ -254,7 +256,7 @@ ANTI_COPYRIGHT_PRESETS: dict[str, dict[str, Any]] = {
         "color_shift": False,
         "vignette": False,
         "blur_sub": False,
-        "blur_sub_mode": "bottom",
+        "blur_sub_mode": "auto_ai",
         "pitch_shift": False,
         "micro_zoom": False,
         "speed": 1.0,
@@ -266,8 +268,8 @@ ANTI_COPYRIGHT_PRESETS: dict[str, dict[str, Any]] = {
         "noise": True,         # Phu hat film grain sieu min 2/100 doi pHash/MD5
         "color_shift": True,   # Tinh chinh contrast=1.04, saturation=1.06, gamma=0.98
         "vignette": False,
-        "blur_sub": True,      # Che mo chu phu de goc o day clip (BAT MAC DINH theo yeu cau user)
-        "blur_sub_mode": "bottom",
+        "blur_sub": True,      # Che mo chu phu de goc (AI Fast Scan 1s do dung vi tri tung clip)
+        "blur_sub_mode": "auto_ai",
         "pitch_shift": True,   # Dich tone am thanh nen +2.5% tranh acoustic fingerprint
         "micro_zoom": False,
         "speed": 1.03,         # Tang toc nhe 1.03x
@@ -280,7 +282,7 @@ ANTI_COPYRIGHT_PRESETS: dict[str, dict[str, Any]] = {
         "color_shift": True,   # Chinh mau vi mo
         "vignette": True,      # Vien toi 4 goc
         "blur_sub": True,      # Che mo dai phu de goc o chan video
-        "blur_sub_mode": "bottom",
+        "blur_sub_mode": "auto_ai",
         "pitch_shift": True,   # Dich tone am thanh nen
         "micro_zoom": True,    # Micro zoom 1.04x
         "speed": 1.04,         # Tang toc 1.04x
@@ -316,10 +318,10 @@ def normalize_output_opts(raw: dict[str, Any] | None) -> dict[str, Any]:
     if ac_mode not in ANTI_COPYRIGHT_MODES:
         ac_mode = "standard"
 
-    # blur_sub_mode: bottom (Chỉ vùng chữ phụ đề - nhanh, chu vi) | bottom_medium | center | bottom_full | auto_ai | off
-    bs_mode = str(raw.get("ac_blur_sub_mode") or raw.get("blur_sub_mode") or "bottom").strip().lower()
+    # blur_sub_mode: auto_ai (AI Fast Scan 1s - dung vi tri moi clip) | bottom | bottom_medium | center | bottom_full | off
+    bs_mode = str(raw.get("ac_blur_sub_mode") or raw.get("blur_sub_mode") or "auto_ai").strip().lower()
     if bs_mode not in BLUR_SUB_MODES:
-        bs_mode = "bottom"
+        bs_mode = "auto_ai"
 
     if "ac_blur_sub" in raw and raw.get("ac_blur_sub") is not None and str(raw.get("ac_blur_sub")).strip() != "":
         blur_sub_explicit = _opt_bool(raw.get("ac_blur_sub"))
